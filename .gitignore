@@ -58,3 +58,7 @@ uploads/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Logs
+*.log
+logs/
