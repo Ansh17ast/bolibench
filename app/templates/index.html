@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BoliBench — Indian Voice AI Crash-Test Lab</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="logo-mark">⚡</div>
+        <div class="brand-text">
+          <h1>BoliBench</h1>
+          <p class="tagline">Indian Voice AI Crash-Test Lab</p>
+        </div>
+      </div>
+      <div class="header-badges">
+        <span class="challenge-badge">Great Indian AI Internship Challenge</span>
+        <div class="status-pill {% if is_configured %}status-active{% else %}status-warning{% endif %}" id="apiStatusPill">
+          <span class="status-dot"></span>
+          <span class="status-text">
+            {% if is_configured %}
+              Gnani Prisma: Configured
+            {% else %}
+              Gnani Key: Not Set (Mock Available)
+            {% endif %}
+          </span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Project Context Alert -->
+    {% if not is_configured %}
+    <div class="banner banner-warning" id="credWarningBanner">
+      <div class="banner-icon">⚠️</div>
+      <div class="banner-content">
+        <strong>GNANI_API_KEY is not configured in your environment.</strong>
+        <p>To run live calls to Gnani Prisma, copy <code>.env.example</code> to <code>.env</code> and add your key from <a href="https://app.gnani.ai/voice" target="_blank" rel="noopener">app.gnani.ai/voice</a>. You can also test the full application flow immediately using <strong>Mock Mode</strong> below.</p>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Main Grid -->
+    <main class="lab-grid">
+      <!-- Input Card -->
+      <section class="card input-card">
+        <div class="card-header">
+          <h2>1. Audio Input & Parameters</h2>
+          <span class="badge">Prisma STT v3 REST</span>
+        </div>
+
+        <form id="transcribeForm" class="lab-form">
+          <!-- Dropzone -->
+          <div class="dropzone" id="dropzone">
+            <input type="file" id="audioFileInput" name="audio_file" accept=".wav,.mp3,.ogg,.flac,.aac,.m4a" class="file-input" required>
+            <div class="dropzone-content" id="dropzonePrompt">
+              <div class="upload-icon">🎙️</div>
+              <p class="primary-text">Drag & drop Indian speech audio, or <span class="highlight">browse</span></p>
+              <p class="secondary-text">Supported: WAV, MP3, OGG, FLAC, AAC, M4A (Max 60s &bull; ≤ {{ max_mb }} MB)</p>
+            </div>
+            <!-- File selected state -->
+            <div class="selected-file-preview" id="selectedFilePreview" style="display: none;">
+              <div class="file-info">
+                <span class="file-icon">🎵</span>
+                <div class="file-meta">
+                  <span class="file-name" id="fileNameDisplay">audio.wav</span>
+                  <span class="file-size" id="fileSizeDisplay">1.2 MB</span>
+                </div>
+                <button type="button" class="btn-clear" id="btnClearFile" title="Remove file">✕</button>
+              </div>
+              <audio id="audioPreview" controls class="audio-player"></audio>
+            </div>
+          </div>
+
+          <!-- Parameters Grid -->
+          <div class="params-grid">
+            <!-- Language Selector -->
+            <div class="form-group">
+              <label for="languageCode">Target Language</label>
+              <select id="languageCode" name="language_code" class="form-control" required>
+                {% for code, meta in languages.items() %}
+                <option value="{{ code }}" {% if code == 'hi-IN' %}selected{% endif %}>
+                  {{ meta.name }} ({{ meta.native }}) — {{ code }}
+                </option>
+                {% endfor %}
+              </select>
+              <span class="field-hint">Monolingual & bilingual ASR models</span>
+            </div>
+
+            <!-- Output Format -->
+            <div class="form-group">
+              <label for="formatMode">Output Format</label>
+              <select id="formatMode" name="format_mode" class="form-control">
+                <option value="verbatim" selected>Verbatim (Raw spoken tokens)</option>
+                <option value="transcribe">Transcribe (Inverse Text Normalization: ₹, numbers, dates)</option>
+              </select>
+              <span class="field-hint">ITN converts numbers & currency automatically</span>
+            </div>
+          </div>
+
+          <!-- Advanced Options (ITN Native script & Mock Mode) -->
+          <div class="options-row">
+            <label class="checkbox-label" id="nativeNumeralsLabel">
+              <input type="checkbox" id="itnNativeNumerals" name="itn_native_numerals">
+              <span>Native Script Numerals (e.g. ₹५,०००)</span>
+            </label>
+
+            <label class="checkbox-label highlight-checkbox">
+              <input type="checkbox" id="mockMode" name="mock_mode" {% if not is_configured %}checked{% endif %}>
+              <span>Mock Mode (Local testing without API key)</span>
+            </label>
+          </div>
+
+          <!-- Submit Button -->
+          <button type="submit" class="btn-primary" id="btnSubmit">
+            <span class="btn-text" id="btnText">Transcribe with Gnani Prisma</span>
+            <span class="btn-spinner" id="btnSpinner" style="display: none;"></span>
+          </button>
+        </form>
+      </section>
+
+      <!-- Output Card -->
+      <section class="card output-card">
+        <div class="card-header">
+          <h2>2. Transcription & Telemetry</h2>
+          <span class="status-badge status-idle" id="resultStatusBadge">Awaiting Input</span>
+        </div>
+
+        <div class="output-body">
+          <!-- Diagnostics & Latency Banner -->
+          <div class="telemetry-grid">
+            <div class="telemetry-card">
+              <span class="telemetry-label">Client Latency</span>
+              <span class="telemetry-value" id="clientLatencyDisplay">—</span>
+            </div>
+            <div class="telemetry-card">
+              <span class="telemetry-label">Backend Latency</span>
+              <span class="telemetry-value" id="backendLatencyDisplay">—</span>
+            </div>
+            <div class="telemetry-card">
+              <span class="telemetry-label">Model Engine</span>
+              <span class="telemetry-value" id="modelDisplay">gnani-prisma-v2.5</span>
+            </div>
+            <div class="telemetry-card">
+              <span class="telemetry-label">Request ID</span>
+              <span class="telemetry-value telemetry-code" id="requestIdDisplay">—</span>
+            </div>
+          </div>
+
+          <!-- Transcript Result Container -->
+          <div class="transcript-container">
+            <div class="transcript-header">
+              <label>Recognized Speech Transcript</label>
+              <button type="button" class="btn-copy" id="btnCopyTranscript" title="Copy to clipboard" style="display: none;">Copy</button>
+            </div>
+            <div class="transcript-box" id="transcriptDisplay">
+              <p class="placeholder-text">Upload an audio recording on the left to inspect the speech transcript and latency diagnostics.</p>
+            </div>
+          </div>
+
+          <!-- Error Alert Container -->
+          <div class="error-alert" id="errorAlert" style="display: none;">
+            <div class="error-alert-header">
+              <span class="error-icon">❌</span>
+              <strong id="errorTypeDisplay">Error</strong>
+            </div>
+            <p id="errorMessageDisplay" class="error-message"></p>
+            <div id="errorRemediationDisplay" class="error-remediation" style="display: none;"></div>
+          </div>
+
+          <!-- Voice AI Crash-Test Note -->
+          <div class="crashtest-note">
+            <div class="note-icon">💡</div>
+            <div class="note-content">
+              <strong>BoliBench Focus:</strong> We crash-test downstream Voice Agent actions caused by small transcription errors (e.g. quantities, missed negations, incorrect product names).
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <p>Built for the <strong>Great Indian AI Internship Challenge by Gnani AI</strong> &bull; Powered by FastAPI & Gnani Prisma STT v3 REST</p>
+    </footer>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
