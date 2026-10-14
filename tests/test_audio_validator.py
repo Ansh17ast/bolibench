@@ -91,3 +91,23 @@ def test_audio_validator_duration_exceeded(long_wav_bytes):
         validator.validate("long_call.wav", long_wav_bytes)
     assert exc_info.value.error_type == "DURATION_EXCEEDED"
     assert "exceeds the maximum allowed limit of 60s" in exc_info.value.message
+
+
+def test_audio_validator_valid_aac():
+    """Test valid AAC file with ADTS sync word passes validation."""
+    validator = AudioValidator()
+    # ADTS header starts with 0xFF 0xF1 or 0xFF 0xF9
+    aac_bytes = b"\xff\xf1\x50\x80\x00\x1f\xfc" + b"\x00" * 50
+    ext, content_type = validator.validate("clip.aac", aac_bytes)
+    assert ext == ".aac"
+    assert content_type == "audio/aac"
+
+
+def test_audio_validator_valid_m4a():
+    """Test valid M4A container with ftyp atom passes validation."""
+    validator = AudioValidator()
+    # ISO Base Media File Format: size (4 bytes), 'ftyp' (4 bytes), major brand (4 bytes), etc.
+    m4a_bytes = b"\x00\x00\x00\x20ftypM4A \x00\x00\x00\x00M4A mp42isom" + b"\x00" * 50
+    ext, content_type = validator.validate("voice_note.m4a", m4a_bytes)
+    assert ext == ".m4a"
+    assert content_type == "audio/mp4"

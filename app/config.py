@@ -37,6 +37,10 @@ class Settings(BaseSettings):
             return False
         return True
 
+    def __repr__(self) -> str:
+        """Safe string representation preventing credential leaks."""
+        return f"<Settings app_env={self.app_env} gnani_api_configured={self.is_api_configured}>"
+
 
 @lru_cache()
 def get_settings() -> Settings:

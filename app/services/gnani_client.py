@@ -43,10 +43,11 @@ class GnaniBadRequestError(GnaniClientError):
 
 
 class GnaniAuthenticationError(GnaniClientError):
-    """Raised on 403 Forbidden from Gnani STT API."""
+    """Raised on 401 Unauthorized or 403 Forbidden from Gnani STT API."""
 
-    def __init__(self, message: str, details: Optional[dict] = None):
-        super().__init__(message=message, status_code=403, error_type="FORBIDDEN", details=details)
+    def __init__(self, message: str, status_code: int = 401, details: Optional[dict] = None):
+        error_type = "UNAUTHORIZED" if status_code == 401 else "FORBIDDEN"
+        super().__init__(message=message, status_code=status_code, error_type=error_type, details=details)
 
 
 class GnaniRateLimitError(GnaniClientError):
@@ -57,10 +58,10 @@ class GnaniRateLimitError(GnaniClientError):
 
 
 class GnaniServerError(GnaniClientError):
-    """Raised on 500 Internal Server Error from Gnani STT API."""
+    """Raised on 500 Internal Server Error or upstream response issues from Gnani STT API."""
 
-    def __init__(self, message: str, details: Optional[dict] = None):
-        super().__init__(message=message, status_code=500, error_type="API_ERROR", details=details)
+    def __init__(self, message: str, status_code: int = 500, error_type: str = "API_ERROR", details: Optional[dict] = None):
+        super().__init__(message=message, status_code=status_code, error_type=error_type, details=details)
 
 
 class GnaniServiceUnavailableError(GnaniClientError):
@@ -194,10 +195,22 @@ class GnaniPrismaClient:
         except Exception:
             resp_json = {}
 
+        if not isinstance(resp_json, dict):
+            resp_json = {}
+
         if status_code == 200:
+            if "transcript" not in resp_json:
+                raise GnaniServerError(
+                    "Gnani STT returned 200 OK but response is missing the required 'transcript' field.",
+                    status_code=502,
+                    error_type="MALFORMED_RESPONSE",
+                    details={"response_payload": resp_json},
+                )
+
             transcript = resp_json.get("transcript", "")
             request_id = resp_json.get("request_id")
-            model = resp_json.get("model", "gnani-prisma-v2.5")
+            # Never assume the API always returns a model name
+            model = resp_json.get("model")
             timestamp = resp_json.get("timestamp")
 
             return {
@@ -213,15 +226,22 @@ class GnaniPrismaClient:
             }
 
         # Error handling mapping
-        error_detail = resp_json.get("error", {})
+        error_detail = resp_json.get("error", {}) if isinstance(resp_json.get("error"), dict) else {}
         error_type = error_detail.get("type", "UNKNOWN_ERROR")
         error_message = error_detail.get("message") or response.text or f"HTTP {status_code} error from Gnani STT"
 
         if status_code == 400:
             raise GnaniBadRequestError(error_message, details={"api_error_type": error_type})
+        elif status_code == 401:
+            raise GnaniAuthenticationError(
+                f"Gnani authentication failed (401 Unauthorized): {error_message}",
+                status_code=401,
+                details={"api_error_type": error_type},
+            )
         elif status_code == 403:
             raise GnaniAuthenticationError(
-                f"Gnani authentication failed: {error_message}",
+                f"Gnani authentication failed (403 Forbidden): {error_message}",
+                status_code=403,
                 details={"api_error_type": error_type},
             )
         elif status_code == 429:

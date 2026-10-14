@@ -1,0 +1,422 @@
+[
+  {
+    "id": "pair_qty_001",
+    "category": "quantities_and_numbers",
+    "language_code": "hi-IN",
+    "code_switching_type": "hinglish_code_mixed",
+    "description": "Critical quantity distinction in e-commerce item ordering (2 vs 3 packets).",
+    "expected_distinction": "Utterance A orders quantity 2 whereas Utterance B orders quantity 3.",
+    "distinction_field": "quantity",
+    "audio_condition": "clean_synthetic",
+    "provenance": "synthetic_curated_challenge_spec",
+    "consent_metadata": "synthetic_no_pii",
+    "utterance_a": {
+      "id": "pair_qty_001_a",
+      "text": "Do packet chahiye",
+      "reference_transcript": "Do packet chahiye",
+      "expected_intent": "ORDER_PRODUCT",
+      "expected_critical_fields": {
+        "quantity": 2
+      },
+      "expected_action": "order_items_qty_2",
+      "simulated_crashed_transcript": "Ek packet chahiye"
+    },
+    "utterance_b": {
+      "id": "pair_qty_001_b",
+      "text": "Teen packet chahiye",
+      "reference_transcript": "Teen packet chahiye",
+      "expected_intent": "ORDER_PRODUCT",
+      "expected_critical_fields": {
+        "quantity": 3
+      },
+      "expected_action": "order_items_qty_3",
+      "simulated_crashed_transcript": "Do packet chahiye"
+    }
+  },
+  {
+    "id": "pair_qty_002",
+    "category": "quantities_and_numbers",
+    "language_code": "hi-IN",
+    "code_switching_type": "monolingual_hindi",
+    "description": "High-stakes financial magnitude difference: 5 Lakh INR vs 5 Thousand INR (100x disparity).",
+    "expected_distinction": "Utterance A transfers 5,00,000 INR whereas Utterance B transfers 5,000 INR.",
+    "distinction_field": "quantity",
+    "audio_condition": "clean_synthetic",
+    "provenance": "synthetic_curated_banking_spec",
+    "consent_metadata": "synthetic_no_pii",
+    "utterance_a": {
+      "id": "pair_qty_002_a",
+      "text": "Paanch lakh rupaye bhejo",
+      "reference_transcript": "Paanch lakh rupaye bhejo",
+      "expected_intent": "TRANSFER_FUNDS",
+      "expected_critical_fields": {
+        "quantity": 500000
+      },
+      "expected_action": "transfer_amount_500000",
+      "simulated_crashed_transcript": "Paanch hazaar rupaye bhejo"
+    },
+    "utterance_b": {
+      "id": "pair_qty_002_b",
+      "text": "Paanch hazaar rupaye bhejo",
+      "reference_transcript": "Paanch hazaar rupaye bhejo",
+      "expected_intent": "TRANSFER_FUNDS",
+      "expected_critical_fields": {
+        "quantity": 5000
+      },
+      "expected_action": "transfer_amount_5000",
+      "simulated_crashed_transcript": "Paanch lakh rupaye bhejo"
+    }
+  },
+  {
+    "id": "pair_neg_001",
+    "category": "negation",
+    "language_code": "hi-IN",
+    "code_switching_type": "hinglish_code_mixed",
+    "description": "Account cancellation command negation: retain subscription vs delete subscription.",
+    "expected_distinction": "Utterance A confirms cancellation whereas Utterance B explicitly forbids cancellation.",
+    "distinction_field": "is_negated",
+    "audio_condition": "clean_synthetic",
+    "provenance": "synthetic_curated_subscription_spec",
+    "consent_metadata": "synthetic_no_pii",
+    "utterance_a": {
+      "id": "pair_neg_001_a",
+      "text": "Haan subscription cancel kar do",
+      "reference_transcript": "Haan subscription cancel kar do",
+      "expected_intent": "CANCEL_BOOKING",
+      "expected_critical_fields": {
+        "is_negated": false,
+        "action": "cancel_booking"
+      },
+      "expected_action": "execute_subscription_cancellation",
+      "simulated_crashed_transcript": "Nahi subscription cancel mat karo"
+    },
+    "utterance_b": {
+      "id": "pair_neg_001_b",
+      "text": "Nahi subscription cancel mat karo",
+      "reference_transcript": "Nahi subscription cancel mat karo",
+      "expected_intent": "KEEP_BOOKING",
+      "expected_critical_fields": {
+        "is_negated": true,
+        "action": "keep_booking"
+      },
+      "expected_action": "preserve_subscription_status",
+      "simulated_crashed_transcript": "Haan subscription cancel kar do"
+    }
+  },
+  {
+    "id": "pair_neg_002",
+    "category": "negation",
+    "language_code": "en-IN",
+    "code_switching_type": "monolingual_english",
+    "description": "Indian English payment authorization: execute immediate wire vs withhold wire transfer.",
+    "expected_distinction": "Utterance A authorizes immediate transfer whereas Utterance B prohibits transfer.",
+    "distinction_field": "is_negated",
+    "audio_condition": "clean_synthetic",
+    "provenance": "synthetic_curated_corporate_treasury",
+    "consent_metadata": "synthetic_no_pii",
+    "utterance_a": {
+      "id": "pair_neg_002_a",
+      "text": "Transfer the funds now",
+      "reference_transcript": "Transfer the funds now",
+      "expected_intent": "TRANSFER_FUNDS",
+      "expected_critical_fields": {
+        "is_negated": false,
+        "action": "execute_transfer"
+      },
+      "expected_action": "wire_transfer_authorized",
+      "simulated_crashed_transcript": "Do not transfer the funds now"
+    },
+    "utterance_b": {
+      "id": "pair_neg_002_b",
+      "text": "Do not transfer the funds yet",
+      "reference_transcript": "Do not transfer the funds yet",
+      "expected_intent": "TRANSFER_FUNDS",
+      "expected_critical_fields": {
+        "is_negated": true,
+        "action": "block_transfer"
+      },
+      "expected_action": "wire_transfer_blocked",
+      "simulated_crashed_transcript": "Transfer the funds yet"
+    }
+  },
+  {
+    "id": "pair_corr_001",
+    "category": "corrections_and_mind_changes",
+    "language_code": "en-IN",
+    "code_switching_type": "monolingual_english",
+    "description": "In-flight destination correction: user rectifies destination from Mumbai to Delhi.",
+    "expected_distinction": "Utterance A corrects destination to Delhi whereas Utterance B directly books Mumbai.",
+    "distinction_field": "final_target",
+    "audio_condition": "clean_synthetic",
+    "provenance": "synthetic_curated_travel_booking",
+    "consent_metadata": "synthetic_no_pii",
+    "utterance_a": {
+      "id": "pair_corr_001_a",
+      "text": "Book flight to Mumbai no wait to Delhi",
+      "reference_transcript": "Book flight to Mumbai no wait to Delhi",
+      "expected_intent": "UNKNOWN_INTENT",
+      "expected_critical_fields": {
+        "correction_detected": true,
+        "final_target": "delhi"
+      },
+      "expected_action": "book_ticket_delhi",
+      "simulated_crashed_transcript": "Book flight to Mumbai"
+    },
+    "utterance_b": {
+      "id": "pair_corr_001_b",
+      "text": "Book flight to Mumbai",
+      "reference_transcript": "Book flight to Mumbai",
+      "expected_intent": "UNKNOWN_INTENT",
+      "expected_critical_fields": {
+        "correction_detected": false,
+        "final_target": "mumbai"
+      },
+      "expected_action": "book_ticket_mumbai",
+      "simulated_crashed_transcript": "Book flight to Delhi"
+    }
+  },
+  {
+    "id": "pair_corr_002",
+    "category": "corrections_and_mind_changes",
+    "language_code": "hi-IN",
+    "code_switching_type": "hinglish_code_mixed",
+    "description": "Quantity change-of-mind during food order: user updates count from 2 to 3 plates.",
+    "expected_distinction": "Utterance A updates final order to 3 plates whereas Utterance B orders 2 plates.",
+    "distinction_field": "final_target",
+    "audio_condition": "clean_synthetic",
+    "provenance": "synthetic_curated_restaurant_spec",
+    "consent_metadata": "synthetic_no_pii",
+    "utterance_a": {
+      "id": "pair_corr_002_a",
+      "text": "Do plate biryani nahi teen plate karo",
+      "reference_transcript": "Do plate biryani nahi teen plate karo",
+      "expected_intent": "ORDER_PRODUCT",
+      "expected_critical_fields": {
+        "correction_detected": true,
+        "final_target": 3
+      },
+      "expected_action": "prepare_3_plates",
+      "simulated_crashed_transcript": "Do plate biryani pack karo"
+    },
+    "utterance_b": {
+      "id": "pair_corr_002_b",
+      "text": "Do plate biryani pack karo",
+      "reference_transcript": "Do plate biryani pack karo",
+      "expected_intent": "ORDER_PRODUCT",
+      "expected_critical_fields": {
+        "correction_detected": false,
+        "final_target": 2
+      },
+      "expected_action": "prepare_2_plates",
+      "simulated_crashed_transcript": "Teen plate biryani pack karo"
+    }
+  },
+  {
+    "id": "pair_ent_001",
+    "category": "named_entities",
+    "language_code": "en-IN",
+    "code_switching_type": "monolingual_english",
+    "description": "Phonetically similar Indian personal names: Rahul Sharma vs Rohit Sharma.",
+    "expected_distinction": "Utterance A selects Rahul Sharma whereas Utterance B selects Rohit Sharma.",
+    "distinction_field": "person_name",
+    "audio_condition": "clean_synthetic",
+    "provenance": "synthetic_curated_crm_directory",
+    "consent_metadata": "synthetic_no_pii",
+    "utterance_a": {
+      "id": "pair_ent_001_a",
+      "text": "Send invoice to Rahul Sharma",
+      "reference_transcript": "Send invoice to Rahul Sharma",
+      "expected_intent": "UNKNOWN_INTENT",
+      "expected_critical_fields": {
+        "person_name": "Rahul Sharma"
+      },
+      "expected_action": "dispatch_invoice_rahul",
+      "simulated_crashed_transcript": "Send invoice to Rohit Sharma"
+    },
+    "utterance_b": {
+      "id": "pair_ent_001_b",
+      "text": "Send invoice to Rohit Sharma",
+      "reference_transcript": "Send invoice to Rohit Sharma",
+      "expected_intent": "UNKNOWN_INTENT",
+      "expected_critical_fields": {
+        "person_name": "Rohit Sharma"
+      },
+      "expected_action": "dispatch_invoice_rohit",
+      "simulated_crashed_transcript": "Send invoice to Rahul Sharma"
+    }
+  },
+  {
+    "id": "pair_prod_001",
+    "category": "product_names",
+    "language_code": "hi-IN",
+    "code_switching_type": "hinglish_code_mixed",
+    "description": "Acoustic product confusion: Gnani Prisma STT vs Krishna STT.",
+    "expected_distinction": "Utterance A provisions Prisma STT license whereas Utterance B mentions Krishna STT.",
+    "distinction_field": "product_name",
+    "audio_condition": "clean_synthetic",
+    "provenance": "synthetic_curated_ai_platform",
+    "consent_metadata": "synthetic_no_pii",
+    "utterance_a": {
+      "id": "pair_prod_001_a",
+      "text": "Prisma STT ka access enable karo",
+      "reference_transcript": "Prisma STT ka access enable karo",
+      "expected_intent": "UNKNOWN_INTENT",
+      "expected_critical_fields": {
+        "product_name": "Prisma STT"
+      },
+      "expected_action": "provision_prisma_stt",
+      "simulated_crashed_transcript": "Krishna STT ka access enable karo"
+    },
+    "utterance_b": {
+      "id": "pair_prod_001_b",
+      "text": "Krishna STT ka access enable karo",
+      "reference_transcript": "Krishna STT ka access enable karo",
+      "expected_intent": "UNKNOWN_INTENT",
+      "expected_critical_fields": {
+        "product_name": "Krishna STT"
+      },
+      "expected_action": "provision_krishna_stt",
+      "simulated_crashed_transcript": "Prisma STT ka access enable karo"
+    }
+  },
+  {
+    "id": "pair_prod_002",
+    "category": "product_names",
+    "language_code": "hi-IN",
+    "code_switching_type": "hinglish_code_mixed",
+    "description": "TTS voice model brand collision: Timbre TTS vs English word Timber.",
+    "expected_distinction": "Utterance A configures Gnani Timbre TTS engine whereas Utterance B is misrecognized as Timber.",
+    "distinction_field": "product_name",
+    "audio_condition": "clean_synthetic",
+    "provenance": "synthetic_curated_voice_engine",
+    "consent_metadata": "synthetic_no_pii",
+    "utterance_a": {
+      "id": "pair_prod_002_a",
+      "text": "Timbre voice synthesis model chuno",
+      "reference_transcript": "Timbre voice synthesis model chuno",
+      "expected_intent": "UNKNOWN_INTENT",
+      "expected_critical_fields": {
+        "product_name": "Timbre"
+      },
+      "expected_action": "activate_timbre_tts",
+      "simulated_crashed_transcript": "Timber voice synthesis model chuno"
+    },
+    "utterance_b": {
+      "id": "pair_prod_002_b",
+      "text": "Timber voice synthesis model chuno",
+      "reference_transcript": "Timber voice synthesis model chuno",
+      "expected_intent": "UNKNOWN_INTENT",
+      "expected_critical_fields": {
+        "product_name": "Timber"
+      },
+      "expected_action": "activate_timber_tts",
+      "simulated_crashed_transcript": "Timbre voice synthesis model chuno"
+    }
+  },
+  {
+    "id": "pair_cmd_001",
+    "category": "command_intent",
+    "language_code": "hi-IN",
+    "code_switching_type": "monolingual_hindi",
+    "description": "High-risk banking intent collision: balance check vs account closure ('band karo').",
+    "expected_distinction": "Utterance A checks account balance whereas Utterance B initiates account termination.",
+    "distinction_field": "intent",
+    "audio_condition": "clean_synthetic",
+    "provenance": "synthetic_curated_fintech_bot",
+    "consent_metadata": "synthetic_no_pii",
+    "utterance_a": {
+      "id": "pair_cmd_001_a",
+      "text": "Mera account balance check karo",
+      "reference_transcript": "Mera account balance check karo",
+      "expected_intent": "CHECK_BALANCE",
+      "expected_critical_fields": {
+        "intent": "CHECK_BALANCE"
+      },
+      "expected_action": "display_account_balance",
+      "simulated_crashed_transcript": "Mera account band kar do"
+    },
+    "utterance_b": {
+      "id": "pair_cmd_001_b",
+      "text": "Mera account band kar do",
+      "reference_transcript": "Mera account band kar do",
+      "expected_intent": "CLOSE_ACCOUNT",
+      "expected_critical_fields": {
+        "intent": "CLOSE_ACCOUNT"
+      },
+      "expected_action": "trigger_account_closure_flow",
+      "simulated_crashed_transcript": "Mera account balance check karo"
+    }
+  },
+  {
+    "id": "pair_cmd_002",
+    "category": "command_intent",
+    "language_code": "en-IN",
+    "code_switching_type": "monolingual_english",
+    "description": "Financial transaction direction inversion: 'Pay 500 rupees' vs 'Request 500 rupees'.",
+    "expected_distinction": "Utterance A pays funds out whereas Utterance B requests incoming payment.",
+    "distinction_field": "intent",
+    "audio_condition": "clean_synthetic",
+    "provenance": "synthetic_curated_upi_spec",
+    "consent_metadata": "synthetic_no_pii",
+    "utterance_a": {
+      "id": "pair_cmd_002_a",
+      "text": "Pay five hundred rupees",
+      "reference_transcript": "Pay five hundred rupees",
+      "expected_intent": "TRANSFER_FUNDS",
+      "expected_critical_fields": {
+        "intent": "TRANSFER_FUNDS",
+        "quantity": 500
+      },
+      "expected_action": "debit_user_account_500",
+      "simulated_crashed_transcript": "Request five hundred rupees"
+    },
+    "utterance_b": {
+      "id": "pair_cmd_002_b",
+      "text": "Request five hundred rupees",
+      "reference_transcript": "Request five hundred rupees",
+      "expected_intent": "REQUEST_FUNDS",
+      "expected_critical_fields": {
+        "intent": "REQUEST_FUNDS",
+        "quantity": 500
+      },
+      "expected_action": "send_upi_collect_request_500",
+      "simulated_crashed_transcript": "Pay five hundred rupees"
+    }
+  },
+  {
+    "id": "pair_cs_001",
+    "category": "hindi_english_code_switching",
+    "language_code": "hi-IN",
+    "code_switching_type": "hinglish_code_switched",
+    "description": "Hinglish code-switched shopping cart decision: cancel & empty cart vs confirm & checkout.",
+    "expected_distinction": "Utterance A cancels checkout & empties cart whereas Utterance B confirms order & checks out.",
+    "distinction_field": "intent",
+    "audio_condition": "clean_synthetic",
+    "provenance": "synthetic_curated_quick_commerce",
+    "consent_metadata": "synthetic_no_pii",
+    "utterance_a": {
+      "id": "pair_cs_001_a",
+      "text": "Order confirm mat karna cart empty karo",
+      "reference_transcript": "Order confirm mat karna cart empty karo",
+      "expected_intent": "EMPTY_CART",
+      "expected_critical_fields": {
+        "intent": "EMPTY_CART",
+        "is_negated": true
+      },
+      "expected_action": "clear_shopping_cart",
+      "simulated_crashed_transcript": "Order confirm kar do cart checkout karo"
+    },
+    "utterance_b": {
+      "id": "pair_cs_001_b",
+      "text": "Order confirm kar do cart checkout karo",
+      "reference_transcript": "Order confirm kar do cart checkout karo",
+      "expected_intent": "CONFIRM_ORDER",
+      "expected_critical_fields": {
+        "intent": "CONFIRM_ORDER",
+        "is_negated": false
+      },
+      "expected_action": "proceed_to_payment_gateway",
+      "simulated_crashed_transcript": "Order confirm mat karna cart empty karo"
+    }
+  }
+]

@@ -66,6 +66,11 @@ if static_dir.exists():
 
 templates = Jinja2Templates(directory=str(templates_dir))
 
+from app.routers.evaluation import router as evaluation_router
+from app.evaluation.dataset import load_seed_dataset
+
+app.include_router(evaluation_router)
+
 
 # -----------------------------------------------------------------------------
 # Exception Handlers
@@ -139,6 +144,7 @@ async def index_page(request: Request):
             "is_configured": settings.is_api_configured,
             "languages": LANGUAGE_META,
             "max_mb": settings.max_audio_size_bytes // (1024 * 1024),
+            "test_cases": load_seed_dataset(),
         },
     )
 

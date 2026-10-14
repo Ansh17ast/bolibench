@@ -228,3 +228,86 @@ async def test_gnani_client_timeout(mock_settings, valid_wav_bytes):
             )
         assert exc_info.value.status_code == 504
         assert "timed out" in exc_info.value.message
+
+
+@pytest.mark.asyncio
+async def test_gnani_client_unauthorized_401(mock_settings, valid_wav_bytes):
+    """Client translates 401 Unauthorized to GnaniAuthenticationError with 401 status."""
+    async def mock_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status_code=401,
+            json={
+                "success": False,
+                "error": {
+                    "type": "UNAUTHORIZED",
+                    "message": "Invalid API Key provided.",
+                },
+            },
+        )
+
+    transport = httpx.MockTransport(mock_handler)
+    async with httpx.AsyncClient(transport=transport) as http_client:
+        client = GnaniPrismaClient(settings=mock_settings, http_client=http_client)
+        with pytest.raises(GnaniAuthenticationError) as exc_info:
+            await client.transcribe(
+                audio_bytes=valid_wav_bytes,
+                filename="test.wav",
+                content_type="audio/wav",
+                language_code="hi-IN",
+            )
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.error_type == "UNAUTHORIZED"
+        assert "authentication failed" in exc_info.value.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_gnani_client_success_200_without_model(mock_settings, valid_wav_bytes):
+    """Client handles 200 OK without assuming a model name is returned."""
+    async def mock_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status_code=200,
+            json={
+                "success": True,
+                "request_id": "req_no_model_123",
+                "timestamp": "20261015_000000.000",
+                "transcript": "बिना मॉडल का जवाब",
+            },
+        )
+
+    transport = httpx.MockTransport(mock_handler)
+    async with httpx.AsyncClient(transport=transport) as http_client:
+        client = GnaniPrismaClient(settings=mock_settings, http_client=http_client)
+        result = await client.transcribe(
+            audio_bytes=valid_wav_bytes,
+            filename="test.wav",
+            content_type="audio/wav",
+            language_code="hi-IN",
+        )
+        assert result["success"] is True
+        assert result["transcript"] == "बिना मॉडल का जवाब"
+        assert result["model"] is None
+
+
+@pytest.mark.asyncio
+async def test_gnani_client_malformed_response_missing_transcript(mock_settings, valid_wav_bytes):
+    """Client raises GnaniServerError on 200 response missing the required transcript field."""
+    async def mock_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status_code=200,
+            json={
+                "success": True,
+                "request_id": "req_missing_transcript",
+            },
+        )
+
+    transport = httpx.MockTransport(mock_handler)
+    async with httpx.AsyncClient(transport=transport) as http_client:
+        client = GnaniPrismaClient(settings=mock_settings, http_client=http_client)
+        with pytest.raises(GnaniServerError) as exc_info:
+            await client.transcribe(
+                audio_bytes=valid_wav_bytes,
+                filename="test.wav",
+                content_type="audio/wav",
+                language_code="hi-IN",
+            )
+        assert exc_info.value.error_type == "MALFORMED_RESPONSE"

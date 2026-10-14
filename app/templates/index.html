@@ -41,149 +41,435 @@
       <div class="banner-icon">⚠️</div>
       <div class="banner-content">
         <strong>GNANI_API_KEY is not configured in your environment.</strong>
-        <p>To run live calls to Gnani Prisma, copy <code>.env.example</code> to <code>.env</code> and add your key from <a href="https://app.gnani.ai/voice" target="_blank" rel="noopener">app.gnani.ai/voice</a>. You can also test the full application flow immediately using <strong>Mock Mode</strong> below.</p>
+        <p>To run live calls to Gnani Prisma, copy <code>.env.example</code> to <code>.env</code> and add your key from <a href="https://app.gnani.ai/voice" target="_blank" rel="noopener">app.gnani.ai/voice</a>. You can test both the single-clip transcription and the full paired-contrast evaluation suite immediately using <strong>Mock Mode</strong> (0 credits consumed).</p>
       </div>
     </div>
     {% endif %}
 
-    <!-- Main Grid -->
-    <main class="lab-grid">
-      <!-- Input Card -->
-      <section class="card input-card">
-        <div class="card-header">
-          <h2>1. Audio Input & Parameters</h2>
-          <span class="badge">Prisma STT v3 REST</span>
-        </div>
+    <!-- Top Navigation Tabs -->
+    <nav class="lab-tabs" role="tablist">
+      <button class="lab-tab-btn active" id="tabBtnTranscribe" data-tab="transcribeView" role="tab" aria-selected="true">
+        <span class="tab-icon">🎙️</span> Speech Recognition Lab
+      </button>
+      <button class="lab-tab-btn" id="tabBtnEvaluate" data-tab="evaluateView" role="tab" aria-selected="false">
+        <span class="tab-icon">⚡</span> Paired-Contrast Crash Lab
+      </button>
+    </nav>
 
-        <form id="transcribeForm" class="lab-form">
-          <!-- Dropzone -->
-          <div class="dropzone" id="dropzone">
-            <input type="file" id="audioFileInput" name="audio_file" accept=".wav,.mp3,.ogg,.flac,.aac,.m4a" class="file-input" required>
-            <div class="dropzone-content" id="dropzonePrompt">
-              <div class="upload-icon">🎙️</div>
-              <p class="primary-text">Drag & drop Indian speech audio, or <span class="highlight">browse</span></p>
-              <p class="secondary-text">Supported: WAV, MP3, OGG, FLAC, AAC, M4A (Max 60s &bull; ≤ {{ max_mb }} MB)</p>
-            </div>
-            <!-- File selected state -->
-            <div class="selected-file-preview" id="selectedFilePreview" style="display: none;">
-              <div class="file-info">
-                <span class="file-icon">🎵</span>
-                <div class="file-meta">
-                  <span class="file-name" id="fileNameDisplay">audio.wav</span>
-                  <span class="file-size" id="fileSizeDisplay">1.2 MB</span>
-                </div>
-                <button type="button" class="btn-clear" id="btnClearFile" title="Remove file">✕</button>
-              </div>
-              <audio id="audioPreview" controls class="audio-player"></audio>
-            </div>
+    <!-- Tab 1: Single Audio Transcription Lab (Existing Working Functionality) -->
+    <div class="tab-pane active" id="transcribeView">
+      <main class="lab-grid">
+        <!-- Input Card -->
+        <section class="card input-card">
+          <div class="card-header">
+            <h2>1. Audio Input & Parameters</h2>
+            <span class="badge">Prisma STT v3 REST</span>
           </div>
 
-          <!-- Parameters Grid -->
-          <div class="params-grid">
-            <!-- Language Selector -->
+          <form id="transcribeForm" class="lab-form">
+            <!-- Dropzone -->
+            <div class="dropzone" id="dropzone">
+              <input type="file" id="audioFileInput" name="audio_file" accept=".wav,.mp3,.ogg,.flac,.aac,.m4a" class="file-input" required>
+              <div class="dropzone-content" id="dropzonePrompt">
+                <div class="upload-icon">🎙️</div>
+                <p class="primary-text">Drag & drop Indian speech audio, or <span class="highlight">browse</span></p>
+                <p class="secondary-text">Supported: WAV, MP3, OGG, FLAC, AAC, M4A (Max 60s &bull; ≤ {{ max_mb }} MB)</p>
+              </div>
+              <!-- File selected state -->
+              <div class="selected-file-preview" id="selectedFilePreview" style="display: none;">
+                <div class="file-info">
+                  <span class="file-icon">🎵</span>
+                  <div class="file-meta">
+                    <span class="file-name" id="fileNameDisplay">audio.wav</span>
+                    <span class="file-size" id="fileSizeDisplay">1.2 MB</span>
+                  </div>
+                  <button type="button" class="btn-clear" id="btnClearFile" title="Remove file">✕</button>
+                </div>
+                <audio id="audioPreview" controls class="audio-player"></audio>
+              </div>
+            </div>
+
+            <!-- Parameters Grid -->
+            <div class="params-grid">
+              <!-- Language Selector -->
+              <div class="form-group">
+                <label for="languageCode">Target Language</label>
+                <select id="languageCode" name="language_code" class="form-control" required>
+                  {% for code, meta in languages.items() %}
+                  <option value="{{ code }}" {% if code == 'hi-IN' %}selected{% endif %}>
+                    {{ meta.name }} ({{ meta.native }}) — {{ code }}
+                  </option>
+                  {% endfor %}
+                </select>
+                <span class="field-hint">Monolingual & bilingual ASR models</span>
+              </div>
+
+              <!-- Output Format -->
+              <div class="form-group">
+                <label for="formatMode">Output Format</label>
+                <select id="formatMode" name="format_mode" class="form-control">
+                  <option value="verbatim" selected>Verbatim (Raw spoken tokens)</option>
+                  <option value="transcribe">Transcribe (Inverse Text Normalization: ₹, numbers, dates)</option>
+                </select>
+                <span class="field-hint">ITN converts numbers & currency automatically</span>
+              </div>
+            </div>
+
+            <!-- Advanced Options -->
+            <div class="options-row">
+              <label class="checkbox-label" id="nativeNumeralsLabel">
+                <input type="checkbox" id="itnNativeNumerals" name="itn_native_numerals">
+                <span>Native Script Numerals (e.g. ₹५,०००)</span>
+              </label>
+
+              <label class="checkbox-label highlight-checkbox">
+                <input type="checkbox" id="mockMode" name="mock_mode" {% if not is_configured %}checked{% endif %}>
+                <span>Mock Mode (Local testing without API key)</span>
+              </label>
+            </div>
+
+            <!-- Submit Button -->
+            <button type="submit" class="btn-primary" id="btnSubmit">
+              <span class="btn-text" id="btnText">Transcribe with Gnani Prisma</span>
+              <span class="btn-spinner" id="btnSpinner" style="display: none;"></span>
+            </button>
+          </form>
+        </section>
+
+        <!-- Output Card -->
+        <section class="card output-card">
+          <div class="card-header">
+            <h2>2. Transcription & Telemetry</h2>
+            <span class="status-badge status-idle" id="resultStatusBadge">Awaiting Input</span>
+          </div>
+
+          <div class="output-body">
+            <!-- Diagnostics & Latency Banner -->
+            <div class="telemetry-grid">
+              <div class="telemetry-card">
+                <span class="telemetry-label">Client Latency</span>
+                <span class="telemetry-value" id="clientLatencyDisplay">—</span>
+              </div>
+              <div class="telemetry-card">
+                <span class="telemetry-label">Backend Latency</span>
+                <span class="telemetry-value" id="backendLatencyDisplay">—</span>
+              </div>
+              <div class="telemetry-card">
+                <span class="telemetry-label">Model Engine</span>
+                <span class="telemetry-value" id="modelDisplay">gnani-prisma-v2.5</span>
+              </div>
+              <div class="telemetry-card">
+                <span class="telemetry-label">Request ID</span>
+                <span class="telemetry-value telemetry-code" id="requestIdDisplay">—</span>
+              </div>
+            </div>
+
+            <!-- Transcript Result Container -->
+            <div class="transcript-container">
+              <div class="transcript-header">
+                <label>Recognized Speech Transcript</label>
+                <button type="button" class="btn-copy" id="btnCopyTranscript" title="Copy to clipboard" style="display: none;">Copy</button>
+              </div>
+              <div class="transcript-box" id="transcriptDisplay">
+                <p class="placeholder-text">Upload an audio recording on the left to inspect the speech transcript and latency diagnostics.</p>
+              </div>
+            </div>
+
+            <!-- Error Alert Container -->
+            <div class="error-alert" id="errorAlert" style="display: none;">
+              <div class="error-alert-header">
+                <span class="error-icon">❌</span>
+                <strong id="errorTypeDisplay">Error</strong>
+              </div>
+              <p id="errorMessageDisplay" class="error-message"></p>
+              <div id="errorRemediationDisplay" class="error-remediation" style="display: none;"></div>
+            </div>
+
+            <!-- Voice AI Crash-Test Note -->
+            <div class="crashtest-note">
+              <div class="note-icon">💡</div>
+              <div class="note-content">
+                <strong>BoliBench Focus:</strong> We crash-test downstream Voice Agent actions caused by small transcription errors (e.g. quantities, missed negations, incorrect product names).
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- Tab 2: Paired-Contrast Crash Lab (Differentiating Evaluation Engine) -->
+    <div class="tab-pane" id="evaluateView" style="display: none;">
+      <!-- Aggregate Benchmark Stats Banner -->
+      <section class="card benchmark-summary-card">
+        <div class="summary-stat-grid">
+          <div class="stat-box">
+            <span class="stat-number" id="statTotalRuns">0</span>
+            <span class="stat-title">Total Evaluations</span>
+          </div>
+          <div class="stat-box highlight-stat">
+            <span class="stat-number" id="statDistinctionRate">—%</span>
+            <span class="stat-title">Semantic Distinction Preserved</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-number" id="statTaskSuccessRate">—%</span>
+            <span class="stat-title">Downstream Task Success</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-number" id="statAvgWer">—</span>
+            <span class="stat-title">Mean Word Error Rate (WER)</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Main Evaluation Workspace Grid -->
+      <main class="eval-grid">
+        <!-- Left Column: Test Case Selection & Specifications -->
+        <section class="card eval-spec-card">
+          <div class="card-header">
+            <h2>1. Select Contrast Test Case</h2>
+            <span class="badge" id="testCategoryBadge">quantities_and_numbers</span>
+          </div>
+
+          <div class="eval-form-body">
+            <!-- Category Filter & Selector -->
             <div class="form-group">
-              <label for="languageCode">Target Language</label>
-              <select id="languageCode" name="language_code" class="form-control" required>
-                {% for code, meta in languages.items() %}
-                <option value="{{ code }}" {% if code == 'hi-IN' %}selected{% endif %}>
-                  {{ meta.name }} ({{ meta.native }}) — {{ code }}
+              <label for="evalTestCaseSelect">Curated Test Pair</label>
+              <select id="evalTestCaseSelect" class="form-control">
+                {% for tc in test_cases %}
+                <option value="{{ tc.id }}" data-category="{{ tc.category.value }}" data-lang="{{ tc.language_code }}">
+                  [{{ tc.category.value }}] {{ tc.id }}: {{ tc.description }}
                 </option>
                 {% endfor %}
               </select>
-              <span class="field-hint">Monolingual & bilingual ASR models</span>
+              <span class="field-hint" id="testDescriptionText">Select an Indian voice AI edge case to inspect</span>
             </div>
 
-            <!-- Output Format -->
-            <div class="form-group">
-              <label for="formatMode">Output Format</label>
-              <select id="formatMode" name="format_mode" class="form-control">
-                <option value="verbatim" selected>Verbatim (Raw spoken tokens)</option>
-                <option value="transcribe">Transcribe (Inverse Text Normalization: ₹, numbers, dates)</option>
-              </select>
-              <span class="field-hint">ITN converts numbers & currency automatically</span>
+            <!-- Paired Utterance Specifications -->
+            <div class="pair-specs-container">
+              <!-- Utterance A Card -->
+              <div class="utterance-spec-card" id="specCardA">
+                <div class="spec-card-header">
+                  <span class="spec-badge badge-a">Utterance A</span>
+                  <span class="lang-pill" id="specLangA">hi-IN</span>
+                </div>
+                <div class="spec-content">
+                  <div class="spec-row">
+                    <span class="spec-label">Spoken Reference:</span>
+                    <strong class="spec-text" id="specRefA">"Do packet chahiye."</strong>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Expected Intent:</span>
+                    <code id="specIntentA">ORDER_PRODUCT</code>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Expected Fields:</span>
+                    <code class="code-pill" id="specFieldsA">quantity: 2</code>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Agent Action:</span>
+                    <span class="action-tag" id="specActionA">order_items_qty_2</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Contrast Divider -->
+              <div class="contrast-divider">
+                <span class="vs-badge">VS</span>
+                <span class="contrast-label" id="specDistinctionField">Critical Distinction: quantity</span>
+              </div>
+
+              <!-- Utterance B Card -->
+              <div class="utterance-spec-card" id="specCardB">
+                <div class="spec-card-header">
+                  <span class="spec-badge badge-b">Utterance B (Contrast)</span>
+                  <span class="lang-pill" id="specLangB">hi-IN</span>
+                </div>
+                <div class="spec-content">
+                  <div class="spec-row">
+                    <span class="spec-label">Spoken Reference:</span>
+                    <strong class="spec-text" id="specRefB">"Teen packet chahiye."</strong>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Expected Intent:</span>
+                    <code id="specIntentB">ORDER_PRODUCT</code>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Expected Fields:</span>
+                    <code class="code-pill" id="specFieldsB">quantity: 3</code>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Agent Action:</span>
+                    <span class="action-tag" id="specActionB">order_items_qty_3</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Expected Distinction Card -->
+            <div class="distinction-summary-box">
+              <span class="dist-icon">🎯</span>
+              <div class="dist-content">
+                <strong>Evaluation Hypothesis:</strong>
+                <p id="specExpectedDistinctionText">Utterance A orders quantity 2 whereas Utterance B orders quantity 3.</p>
+              </div>
+            </div>
+
+            <!-- Run Action Buttons -->
+            <div class="eval-actions-group">
+              <button type="button" class="btn-success" id="btnRunMockIdeal">
+                <span>Run Preserved Distinction (Mock)</span>
+              </button>
+              <button type="button" class="btn-danger" id="btnRunMockCrashed">
+                <span>Simulate Acoustic Crash (Error)</span>
+              </button>
+              <button type="button" class="btn-secondary" id="btnToggleCustomInputs">
+                <span>Custom Transcript Test</span>
+              </button>
+            </div>
+
+            <!-- Custom Transcript Input Drawer (Collapsible) -->
+            <div class="custom-transcript-drawer" id="customTranscriptDrawer" style="display: none;">
+              <h3>Custom Spoken Transcript Scoring</h3>
+              <p class="drawer-hint">Enter your own transcripts to test how BoliBench evaluates them against the ground truth specification:</p>
+              <div class="form-group">
+                <label for="customTranscriptA">Utterance A Actual Transcript</label>
+                <input type="text" id="customTranscriptA" class="form-control" placeholder="Enter transcript for Utterance A">
+              </div>
+              <div class="form-group">
+                <label for="customTranscriptB">Utterance B Actual Transcript</label>
+                <input type="text" id="customTranscriptB" class="form-control" placeholder="Enter transcript for Utterance B">
+              </div>
+              <button type="button" class="btn-primary" id="btnScoreCustomTranscripts">
+                <span>Score Custom Transcripts</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Right Column: Evaluation Scorecard & Crash Diagnostics -->
+        <section class="card eval-results-card">
+          <div class="card-header">
+            <h2>2. Evaluation Scorecard & Crash Analysis</h2>
+            <span class="status-badge status-idle" id="evalStatusBadge">Awaiting Execution</span>
+          </div>
+
+          <div class="eval-results-body" id="evalResultsPlaceholder">
+            <div class="empty-state">
+              <div class="empty-icon">📊</div>
+              <h3>No Evaluation Executed Yet</h3>
+              <p>Choose a test case on the left and click <strong>"Run Preserved Distinction"</strong> or <strong>"Simulate Acoustic Crash"</strong> to see paired-contrast scoring, Word Error Rate, field extraction, and downstream agent impact.</p>
             </div>
           </div>
 
-          <!-- Advanced Options (ITN Native script & Mock Mode) -->
-          <div class="options-row">
-            <label class="checkbox-label" id="nativeNumeralsLabel">
-              <input type="checkbox" id="itnNativeNumerals" name="itn_native_numerals">
-              <span>Native Script Numerals (e.g. ₹५,०००)</span>
-            </label>
+          <div class="eval-results-body" id="evalResultsContainer" style="display: none;">
+            <!-- Primary Outcome Banner -->
+            <div class="outcome-banner" id="evalOutcomeBanner">
+              <div class="outcome-icon" id="evalOutcomeIcon">⚡</div>
+              <div class="outcome-details">
+                <div class="outcome-title-row">
+                  <h3 id="evalOutcomeTitle">Semantic Distinction Status</h3>
+                  <span class="exec-mode-pill" id="evalExecModePill">MOCK MODE</span>
+                </div>
+                <p id="evalOutcomeExplanation"></p>
+              </div>
+            </div>
 
-            <label class="checkbox-label highlight-checkbox">
-              <input type="checkbox" id="mockMode" name="mock_mode" {% if not is_configured %}checked{% endif %}>
-              <span>Mock Mode (Local testing without API key)</span>
-            </label>
+            <!-- Key Metric Metrics Cards -->
+            <div class="scorecard-metric-row">
+              <div class="scorecard-metric-card">
+                <span class="metric-label">Semantic Distinction</span>
+                <span class="metric-val" id="metricDistinctionDisplay">—</span>
+              </div>
+              <div class="scorecard-metric-card">
+                <span class="metric-label">Downstream Task Success</span>
+                <span class="metric-val" id="metricTaskSuccessDisplay">—</span>
+              </div>
+              <div class="scorecard-metric-card">
+                <span class="metric-label">Mean WER</span>
+                <span class="metric-val" id="metricMeanWerDisplay">—</span>
+              </div>
+              <div class="scorecard-metric-card">
+                <span class="metric-label">Critical Field Acc.</span>
+                <span class="metric-val" id="metricFieldAccDisplay">—</span>
+              </div>
+            </div>
+
+            <!-- Detailed Utterance Comparison Table -->
+            <div class="comparison-table-wrapper">
+              <table class="contrast-table">
+                <thead>
+                  <tr>
+                    <th>Utterance</th>
+                    <th>Expected Reference</th>
+                    <th>Actual Transcript</th>
+                    <th>WER</th>
+                    <th>Extracted Critical Fields</th>
+                    <th>Task Action</th>
+                  </tr>
+                </thead>
+                <tbody id="evalComparisonTableBody">
+                  <!-- Populated via JS -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Voice Agent Crash Impact Analysis Card -->
+            <div class="crash-impact-card" id="crashImpactCard">
+              <div class="crash-card-header">
+                <span class="crash-icon">🚨</span>
+                <h4>Downstream Voice Agent Crash Analysis</h4>
+              </div>
+              <p id="crashImpactDescription" class="crash-impact-text"></p>
+              <div class="crash-field-tags" id="crashFieldTags"></div>
+            </div>
+
+            <!-- Run Metadata & Latency -->
+            <div class="run-telemetry-footer">
+              <span id="runIdDisplay">Run ID: —</span>
+              <span id="runLatencyDisplay">Client Latency: — ms</span>
+              <span id="runTimestampDisplay">Timestamp: —</span>
+            </div>
           </div>
+        </section>
+      </main>
 
-          <!-- Submit Button -->
-          <button type="submit" class="btn-primary" id="btnSubmit">
-            <span class="btn-text" id="btnText">Transcribe with Gnani Prisma</span>
-            <span class="btn-spinner" id="btnSpinner" style="display: none;"></span>
-          </button>
-        </form>
-      </section>
-
-      <!-- Output Card -->
-      <section class="card output-card">
+      <!-- Bottom History and Export Table -->
+      <section class="card eval-history-card">
         <div class="card-header">
-          <h2>2. Transcription & Telemetry</h2>
-          <span class="status-badge status-idle" id="resultStatusBadge">Awaiting Input</span>
+          <h2>Evaluation Run History & Data Export</h2>
+          <div class="export-actions">
+            <a href="/api/eval/export?format=csv" class="btn-export" download="bolibench_evaluation_results.csv">
+              <span>📥 Export CSV</span>
+            </a>
+            <a href="/api/eval/export?format=json" class="btn-export" download="bolibench_evaluation_results.json">
+              <span>📥 Export JSON</span>
+            </a>
+          </div>
         </div>
 
-        <div class="output-body">
-          <!-- Diagnostics & Latency Banner -->
-          <div class="telemetry-grid">
-            <div class="telemetry-card">
-              <span class="telemetry-label">Client Latency</span>
-              <span class="telemetry-value" id="clientLatencyDisplay">—</span>
-            </div>
-            <div class="telemetry-card">
-              <span class="telemetry-label">Backend Latency</span>
-              <span class="telemetry-value" id="backendLatencyDisplay">—</span>
-            </div>
-            <div class="telemetry-card">
-              <span class="telemetry-label">Model Engine</span>
-              <span class="telemetry-value" id="modelDisplay">gnani-prisma-v2.5</span>
-            </div>
-            <div class="telemetry-card">
-              <span class="telemetry-label">Request ID</span>
-              <span class="telemetry-value telemetry-code" id="requestIdDisplay">—</span>
-            </div>
-          </div>
-
-          <!-- Transcript Result Container -->
-          <div class="transcript-container">
-            <div class="transcript-header">
-              <label>Recognized Speech Transcript</label>
-              <button type="button" class="btn-copy" id="btnCopyTranscript" title="Copy to clipboard" style="display: none;">Copy</button>
-            </div>
-            <div class="transcript-box" id="transcriptDisplay">
-              <p class="placeholder-text">Upload an audio recording on the left to inspect the speech transcript and latency diagnostics.</p>
-            </div>
-          </div>
-
-          <!-- Error Alert Container -->
-          <div class="error-alert" id="errorAlert" style="display: none;">
-            <div class="error-alert-header">
-              <span class="error-icon">❌</span>
-              <strong id="errorTypeDisplay">Error</strong>
-            </div>
-            <p id="errorMessageDisplay" class="error-message"></p>
-            <div id="errorRemediationDisplay" class="error-remediation" style="display: none;"></div>
-          </div>
-
-          <!-- Voice AI Crash-Test Note -->
-          <div class="crashtest-note">
-            <div class="note-icon">💡</div>
-            <div class="note-content">
-              <strong>BoliBench Focus:</strong> We crash-test downstream Voice Agent actions caused by small transcription errors (e.g. quantities, missed negations, incorrect product names).
-            </div>
-          </div>
+        <div class="history-table-wrapper">
+          <table class="history-table">
+            <thead>
+              <tr>
+                <th>Run ID</th>
+                <th>Test Case ID</th>
+                <th>Category</th>
+                <th>Language</th>
+                <th>Distinction Preserved</th>
+                <th>Task Success</th>
+                <th>Mean WER</th>
+                <th>Failure Category</th>
+                <th>Mode</th>
+                <th>Timestamp</th>
+              </tr>
+            </thead>
+            <tbody id="historyTableBody">
+              <!-- Populated via JS -->
+            </tbody>
+          </table>
         </div>
       </section>
-    </main>
+    </div>
 
     <!-- Footer -->
     <footer class="app-footer">

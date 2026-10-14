@@ -54,7 +54,7 @@ class TranscriptionResponse(BaseModel):
     success: bool = True
     transcript: str = Field(..., description="Recognized speech transcript")
     request_id: Optional[str] = Field(None, description="Gnani API request ID or trace ID")
-    model: Optional[str] = Field("gnani-prisma-v2.5", description="Speech recognition model identifier")
+    model: Optional[str] = Field(None, description="Speech recognition model identifier if returned by provider")
     server_timestamp: Optional[str] = Field(None, description="Timestamp from Gnani server")
     language_code: str = Field(..., description="Language code of audio")
     format: str = Field("verbatim", description="verbatim or transcribe (ITN)")

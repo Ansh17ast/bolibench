@@ -79,15 +79,19 @@ Sent via `multipart/form-data`:
   "model": "gnani-prisma-v2.5"
 }
 ```
+*(Engineering Note: The `model` field is optional in the official OpenAPI specification. The client must never assume `model` is always present or returned by the server.)*
 
 ### 2.8 Documented Error Responses
-| HTTP Status | Error Type (`error.type`) | Typical Reason |
-|---|---|---|
-| `400` | `INVALID_REQUEST_ERROR` | Audio exceeds 60 seconds, invalid language code, corrupt audio file. |
-| `403` | `FORBIDDEN` | Missing/invalid `X-API-Key-ID`, expired credentials, or exhausted credits. |
-| `429` | `RATE_LIMIT_ERROR` | Concurrency or rate limit threshold reached. |
-| `500` | `API_ERROR` | Internal server or processing error on Gnani backend. |
-| `503` | `SERVICE_UNAVAILABLE` | Speech recognition cluster temporarily down or restarting. |
+| HTTP Status | Error Type (`error.type`) | Typical Reason | Client Handling |
+|---|---|---|---|
+| `400` | `INVALID_REQUEST_ERROR` | Audio exceeds 60 seconds, invalid language code, corrupt audio file. | `GnaniBadRequestError` (400) |
+| `401` | `UNAUTHORIZED` | Invalid API key format or unauthorized request. | `GnaniAuthenticationError` (401) |
+| `403` | `FORBIDDEN` | Missing/invalid `X-API-Key-ID`, expired credentials, or exhausted credits. | `GnaniAuthenticationError` (403) |
+| `429` | `RATE_LIMIT_ERROR` | Concurrency or rate limit threshold reached. | `GnaniRateLimitError` (429) |
+| `500` | `API_ERROR` | Internal server or processing error on Gnani backend. | `GnaniServerError` (500) |
+| `502` | `MALFORMED_RESPONSE` | Upstream returned 200 OK without a `transcript` field. | `GnaniServerError` (502) |
+| `503` | `SERVICE_UNAVAILABLE` | Speech recognition cluster temporarily down or restarting. | `GnaniServiceUnavailableError` (503) |
+| `504` | `GATEWAY_TIMEOUT` | Request timed out exceeding configured timeout window. | `GnaniTimeoutError` (504) |
 
 Error JSON Structure:
 ```json
@@ -109,13 +113,13 @@ Error JSON Structure:
 | **Base Endpoint URL** | **CONFIRMED** | Gnani Official REST STT v3 OpenAPI Spec | `https://api.vachana.ai/stt/v3` |
 | **Auth Header** | **CONFIRMED** | Gnani Official REST STT v3 OpenAPI Spec | `X-API-Key-ID: <key>` |
 | **Request Form Encoding** | **CONFIRMED** | Documentation & cURL samples | `multipart/form-data` |
-| **Supported File Formats** | **CONFIRMED** | OpenAPI Specification `audio_file` field | WAV, MP3, OGG, FLAC, AAC, M4A |
+| **Supported File Formats** | **CONFIRMED** | OpenAPI Specification `audio_file` field | WAV, MP3, OGG, FLAC, AAC, M4A verified |
 | **Max Duration Constraint** | **CONFIRMED** | OpenAPI Documentation | 60 seconds max |
 | **10 Language Codes** | **CONFIRMED** | OpenAPI Spec `language_code` enum | `bn-IN`, `en-IN`, `gu-IN`, `hi-IN`, `kn-IN`, `ml-IN`, `mr-IN`, `pa-IN`, `ta-IN`, `te-IN` |
-| **Response Format** | **CONFIRMED** | OpenAPI Spec `STTResponse` schema | `success`, `transcript`, `timestamp`, `request_id` |
-| **Error Format** | **CONFIRMED** | OpenAPI Spec `StandardErrorResponse` schema | `success: false`, `error: {type, message}` |
-| **Live Account Authentication** | **REQUIRES USER TEST** | User's Gnani Console Account | Live request has **not** been run yet because the user must provide their `GNANI_API_KEY` in `.env`. |
-| **Account Credits / Quotas** | **REQUIRES USER TEST** | User's Gnani Dashboard | 5,000 challenge credits apply per registration. |
+| **Response Format** | **CONFIRMED** | OpenAPI Spec `STTResponse` schema | `success`, `transcript`, `timestamp`, `request_id` (`model` is optional) |
+| **Error Format (400, 401, 403, 429, 500, 503)** | **CONFIRMED** | OpenAPI Spec `StandardErrorResponse` schema | `success: false`, `error: {type, message}` |
+| **Live Account Authentication** | **PENDING USER SETUP** | User's Gnani Console Account | Live request pending configuration of `GNANI_API_KEY` in `.env`. |
+| **Account Credits / Quotas** | **PENDING USER SETUP** | User's Gnani Dashboard | 5,000 challenge credits apply per registration. |
 
 ---
 
