@@ -126,3 +126,51 @@ async def test_transcribe_missing_credentials_unmocked(async_client, valid_wav_b
     assert result["error_type"] == "MISSING_CREDENTIALS"
     assert "remediation" in result
     assert "GNANI_API_KEY" in result["remediation"]
+
+
+@pytest.mark.asyncio
+async def test_single_audio_latency_labels_and_semantics(async_client, valid_wav_bytes):
+    """Proves single-audio transcription UI labels and response field semantics.
+
+    - Replaces ambiguous 'Backend Latency' with 'Backend-measured Gnani API request time'.
+    - Confirms 'Browser End-to-End Latency' is kept separate.
+    - Confirms 'Provider-Internal Processing Time' shows 'Not reported' when not provided by Gnani.
+    - Confirms backend_latency_ms is preserved as an alias for client_request_elapsed_ms.
+    """
+    # 1. UI presentation labels
+    resp_index = await async_client.get("/")
+    assert resp_index.status_code == 200
+    html = resp_index.text
+    assert "Browser End-to-End Latency" in html
+    assert "Backend-measured Gnani API request time" in html
+    assert "Provider-Internal Processing Time" in html
+    assert "Not reported" in html
+
+    # 2. API response data semantics
+    files = {
+        "audio_file": ("sample.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+    data = {
+        "language_code": "hi-IN",
+        "format_mode": "verbatim",
+        "mock_mode": "true",
+    }
+    resp = await async_client.post("/api/transcribe", files=files, data=data)
+    assert resp.status_code == 200
+    result = resp.json()
+    assert result["backend_latency_ms"] == 15.5
+    assert result["client_request_elapsed_ms"] == 15.5
+    assert result["provider_processing_time_ms"] is None
+
+
+@pytest.mark.asyncio
+async def test_health_check_live_evaluation_disabled_by_default(async_client, monkeypatch):
+    """Proves /health endpoint reflects that live evaluation is disabled by default."""
+    monkeypatch.delenv("LIVE_EVALUATION_ENABLED", raising=False)
+    from app.config import get_settings
+    get_settings.cache_clear()
+
+    resp = await async_client.get("/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["live_evaluation_enabled"] is False

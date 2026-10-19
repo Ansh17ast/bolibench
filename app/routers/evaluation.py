@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.evaluation.engine import EvaluationEngine
 from app.evaluation.schemas import (
     AggregateMetrics,
+    AudioCondition,
     EvaluateTranscriptsRequest,
     PairEvaluationResult,
     TestCasePair,
@@ -33,12 +34,20 @@ async def authorize_live_evaluation(
     """Authorizes an upcoming live evaluation run by issuing a single-use authorization token.
 
     Security & Credit Guard:
+    - Rejects request if live evaluation is disabled (LIVE_EVALUATION_ENABLED=false).
     - Validates same-origin headers (Sec-Fetch-Site, Origin, Referer).
     - Requires target test case existence.
     - Issues a cryptographically random, single-use, 5-minute token.
     - NEVER makes any external network calls or consumes credits.
     - NEVER logs the issued token secret.
     """
+    settings = get_settings()
+    if not settings.live_evaluation_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Live evaluation is disabled by default to protect programme credits. Set LIVE_EVALUATION_ENABLED=true in .env for authorized local operator testing.",
+        )
+
     test_case = engine.get_test_case(req.test_id)
     if not test_case:
         raise HTTPException(
@@ -105,23 +114,48 @@ async def run_live_evaluation(
 
     CREDIT PROTECTION & AUTHORIZATION GUARD:
     - Rejects request BEFORE reading uploads into memory or invoking provider if:
-      - Origin is cross-site / cross-origin
+      - Live evaluation is disabled (LIVE_EVALUATION_ENABLED=false)
+      - Origin is cross-site / cross-origin / untrusted
       - Anti-CSRF confirmation header X-BoliBench-Confirm-Live is missing or invalid
       - Single-use confirmation token is missing, invalid, expired, or already consumed
+    - Validates audio_condition against AudioCondition enum (rejects text_only_simulation on live audio).
     - Requires GNANI_API_KEY to be configured in .env.
     """
-    # 0. STRICT AUTHORIZATION & CREDIT GUARD CHECK FIRST
+    # 0. STRICT DEPLOYMENT SAFETY & CREDIT GUARD FIRST
+    settings = get_settings()
+    if not settings.live_evaluation_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Live evaluation is disabled by default to protect programme credits. Set LIVE_EVALUATION_ENABLED=true in .env for authorized local operator testing.",
+        )
+
+    # 1. Verify single-use token and anti-CSRF header
     live_guard.verify_authorization(
         test_id=test_id,
         confirmation_token=confirmation_token,
         request=request,
     )
 
-    settings = get_settings()
     if not settings.is_api_configured:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Gnani API key is not configured. Set GNANI_API_KEY in .env to perform live evaluations.",
+        )
+
+    # 2. Validate acoustic condition metadata against AudioCondition enum
+    try:
+        cond_enum = AudioCondition(audio_condition)
+    except ValueError:
+        valid_conditions = [c.value for c in AudioCondition]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid audio_condition '{audio_condition}'. Must be one of: {valid_conditions}",
+        )
+
+    if cond_enum == AudioCondition.TEXT_ONLY_SIMULATION:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Condition 'text_only_simulation' cannot be used for live audio evaluation. Please select an acoustic recording condition (e.g. 'clean_recorded', 'noisy_recorded', 'clean_synthetic', 'noisy_synthetic', 'pending_acoustic').",
         )
 
     test_case = engine.get_test_case(test_id)
@@ -133,7 +167,7 @@ async def run_live_evaluation(
 
     validator = AudioValidator(max_size_bytes=settings.max_audio_size_bytes)
 
-    # 1. Read & Validate Audio File A in memory
+    # 3. Read & Validate Audio File A in memory
     try:
         content_a = await audio_file_a.read()
     except Exception as exc:
@@ -143,7 +177,7 @@ async def run_live_evaluation(
         )
     ext_a, content_type_a = validator.validate(audio_file_a.filename, content_a)
 
-    # 2. Read & Validate Audio File B in memory
+    # 4. Read & Validate Audio File B in memory
     try:
         content_b = await audio_file_b.read()
     except Exception as exc:
@@ -153,7 +187,7 @@ async def run_live_evaluation(
         )
     ext_b, content_type_b = validator.validate(audio_file_b.filename, content_b)
 
-    # 3. Server-side Gnani client invocation
+    # 5. Server-side Gnani client invocation
     client = GnaniPrismaClient(settings=settings)
 
     try:
@@ -166,7 +200,7 @@ async def run_live_evaluation(
             filename_b=audio_file_b.filename or f"utterance_b{ext_b}",
             content_type_b=content_type_b,
             client=client,
-            audio_condition=audio_condition,
+            audio_condition=cond_enum.value,
         )
         return result
     except GnaniClientError as exc:

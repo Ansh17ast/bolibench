@@ -58,7 +58,17 @@ class LiveEvaluationGuard:
         return token
 
     def validate_same_origin(self, request: Request) -> None:
-        """Rejects cross-origin or cross-site requests to live evaluation routes."""
+        """Rejects cross-origin, cross-site, or missing-origin requests to live evaluation routes.
+
+        Origin Verification Policy:
+        - In browser flows, browsers always provide either 'Origin' (on POST) or 'Referer'.
+        - Requests with untrusted Origin or Referer are rejected with 403 Forbidden.
+        - Requests missing both Origin and Referer are rejected with 403 Forbidden.
+        - Documented Development / Test Exception:
+          Automated test harnesses (e.g. starlette TestClient targeting 'testserver') or direct
+          local loopback tools running on localhost / 127.0.0.1 may omit Origin headers if
+          specifically operating on local loopback hosts (testserver, 127.0.0.1, localhost).
+        """
         # 1. Sec-Fetch-Site (modern browser defense against CSRF)
         fetch_site = request.headers.get("sec-fetch-site")
         if fetch_site in ("cross-site",):
@@ -68,10 +78,31 @@ class LiveEvaluationGuard:
                 detail="Forbidden: Cross-origin requests to live evaluation are prohibited to protect programme credits.",
             )
 
-        # 2. Origin check
-        origin = request.headers.get("origin")
-        if origin:
-            parsed = urlparse(origin)
+        # 2. Origin & Referer Verification
+        raw_origin = request.headers.get("origin") or request.headers.get("referer")
+        req_hostname = (request.url.hostname or "").lower()
+
+        if not raw_origin:
+            # Documented development/test exception:
+            # Test harnesses (host='test' or 'testserver' in pytest/httpx) and local loopback development callers
+            # on 127.0.0.1 or localhost may omit Origin headers.
+            # Non-local hosts (public deployments, remote domains) are strictly rejected.
+            if req_hostname in ("test", "testserver", "localhost", "127.0.0.1"):
+                logger.debug(
+                    "Permitting missing Origin under documented local development/test exception for host=%s",
+                    req_hostname,
+                )
+            else:
+                logger.warning(
+                    "Rejected live evaluation request: Missing Origin or Referer header on non-local host '%s'",
+                    req_hostname,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Forbidden: Missing Origin or Referer header. Live evaluation requires verified browser origin information.",
+                )
+        else:
+            parsed = urlparse(raw_origin)
             host = parsed.netloc.lower()
             req_host = request.url.netloc.lower()
             allowed_hosts = {
@@ -80,10 +111,11 @@ class LiveEvaluationGuard:
                 "127.0.0.1:8000",
                 "localhost:3000",
                 "127.0.0.1:3000",
+                "test",
                 "testserver",  # pytest starlette TestClient host
             }
-            if host not in allowed_hosts and parsed.hostname not in {"localhost", "127.0.0.1", "testserver"}:
-                logger.warning("Rejected live evaluation with untrusted origin: %s", origin)
+            if host not in allowed_hosts and parsed.hostname not in {"localhost", "127.0.0.1", "test", "testserver"}:
+                logger.warning("Rejected live evaluation with untrusted origin: %s", raw_origin)
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Forbidden: Untrusted origin. Cross-origin access to live evaluation is prohibited.",

@@ -66,6 +66,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const resultStatusBadge = document.getElementById("resultStatusBadge");
   const clientLatencyDisplay = document.getElementById("clientLatencyDisplay");
   const backendLatencyDisplay = document.getElementById("backendLatencyDisplay");
+  const providerProcessingDisplay = document.getElementById("providerProcessingDisplay");
   const modelDisplay = document.getElementById("modelDisplay");
   const requestIdDisplay = document.getElementById("requestIdDisplay");
 
@@ -228,7 +229,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function displaySuccess(data, clientLatencyMs) {
     clientLatencyDisplay.textContent = `${clientLatencyMs} ms`;
-    backendLatencyDisplay.textContent = `${data.backend_latency_ms} ms`;
+    // Backend-measured Gnani API request time
+    const reqElapsed = data.client_request_elapsed_ms != null ? data.client_request_elapsed_ms : data.backend_latency_ms;
+    backendLatencyDisplay.textContent = `${reqElapsed} ms`;
+
+    if (providerProcessingDisplay) {
+      providerProcessingDisplay.textContent = data.provider_processing_time_ms != null
+        ? `${data.provider_processing_time_ms} ms`
+        : "Not reported";
+    }
+
     modelDisplay.textContent = data.model || "gnani-prisma-v2.5";
     requestIdDisplay.textContent = data.request_id || "req_local";
 
@@ -247,6 +257,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function displayError(err, clientLatencyMs) {
     clientLatencyDisplay.textContent = `${clientLatencyMs} ms`;
+    backendLatencyDisplay.textContent = "—";
+    if (providerProcessingDisplay) {
+      providerProcessingDisplay.textContent = "—";
+    }
+
     resultStatusBadge.className = "status-badge status-error";
     resultStatusBadge.textContent = `Failed (${err.status || "ERR"})`;
 
@@ -480,11 +495,14 @@ document.addEventListener("DOMContentLoaded", () => {
       const authData = await authResp.json();
       const authToken = authData.confirmation_token;
 
-      // Step 2: Build multipart payload with confirmation token
+      // Step 2: Build multipart payload with confirmation token and user-declared acoustic condition
+      const liveAudioConditionSelect = document.getElementById("liveAudioCondition");
+      const selectedCondition = liveAudioConditionSelect ? liveAudioConditionSelect.value : "clean_recorded";
+
       const formData = new FormData();
       formData.append("audio_file_a", liveAudioInputA.files[0]);
       formData.append("audio_file_b", liveAudioInputB.files[0]);
-      formData.append("audio_condition", "clean_recorded");
+      formData.append("audio_condition", selectedCondition);
       formData.append("confirmation_token", authToken);
 
       btnLiveEvalText.textContent = "Transcribing Live via Gnani...";

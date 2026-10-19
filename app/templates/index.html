@@ -147,12 +147,16 @@
             <!-- Diagnostics & Latency Banner -->
             <div class="telemetry-grid">
               <div class="telemetry-card">
-                <span class="telemetry-label">Client Latency</span>
+                <span class="telemetry-label">Browser End-to-End Latency</span>
                 <span class="telemetry-value" id="clientLatencyDisplay">—</span>
               </div>
               <div class="telemetry-card">
-                <span class="telemetry-label">Backend Latency</span>
+                <span class="telemetry-label">Backend-measured Gnani API request time</span>
                 <span class="telemetry-value" id="backendLatencyDisplay">—</span>
+              </div>
+              <div class="telemetry-card">
+                <span class="telemetry-label">Provider-Internal Processing Time</span>
+                <span class="telemetry-value" id="providerProcessingDisplay">Not reported</span>
               </div>
               <div class="telemetry-card">
                 <span class="telemetry-label">Model Engine</span>
@@ -332,6 +336,16 @@
 
             <!-- Live Audio Pair Evaluation Drawer (Credit Protected) -->
             <div class="live-eval-drawer" id="liveEvalDrawer" style="display: none;">
+              {% if not live_evaluation_enabled %}
+              <div class="banner banner-warning" id="liveDisabledWarning" style="margin-bottom: 1rem; border-color: rgba(239, 68, 68, 0.5); background: rgba(239, 68, 68, 0.1);">
+                <div class="banner-icon">🔒</div>
+                <div class="banner-content">
+                  <strong>Live Evaluation Disabled by Safety Policy</strong>
+                  <p>To protect programme credits on public deployments, live provider calls are disabled by default (<code>LIVE_EVALUATION_ENABLED=false</code>). For authorized local operator testing, set <code>LIVE_EVALUATION_ENABLED=true</code> in your local <code>.env</code> file.</p>
+                </div>
+              </div>
+              {% endif %}
+
               <div class="credit-warning-box">
                 <span class="credit-warning-icon">⚠️</span>
                 <div class="credit-warning-text">
@@ -348,6 +362,21 @@
               <div class="form-group">
                 <label for="liveAudioInputB">Utterance B Audio (<span id="liveRefPromptB">Teen packet chahiye</span>)</label>
                 <input type="file" id="liveAudioInputB" accept=".wav,.mp3,.ogg,.flac,.aac,.m4a" class="form-control">
+              </div>
+
+              <!-- Acoustic Environment Metadata Selector -->
+              <div class="form-group">
+                <label for="liveAudioCondition">Acoustic Condition (User-Declared Metadata)</label>
+                <select id="liveAudioCondition" class="form-control">
+                  <option value="clean_recorded" selected>clean_recorded (User-declared clean speech)</option>
+                  <option value="noisy_recorded">noisy_recorded (User-declared ambient noise)</option>
+                  <option value="clean_synthetic">clean_synthetic (Synthetic/TTS audio)</option>
+                  <option value="noisy_synthetic">noisy_synthetic (Synthetic audio with mixed noise)</option>
+                  <option value="pending_acoustic">pending_acoustic (Unverified acoustic condition)</option>
+                </select>
+                <span class="field-hint" style="color: var(--text-muted); font-size: 0.8rem; display: block; margin-top: 0.35rem;">
+                  <strong>Notice:</strong> This condition is user-declared metadata for benchmark cataloguing, not automatic acoustic verification or SNR measurement.
+                </span>
               </div>
 
               <div class="form-group">

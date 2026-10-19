@@ -101,7 +101,7 @@ BoliBench tracks four primary metrics to measure both acoustic accuracy and sema
 - **Frontend:** Vanilla HTML5, CSS3, and JavaScript (Zero external CDN dependencies, self-contained)
 - **Audio Validation:** In-memory container, duration (≤ 60s), size (≤ 25MB), and header signature validation
 - **Evaluation Engine:** Deterministic rule-based slot extractors, dynamic programming Levenshtein WER, and paired-contrast scoring
-- **Automated Testing:** `pytest` (57 tests passing in < 1 second, 0 network calls, 0 credits spent)
+- **Automated Testing:** `pytest` (84 tests passing in ~1.18s, 0 network calls, 0 credits spent)
 
 Official Gnani API verification details are documented in [`docs/gnani_api_verification.md`](docs/gnani_api_verification.md).
 
@@ -136,11 +136,11 @@ bolibench/
 │   ├── routers/
 │   │   ├── __init__.py
 │   │   └── evaluation.py            # REST endpoints for test cases, scoring, metrics, and export
-│   │   └── __init__.py
 │   ├── services/
 │   │   ├── __init__.py
 │   │   ├── audio_validator.py       # Audio container, signature, size, and duration validation
-│   │   └── gnani_client.py          # Gnani Prisma STT REST client with 401/403/429/500/503 handling
+│   │   ├── gnani_client.py          # Gnani Prisma STT REST client with 401/403/429/500/503 handling
+│   │   └── live_guard.py            # Server-side credit guard, origin check & anti-CSRF token manager
 │   ├── static/
 │   │   ├── css/
 │   │   │   └── style.css            # Developer-grade responsive styling and evaluation scorecard
@@ -153,9 +153,9 @@ bolibench/
     ├── conftest.py                  # Pytest fixtures and in-memory WAV audio generators
     ├── test_audio_validator.py      # WAV, MP3, OGG, FLAC, AAC, M4A format and duration tests (12 tests)
     ├── test_gnani_client.py         # Mocked client tests: 200, 400, 401, 403, 429, 500, 503, timeouts (11 tests)
-    ├── test_routes.py               # FastAPI route tests: /health, /, /api/transcribe (7 tests)
-    ├── test_evaluation_engine.py    # WER, normalization, extractors, contrast scoring, SQLite (19 tests)
-    └── test_evaluation_routes.py    # Evaluation API route tests: test cases, mock run, metrics, export (8 tests)
+    ├── test_routes.py               # FastAPI route tests: /health, /, /api/transcribe, telemetry labels (9 tests)
+    ├── test_evaluation_engine.py    # WER, normalization, extractors, contrast scoring, SQLite (21 tests)
+    └── test_evaluation_routes.py    # Evaluation API route tests: safety defaults, auth, tokens, live runs (31 tests)
 ```
 
 ---
@@ -177,13 +177,18 @@ Copy the template configuration:
 ```powershell
 Copy-Item .env.example .env
 ```
-Open `.env` and set your key:
+Open `.env` and configure settings:
 ```ini
+# Optional API Key for real provider requests
 GNANI_API_KEY=your_actual_key_from_app_gnani_ai
-```
-> **Security Notice:** The `.env` file is excluded in `.gitignore` and must never be committed. The backend never exposes the key to client JavaScript. If no key is configured, the application functions in **Mock Mode** with zero external network requests and zero credit usage.
 
-### Step 4: Launch the Server
+# Live evaluation safety switch (Disabled by default to protect credits on public deployments)
+# Set to 'true' only for authorized local development operator testing
+LIVE_EVALUATION_ENABLED=false
+```
+> **Security Notice:** The `.env` file is excluded in `.gitignore` and must never be committed. The backend never exposes the key to client JavaScript. If no key is configured or `LIVE_EVALUATION_ENABLED=false`, the application operates in safe **Mock-Only Mode** with zero external network requests and zero credit usage.
+
+### Step 4: Launch the Server (Bound to Localhost)
 ```powershell
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
@@ -206,7 +211,7 @@ Open your browser to:
    - Critical Field Accuracy: 100%
    - Distinction Preserved: YES
    - Task Success: YES
-   - Measured Latency: N/A (0 network requests made)
+   - Measured Latency: null (Mock Mode — 0 Network Calls)
 4. Click **"Simulate Transcript Crash (Error)"** to test downstream failure against hand-authored corrupted transcripts (demonstrates how downstream ordering agent crashes without claiming uncalibrated acoustic measurements). Notice:
    - Failure Classification: `QUANTITY_ERROR`
    - Distinction Preserved: NO
@@ -224,22 +229,25 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/eval/run-mock/pai
 
 ### B. Running Paired Live Audio Evaluation (Consumes Credits)
 
-1. In the **Paired-Contrast Crash Lab** tab, select a test pair.
-2. Click **"🎙️ Live Audio Pair (Consumes Credits)"** to reveal the credit-protected live drawer.
-3. Select an audio file for Utterance A and an audio file for Utterance B (WAV, MP3, OGG, FLAC, AAC, M4A ≤ 60s).
-4. Review the credit warning notice and check the authorization checkbox:
+1. Set `LIVE_EVALUATION_ENABLED=true` and configure your `GNANI_API_KEY` in `.env`.
+2. In the **Paired-Contrast Crash Lab** tab, select a test pair.
+3. Click **"🎙️ Live Audio Pair (Consumes Credits)"** to reveal the credit-protected live drawer.
+4. Select an audio file for Utterance A and an audio file for Utterance B (WAV, MP3, OGG, FLAC, AAC, M4A ≤ 60s).
+5. Select the **Acoustic Condition** (`clean_recorded`, `noisy_recorded`, `clean_synthetic`, `noisy_synthetic`, `pending_acoustic`). This is explicitly user-declared metadata for benchmark cataloguing, not automatic acoustic detection.
+6. Review the credit warning notice and check the authorization checkbox:
    `[x] I authorize 2 live API requests to Gnani Prisma and credit deduction`
-5. Click **"Execute Paired Live Evaluation"** and confirm the interactive prompt.
-6. The frontend and backend execute the secure authorization flow:
+7. Click **"Execute Paired Live Evaluation"** and confirm the interactive prompt.
+8. The frontend and backend execute the secure authorization flow:
    - Frontend requests a single-use authorization token via `POST /api/eval/authorize-live`.
-   - Backend validates same-origin headers (`Sec-Fetch-Site`, `Origin`) and issues a 5-minute single-use cryptographic token.
-   - Frontend submits audio uploads with `confirmation_token` and custom header `X-BoliBench-Confirm-Live: CONFIRM_LIVE_EVALUATION`.
-   - Backend verifies authorization BEFORE reading files or initiating network requests.
+   - Backend verifies `LIVE_EVALUATION_ENABLED=true` and validates same-origin headers (`Sec-Fetch-Site`, `Origin`).
+   - Issues a 5-minute single-use cryptographic token.
+   - Frontend submits audio uploads with `confirmation_token`, `audio_condition`, and custom header `X-BoliBench-Confirm-Live: CONFIRM_LIVE_EVALUATION`.
+   - Backend verifies authorization and validates `audio_condition` against the `AudioCondition` enum BEFORE reading files or initiating network requests.
    - Validates both audio files in-memory using `AudioValidator` (zero disk persistence).
    - Sequentially executes live calls to `https://api.vachana.ai/stt/v3` with your `GNANI_API_KEY`.
-   - Records genuine client elapsed round-trip time (`client_request_elapsed_ms`) and keeps `provider_processing_time_ms = null` (since Gnani STT does not report server processing duration).
+   - Records genuine client elapsed round-trip time (`client_request_elapsed_ms`, with `backend_latency_ms` alias) and keeps `provider_processing_time_ms = null` ("Not reported" in UI).
    - Evaluates returned transcripts using the deterministic scoring engine.
-   - Preserves provider request IDs.
+   - Preserves provider request IDs and persists run to SQLite.
    - If either call fails, the evaluation halts immediately, ensuring no partial or misleading result is recorded.
 
 ---
@@ -251,17 +259,17 @@ Run the test suite:
 python -m pytest -v
 ```
 
-### Actual Test Suite Result (78 Tests Passing):
+### Actual Test Suite Result (84 Tests Passing):
 ```
-collected 78 items
+collected 84 items
 
-tests/test_audio_validator.py ............                               [ 15%]
-tests/test_evaluation_engine.py .....................                   [ 42%]
-tests/test_evaluation_routes.py ...........................             [ 76%]
-tests/test_gnani_client.py ...........                                   [ 91%]
-tests/test_routes.py .......                                             [100%]
+tests/test_audio_validator.py ............                               [ 14%]
+tests/test_evaluation_engine.py .....................                   [ 39%]
+tests/test_evaluation_routes.py ...............................         [ 76%]
+tests/test_gnani_client.py ...........                                   [ 89%]
+tests/test_routes.py .........                                           [100%]
 
-============================= 78 passed in 1.13s ==============================
+============================= 84 passed in 1.18s ==============================
 ```
 
 ### Verified vs. Pending Status Matrix
@@ -270,10 +278,10 @@ tests/test_routes.py .......                                             [100%]
 |---|---|---|
 | **Audio File Validation** | **VERIFIED** | 12 tests: WAV, MP3, OGG, FLAC, AAC, M4A, file limits (25MB), duration limits (60s), magic byte headers. |
 | **Gnani REST STT v3 Client** | **VERIFIED** | 11 tests: Verified against official OpenAPI 3.1 specification. Measures client-side elapsed time; correctly reports `provider_processing_time_ms = null` when omitted by provider. |
-| **FastAPI Core Routes** | **VERIFIED** | 7 tests: `/health`, `/`, `/api/transcribe` in mock and live modes with validation. |
+| **FastAPI Core Routes & Telemetry** | **VERIFIED** | 9 tests: `/health` (reflecting `live_evaluation_enabled=false` default), `/`, `/api/transcribe` with clear labels: "Browser End-to-End Latency", "Backend-measured Gnani API request time", "Provider-Internal Processing Time" ("Not reported"). |
 | **Evaluation Metrics Engine** | **VERIFIED** | 21 tests: Exact Levenshtein WER, slot extractors, contrast scoring, mock vs live telemetry isolation, SQLite persistence, latency semantics. |
-| **Evaluation REST API & Guard** | **VERIFIED** | 27 tests: Test pair catalog, mock execution, custom transcripts, live paired audio endpoint, upload validation, partial failure handling, server-side authorization token (`/authorize-live`), anti-CSRF header, cross-origin rejection, single-use token protection, and CSV/JSON export. |
-| **Live Account Transcription** | **PENDING USER SETUP** | Requires the user to insert their personal `GNANI_API_KEY` into `.env` and execute against their account credits. |
+| **Evaluation REST API & Guard** | **VERIFIED** | 31 tests: Test pair catalog, mock execution, custom transcripts, live paired audio endpoint, upload validation, partial failure handling, default disabled live evaluation (`LIVE_EVALUATION_ENABLED=false`), zero provider calls on disabled/unauthorized requests, acoustic condition validation, server-side authorization token (`/authorize-live`), anti-CSRF header, cross-origin rejection, missing origin on non-local host rejection, and CSV/JSON export. |
+| **Live Account Transcription** | **PENDING USER SETUP** | Requires the user to set `LIVE_EVALUATION_ENABLED=true`, insert their personal `GNANI_API_KEY` into `.env`, and execute against their account credits. |
 
 ---
 
@@ -283,10 +291,10 @@ tests/test_routes.py .......                                             [100%]
 |---|---|---|
 | `GET` | `/api/eval/test-cases` | List all 12 seed paired-contrast test cases |
 | `GET` | `/api/eval/test-cases/{test_id}` | Retrieve specific test case metadata and expected fields |
-| `POST` | `/api/eval/authorize-live` | Issue single-use cryptographic authorization token for upcoming live run |
+| `POST` | `/api/eval/authorize-live` | Issue single-use cryptographic authorization token for upcoming live run (requires `LIVE_EVALUATION_ENABLED=true`) |
 | `POST` | `/api/eval/run-mock/{test_id}?scenario=ideal_preserved` | Run deterministic mock evaluation (preserves distinction; 0 credits) |
 | `POST` | `/api/eval/run-mock/{test_id}?scenario=crashed_distinction` | Run deterministic mock evaluation with hand-authored simulated corruption |
-| `POST` | `/api/eval/run-live/{test_id}` | Execute live paired audio evaluation against Gnani Prisma STT v3 (requires confirmation token & header; consumes credits) |
+| `POST` | `/api/eval/run-live/{test_id}` | Execute live paired audio evaluation against Gnani Prisma STT v3 (requires `LIVE_EVALUATION_ENABLED=true`, confirmation token, anti-CSRF header, and valid `audio_condition`; consumes credits) |
 | `POST` | `/api/eval/evaluate-transcripts` | Evaluate custom or actual transcripts against expected ground truth |
 | `GET` | `/api/eval/results` | List evaluation runs stored in SQLite |
 | `GET` | `/api/eval/results/{run_id}` | Retrieve specific evaluation run |
@@ -298,8 +306,9 @@ tests/test_routes.py .......                                             [100%]
 
 ## 10. Security Guarantees & Hardened Credit Protection
 
+- **Deployment Safety Default:** `LIVE_EVALUATION_ENABLED` defaults to `false`. When deployed to public hosting, endpoints that could consume the owner's credits are completely inert and reject requests with `403 Forbidden` before reading uploads or calling the provider.
 - **Server-Side Credit Guard:** Live evaluation requires an explicit authorization step (`POST /api/eval/authorize-live`) generating a single-use, 5-minute cryptographically random token.
-- **Anti-CSRF & Origin Verification:** Requests require `X-BoliBench-Confirm-Live: CONFIRM_LIVE_EVALUATION` and are checked against `Sec-Fetch-Site` and `Origin`. Cross-origin requests are blocked with `403 Forbidden` before reading file uploads or invoking the provider.
+- **Anti-CSRF & Origin Verification:** Requests require `X-BoliBench-Confirm-Live: CONFIRM_LIVE_EVALUATION` and are checked against `Sec-Fetch-Site` and `Origin`. Cross-origin requests and requests missing origin information on non-local hosts are blocked with `403 Forbidden` before reading file uploads or invoking the provider.
 - **Restricted CORS Policy:** Restricted to local same-origin development hosts (`localhost:8000`, `127.0.0.1:8000`, `localhost:3000`, `127.0.0.1:3000`).
 - **Zero Credential Exposure:** `GNANI_API_KEY` is loaded on the backend via Pydantic Settings and is **never** sent to the browser.
 - **Safe Representation:** `Settings.__repr__` masks credentials to prevent secret leakage in logs or terminal outputs. Authorization tokens never appear in evaluation results or server logs.
@@ -312,6 +321,7 @@ tests/test_routes.py .......                                             [100%]
 ## 11. Known Limitations & Research Boundaries
 
 1. **Text-Only Simulation Baseline:** The current 12 seed pairs are hand-authored linguistic test cases (`text_only_simulation`). BoliBench does not claim acoustic noise robustness has been evaluated until real audio has been processed.
-2. **Pending Calibrated Acoustic Research (`pending_acoustic`):** Future extensions will record all 24 utterances under calibrated multi-speaker noise environments (street noise, call center chatter, reverberant rooms) with measured SNR.
-3. **Regional Indian Language Expansion:** Current coverage spans Hindi (`hi-IN`) and Indian English (`en-IN`). Planned additions will expand into Tamil (`ta-IN`), Telugu (`te-IN`), Kannada (`kn-IN`), and Bengali (`bn-IN`).
-4. **No Clinical or Superiority Claims:** BoliBench is an objective diagnostic framework benchmarking downstream voice agent semantic robustness. It makes no claims of clinical diagnostic validation or unverified benchmark superiority.
+2. **User-Declared Acoustic Metadata:** The `audio_condition` field is user-declared metadata for benchmark cataloguing, not automatic acoustic detection. BoliBench does not pretend acoustic conditions can be detected automatically.
+3. **Pending Calibrated Acoustic Research (`pending_acoustic`):** Future extensions will record all 24 utterances under calibrated multi-speaker noise environments (street noise, call center chatter, reverberant rooms) with measured SNR following ITU-T P.56 standards.
+4. **Regional Indian Language Expansion:** Current coverage spans Hindi (`hi-IN`) and Indian English (`en-IN`). Planned additions will expand into Tamil (`ta-IN`), Telugu (`te-IN`), Kannada (`kn-IN`), and Bengali (`bn-IN`).
+5. **No Clinical or Superiority Claims:** BoliBench is an objective diagnostic framework benchmarking downstream voice agent semantic robustness. It makes no claims of clinical diagnostic validation or unverified benchmark superiority.

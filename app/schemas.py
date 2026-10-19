@@ -43,6 +43,7 @@ class HealthResponse(BaseModel):
     """Health status response."""
     status: str = "ok"
     gnani_api_configured: bool
+    live_evaluation_enabled: bool = False
     app_environment: str
     supported_languages: List[str]
     supported_formats: List[str]
@@ -50,7 +51,13 @@ class HealthResponse(BaseModel):
 
 
 class TranscriptionResponse(BaseModel):
-    """Transcription output model returned by BoliBench backend."""
+    """Transcription output model returned by BoliBench backend.
+
+    Latency Semantics:
+    - client_request_elapsed_ms: Locally measured round-trip elapsed time around the upstream Gnani HTTP request.
+    - backend_latency_ms: Backwards-compatible alias for client_request_elapsed_ms.
+    - provider_processing_time_ms: Internal server processing time reported by provider; null when not reported.
+    """
     success: bool = True
     transcript: str = Field(..., description="Recognized speech transcript")
     request_id: Optional[str] = Field(None, description="Gnani API request ID or trace ID")
@@ -58,7 +65,18 @@ class TranscriptionResponse(BaseModel):
     server_timestamp: Optional[str] = Field(None, description="Timestamp from Gnani server")
     language_code: str = Field(..., description="Language code of audio")
     format: str = Field("verbatim", description="verbatim or transcribe (ITN)")
-    backend_latency_ms: float = Field(..., description="Round-trip latency in milliseconds")
+    backend_latency_ms: float = Field(
+        ...,
+        description="Backwards-compatible alias for client_request_elapsed_ms: locally measured elapsed time in ms around the upstream Gnani HTTP request",
+    )
+    client_request_elapsed_ms: Optional[float] = Field(
+        None,
+        description="Locally measured elapsed time in ms around upstream Gnani HTTP request (not provider internal processing)",
+    )
+    provider_processing_time_ms: Optional[float] = Field(
+        None,
+        description="Provider-internal backend processing duration in ms if reported by upstream API; null/None when not reported by Gnani",
+    )
     is_mocked: bool = Field(False, description="Flag indicating if response was produced by a mock engine")
 
 

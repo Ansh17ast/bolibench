@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
 
+    # Live Evaluation Safety Guard (Disabled by default to protect owner credits on public deployments)
+    live_evaluation_enabled: bool = False
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -39,7 +42,7 @@ class Settings(BaseSettings):
 
     def __repr__(self) -> str:
         """Safe string representation preventing credential leaks."""
-        return f"<Settings app_env={self.app_env} gnani_api_configured={self.is_api_configured}>"
+        return f"<Settings app_env={self.app_env} gnani_api_configured={self.is_api_configured} live_eval_enabled={self.live_evaluation_enabled}>"
 
 
 @lru_cache()

@@ -79,7 +79,7 @@ Sent via `multipart/form-data`:
   "model": "gnani-prisma-v2.5"
 }
 ```
-*(Engineering Note on Provider Latency: The official OpenAPI specification for Gnani STT REST v3 does not include a provider-side processing time field in its response. Consequently, BoliBench records client-measured HTTP elapsed time as `client_request_elapsed_ms` and preserves `provider_processing_time_ms = null`. Client elapsed time is never substituted or fabricated as provider processing time.)*
+*(Engineering Note on Provider Latency: The official OpenAPI specification for Gnani STT REST v3 does not include a provider-side processing time field in its response. Consequently, BoliBench records client-measured HTTP elapsed time as `client_request_elapsed_ms` (with `backend_latency_ms` maintained as a backwards-compatible alias) and preserves `provider_processing_time_ms = null` (rendered as "Not reported"). Client elapsed time is never substituted or fabricated as provider processing time.)*
 
 ### 2.8 Documented Error Responses
 | HTTP Status | Error Type (`error.type`) | Typical Reason | Client Handling |
@@ -117,8 +117,10 @@ Error JSON Structure:
 | **Max Duration Constraint** | **CONFIRMED** | OpenAPI Documentation | 60 seconds max |
 | **10 Language Codes** | **CONFIRMED** | OpenAPI Spec `language_code` enum | `bn-IN`, `en-IN`, `gu-IN`, `hi-IN`, `kn-IN`, `ml-IN`, `mr-IN`, `pa-IN`, `ta-IN`, `te-IN` |
 | **Response Format** | **CONFIRMED** | OpenAPI Spec `STTResponse` schema | `success`, `transcript`, `timestamp`, `request_id` (`model` is optional; no server processing duration reported) |
+| **Telemetry Semantics** | **CONFIRMED & HARDENED** | BoliBench Telemetry Separation | Browser end-to-end latency vs backend-measured Gnani API request time vs provider processing time ("Not reported"). |
 | **Error Format (400, 401, 403, 429, 500, 503)** | **CONFIRMED** | OpenAPI Spec `StandardErrorResponse` schema | `success: false`, `error: {type, message}` |
-| **Paired Live Audio Route** | **CONFIRMED & TESTED** | `POST /api/eval/run-live/{test_id}` | Protected by server authorization token (`/api/eval/authorize-live`), anti-CSRF header, same-origin check, and atomic partial failure abortion. |
+| **Deployment Safety Setting** | **CONFIRMED & IMPLEMENTED** | `LIVE_EVALUATION_ENABLED=false` | Server defaults to disabled live evaluation to protect credits on public deployments. |
+| **Paired Live Audio Route** | **CONFIRMED & TESTED** | `POST /api/eval/run-live/{test_id}` | Protected by server authorization token (`/api/eval/authorize-live`), anti-CSRF header, same-origin check, acoustic condition enum validation, and atomic partial failure abortion. |
 | **Live Account Authentication** | **PENDING USER SETUP** | User's Gnani Console Account | Live request pending user-supplied `GNANI_API_KEY` in `.env`. |
 | **Credit Protection** | **CONFIRMED & HARDENED** | BoliBench Safety Guardrails | Automated tests consume 0 credits. UI and API require server-side authorization token, confirmation header, and user consent before live calls. |
 
@@ -132,5 +134,6 @@ Error JSON Structure:
 > **Credit Protection Guarantees:**
 > 1. The automated test suite (`python -m pytest -v`) runs exclusively against deterministic mocked provider responses. Zero live network calls are made during tests, consuming zero programme credits.
 > 2. The web application never triggers live requests automatically on page load or when switching tabs.
-> 3. The paired live evaluation endpoint (`POST /api/eval/run-live/{test_id}`) is guarded by an explicit authorization step (`POST /api/eval/authorize-live`), requiring a single-use token, custom anti-CSRF header, and same-origin verification.
-> 4. API keys and confirmation secrets are managed strictly on the server backend and are never leaked to client responses or application logs.
+> 3. The server defaults to `LIVE_EVALUATION_ENABLED=false` so public or untrusted deployments cannot trigger billable calls without operator authorization.
+> 4. The paired live evaluation endpoint (`POST /api/eval/run-live/{test_id}`) is guarded by an explicit authorization step (`POST /api/eval/authorize-live`), requiring a single-use token, custom anti-CSRF header, and same-origin verification.
+> 5. API keys and confirmation secrets are managed strictly on the server backend and are never leaked to client responses or application logs.

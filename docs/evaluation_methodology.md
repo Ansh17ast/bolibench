@@ -151,11 +151,17 @@ When an evaluation run fails, the engine assigns an explicit diagnostic classifi
   - `en-IN` (English - India): Indian English accent & syntax patterns.
 - **Dataset Classification (`audio_condition: text_only_simulation`):**
   All 12 seed pairs represent **hand-authored text specifications**. In accordance with scientific integrity guidelines, BoliBench explicitly categorizes them as text-only simulations (`text_only_simulation`, provenance `hand_authored_text_simulation`).
-- **Terminology & Boundary Guarantees:**
-  - **Hand-authored simulated transcript corruption:** Predetermined text corruptions injected for deterministic crash demonstration (e.g. demonstrating how a quantity substitution crashes an order agent). These are **not** reported as measured model errors or acoustic noise tests.
-  - **Actual recorded audio processed by Gnani Prisma:** Genuine spoken audio recordings evaluated via `POST /api/eval/run-live/{test_id}` or `POST /api/transcribe`.
-  - **Actual recorded audio tested under a measured noisy condition:** Testing under calibrated ambient noise (e.g. street noise, call center babble). Marked as `pending_acoustic` until authentic multi-speaker audio with calibrated SNR is collected.
-  - **Synthetic or generated audio:** Spoken audio produced by TTS engines (e.g. Gnani Timbre), only classified as synthetic audio when genuine audio files exist.
+- **Acoustic Condition Metadata & Non-Detection Principle:**
+  - `audio_condition` is strictly **user-declared metadata** for benchmark cataloguing, validated against the `AudioCondition` enum (`clean_recorded`, `noisy_recorded`, `clean_synthetic`, `noisy_synthetic`, `pending_acoustic`).
+  - BoliBench **does not pretend acoustic conditions can be detected automatically**. It does not perform unverified SNR or acoustic scene classification.
+  - A recording must **never** be labeled "noisy" merely because noise testing is planned.
+  - `text_only_simulation` is strictly restricted to text-based evaluation and cannot be selected for live audio uploads.
+- **Protocol for Producing Calibrated Noisy Recordings (Future Work):**
+  When noisy acoustic evaluations are eventually performed, the following rigorous procedure must be executed and documented:
+  1. **Noise Sources:** Standardized acoustic noise profiles (e.g. Demand dataset, cafeteria babble, urban traffic noise, Indian call center ambient chatter).
+  2. **Calibrated Mixing:** Active speech levels must be calibrated in dBov according to ITU-T P.56 speech voltmeter standards.
+  3. **Target Signal-to-Noise Ratio (SNR):** Additive mixing at calibrated SNR tiers (+15 dB, +10 dB, +5 dB, 0 dB).
+  4. **Provenance Documentation:** Audio metadata must record the noise source file, mixing script, target SNR, and room reverberation ($RT_{60}$) parameters.
 - **Privacy & PII:** Contains zero personal data, telephone numbers, or real customer call audio (`text_simulation_no_pii`).
 - **Storage:** Persisted as versioned JSON in `app/evaluation/data/seed_pairs.json`.
 
@@ -171,16 +177,21 @@ BoliBench strictly isolates execution semantics, telemetry, and credit protectio
   - **Telemetry Semantics:** Fabricated latency numbers are strictly prohibited. `client_request_elapsed_ms`, `client_measured_latency_ms`, and `provider_processing_time_ms` remain strictly `null`. If latency is simulated for demonstration, it is recorded exclusively in `simulated_latency_ms` and clearly labeled as simulated in the UI and exports.
 - **Live Execution Mode (`live`):**
   - Available via the paired live-audio endpoint `POST /api/eval/run-live/{test_id}`.
+  - **Deployment Safety Policy (`LIVE_EVALUATION_ENABLED`):**
+    - The server defaults to `LIVE_EVALUATION_ENABLED=false` to protect the operator's Gnani API credits when deployed to public hosting or demo environments.
+    - When disabled, both `POST /api/eval/authorize-live` and `POST /api/eval/run-live/{test_id}` reject requests with `403 Forbidden` before reading uploads into memory or initiating any provider calls.
+    - Live execution is available only for authorized local development and operator testing when explicitly enabled via `LIVE_EVALUATION_ENABLED=true` in `.env`.
   - **Server-Side Authorization & Credit Guard:**
     - Live execution requires an explicit authorization handshake via `POST /api/eval/authorize-live` before any provider calls are permitted.
     - The server issues a cryptographically secure, time-limited (5-minute), single-use authorization token mapped to the specific test case.
     - Requests must include the custom anti-CSRF header `X-BoliBench-Confirm-Live: CONFIRM_LIVE_EVALUATION`.
-    - Same-origin headers (`Sec-Fetch-Site`, `Origin`, `Referer`) are strictly validated against trusted local development origins (`localhost:8000`, `127.0.0.1:8000`, `localhost:3000`, `127.0.0.1:3000`). Untrusted or cross-origin requests are rejected with `403 Forbidden` before reading file uploads or invoking the provider.
+    - Same-origin headers (`Sec-Fetch-Site`, `Origin`, `Referer`) are strictly validated against trusted local development origins (`localhost:8000`, `127.0.0.1:8000`, `localhost:3000`, `127.0.0.1:3000`, `test`, `testserver`). Untrusted or cross-origin requests are rejected with `403 Forbidden`. Missing origin information is rejected on non-local hosts under a documented development exception.
     - Single-use tokens cannot be replayed or reused for multiple evaluation runs.
   - **Audio Validation:** Validates both audio uploads in-memory against format, duration (≤ 60s), size (≤ 25MB), and container header signatures.
   - **Client & Provider Latency Semantics:**
     - Measures genuine client-side round-trip elapsed time ($T_{\text{client}}$) via `time.perf_counter()` around the HTTP request and records it as `client_request_elapsed_ms` (and `client_measured_latency_ms`).
-    - Inspects the official Gnani response schema for provider-reported processing duration ($T_{\text{provider}}$). Because the official Gnani STT REST v3 API does not report server processing duration in its response payload, `provider_processing_time_ms` remains strictly `null`. Client-side elapsed time is **never** substituted for provider latency.
+    - The legacy `backend_latency_ms` field is documented as a backwards-compatible alias for `client_request_elapsed_ms`.
+    - Inspects the official Gnani response schema for provider-reported processing duration ($T_{\text{provider}}$). Because the official Gnani STT REST v3 API does not report server processing duration in its response payload, `provider_processing_time_ms` remains strictly `null` (displayed as "Not reported" in the UI). Client-side elapsed time is **never** substituted for provider latency.
   - **Partial Failure Safeguard:** If either provider request fails or times out, the evaluation is aborted immediately. An incomplete pair is never persisted or presented as a successful evaluation.
   - **Credit Protection:** Live evaluation requires an explicit user confirmation checkbox, confirmation dialog, and server authorization token. Automated tests always use deterministic mocked client responses and never consume programme credits.
 
@@ -193,10 +204,12 @@ BoliBench strictly isolates execution semantics, telemetry, and credit protectio
    - Exact dynamic programming Levenshtein Word Error Rate (WER).
    - Domain-specific critical field extractors (quantities, negation, corrections, entities, intent).
    - Thread-safe SQLite persistence with JSON and CSV exports preserving latency semantics.
-   - Telemetry separation ensuring mock runs never report fabricated measured latency.
-   - Server-side credit guard and anti-CSRF authorization manager (`app/services/live_guard.py`).
-   - Live paired audio REST API (`POST /api/eval/run-live/{test_id}`) protected by `POST /api/eval/authorize-live`.
-   - Comprehensive test suite (78 tests passing with 0 network calls and 0 credits consumed).
+   - Strict telemetry separation ensuring mock runs never report fabricated measured latency.
+   - Single-audio telemetry cleanly distinguishing browser end-to-end latency, backend-measured Gnani API request time, and provider-internal processing time ("Not reported").
+   - Server-side credit guard, origin validation, and anti-CSRF authorization manager (`app/services/live_guard.py`).
+   - Default disabled live evaluation deployment safety guard (`LIVE_EVALUATION_ENABLED=false`).
+   - Live paired audio REST API (`POST /api/eval/run-live/{test_id}`) with strict acoustic condition enum validation.
+   - Comprehensive test suite (84 tests passing with 0 network calls and 0 credits consumed).
 2. **Pending Acoustic Research (`pending_acoustic`):**
    - Calibrated acoustic noise testing with multi-speaker recordings under measured signal-to-noise ratios (street noise, cafeteria babble, reverberation).
    - Crowdsourced audio dataset recording all 24 seed utterances across diverse regional Indian accents.

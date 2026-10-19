@@ -4,8 +4,10 @@ import io
 from unittest.mock import patch
 import pytest
 
+from fastapi import HTTPException
 from app.config import get_settings
 from app.services.gnani_client import GnaniServerError, GnaniTimeoutError
+from app.services.live_guard import live_guard
 
 
 @pytest.mark.asyncio
@@ -175,6 +177,7 @@ async def _get_live_auth(async_client, test_id: str = "pair_qty_001"):
 async def test_run_live_audio_validates_both_uploads(async_client, valid_wav_bytes, long_wav_bytes, monkeypatch):
     """Proves POST /api/eval/run-live/{test_id} validates format, size, duration for both files."""
     monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
 
     # 1. Reject invalid file extension on Utterance A
@@ -232,6 +235,7 @@ async def test_run_live_audio_validates_both_uploads(async_client, valid_wav_byt
 async def test_run_live_invalid_test_id(async_client, valid_wav_bytes, monkeypatch):
     """Proves POST /api/eval/run-live/{test_id} returns 404 for unknown test cases on authorize."""
     monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
 
     # Authorizing unknown test returns 404
@@ -244,6 +248,7 @@ async def test_run_live_invalid_test_id(async_client, valid_wav_bytes, monkeypat
 async def test_run_live_missing_credentials(async_client, valid_wav_bytes, monkeypatch):
     """Proves POST /api/eval/run-live/{test_id} returns 401 when API credentials are unset."""
     monkeypatch.delenv("GNANI_API_KEY", raising=False)
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
 
     headers, data = await _get_live_auth(async_client, "pair_qty_001")
@@ -260,6 +265,7 @@ async def test_run_live_missing_credentials(async_client, valid_wav_bytes, monke
 async def test_run_live_success_with_mocked_provider(async_client, valid_wav_bytes, monkeypatch):
     """Proves paired live evaluation succeeds with deterministic mocked provider without network calls."""
     monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
 
     mock_resp_a = {
@@ -325,6 +331,7 @@ async def test_run_live_success_with_mocked_provider(async_client, valid_wav_byt
 async def test_run_live_partial_failure_first_fails(async_client, valid_wav_bytes, monkeypatch):
     """Proves failure of Utterance A never evaluates Utterance B or records a run."""
     monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
 
     headers, data = await _get_live_auth(async_client, "pair_qty_001")
@@ -346,6 +353,7 @@ async def test_run_live_partial_failure_first_fails(async_client, valid_wav_byte
 async def test_run_live_partial_failure_second_fails(async_client, valid_wav_bytes, monkeypatch):
     """Proves if Utterance A succeeds but Utterance B fails, no partial success is recorded."""
     monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
 
     mock_resp_a = {
@@ -383,6 +391,7 @@ async def test_run_live_partial_failure_second_fails(async_client, valid_wav_byt
 async def test_run_live_missing_confirmation_token_rejected(async_client, valid_wav_bytes, monkeypatch):
     """Proves live evaluation rejects requests without authorization token before calling provider."""
     monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
 
     files = {
@@ -402,6 +411,7 @@ async def test_run_live_missing_confirmation_token_rejected(async_client, valid_
 async def test_run_live_missing_csrf_header_rejected(async_client, valid_wav_bytes, monkeypatch):
     """Proves live evaluation rejects requests without X-BoliBench-Confirm-Live header."""
     monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
 
     _, data = await _get_live_auth(async_client, "pair_qty_001")
@@ -421,6 +431,7 @@ async def test_run_live_missing_csrf_header_rejected(async_client, valid_wav_byt
 async def test_run_live_invalid_token_rejected(async_client, valid_wav_bytes, monkeypatch):
     """Proves fabricated or invalid authorization tokens are rejected."""
     monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
 
     files = {
@@ -441,6 +452,7 @@ async def test_run_live_invalid_token_rejected(async_client, valid_wav_bytes, mo
 async def test_run_live_token_reuse_rejected(async_client, valid_wav_bytes, monkeypatch):
     """Proves single-use tokens cannot be replayed for multiple live evaluations."""
     monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
 
     mock_resp = {
@@ -482,6 +494,7 @@ async def test_run_live_token_reuse_rejected(async_client, valid_wav_bytes, monk
 async def test_run_live_cross_origin_rejected(async_client, valid_wav_bytes, monkeypatch):
     """Proves cross-origin requests from untrusted origins are strictly rejected with 403."""
     monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
 
     headers, data = await _get_live_auth(async_client, "pair_qty_001")
@@ -503,6 +516,7 @@ async def test_run_live_cross_origin_rejected(async_client, valid_wav_bytes, mon
 async def test_run_live_sec_fetch_site_cross_site_rejected(async_client, valid_wav_bytes, monkeypatch):
     """Proves browser Sec-Fetch-Site: cross-site is immediately rejected with 403."""
     monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
 
     headers, data = await _get_live_auth(async_client, "pair_qty_001")
@@ -520,8 +534,10 @@ async def test_run_live_sec_fetch_site_cross_site_rejected(async_client, valid_w
 
 
 @pytest.mark.asyncio
-async def test_authorize_live_cross_origin_rejected(async_client):
+async def test_authorize_live_cross_origin_rejected(async_client, monkeypatch):
     """Proves authorization endpoint itself rejects cross-origin requests."""
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
+    get_settings.cache_clear()
     resp = await async_client.post(
         "/api/eval/authorize-live",
         json={"test_id": "pair_qty_001"},
@@ -534,6 +550,7 @@ async def test_authorize_live_cross_origin_rejected(async_client):
 async def test_run_live_token_mismatched_test_id(async_client, valid_wav_bytes, monkeypatch):
     """Proves a token issued for test_id A cannot be used to run test_id B."""
     monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
 
     headers, data = await _get_live_auth(async_client, "pair_qty_001")
@@ -554,6 +571,7 @@ async def test_run_live_token_mismatched_test_id(async_client, valid_wav_bytes, 
 async def test_live_latency_when_provider_returns_processing_duration(async_client, valid_wav_bytes, monkeypatch):
     """Proves provider_processing_time_ms is populated IF the provider genuinely reports it."""
     monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
 
     mock_resp_a = {
@@ -627,6 +645,7 @@ async def test_api_credentials_and_tokens_never_exposed(async_client, monkeypatc
     """Proves API credentials and confirmation tokens never appear in API responses, exports, or Settings repr."""
     secret_key = "super_secret_gnani_key_xyz987"
     monkeypatch.setenv("GNANI_API_KEY", secret_key)
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
     settings = get_settings()
 
@@ -673,3 +692,136 @@ async def test_programme_credits_protected_against_unauthorized_network(async_cl
     resp = await async_client.post("/api/transcribe", files=files, data=data)
     assert resp.status_code == 200
     assert resp.json()["is_mocked"] is True
+
+
+# =============================================================================
+# Phase 4: Deployment Safety & Acoustic Condition Integrity Tests
+# =============================================================================
+
+@pytest.mark.asyncio
+async def test_live_evaluation_disabled_by_default(async_client, valid_wav_bytes, monkeypatch):
+    """Proves live evaluation is disabled by default and rejects requests before any provider calls."""
+    monkeypatch.delenv("LIVE_EVALUATION_ENABLED", raising=False)
+    get_settings.cache_clear()
+    settings = get_settings()
+    assert settings.live_evaluation_enabled is False
+
+    # 1. Authorize endpoint rejected with 403
+    resp_auth = await async_client.post("/api/eval/authorize-live", json={"test_id": "pair_qty_001"})
+    assert resp_auth.status_code == 403
+    assert "disabled by default" in resp_auth.json()["detail"].lower()
+
+    # 2. Run-live endpoint rejected with 403 before file parsing or provider calls
+    files = {
+        "audio_file_a": ("clip_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        "audio_file_b": ("clip_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+    resp_run = await async_client.post("/api/eval/run-live/pair_qty_001", files=files)
+    assert resp_run.status_code == 403
+    assert "disabled by default" in resp_run.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_disabled_live_execution_makes_zero_provider_calls(async_client, valid_wav_bytes, monkeypatch):
+    """Proves disabled live mode makes zero provider calls and consumes 0 credits."""
+    monkeypatch.delenv("LIVE_EVALUATION_ENABLED", raising=False)
+    get_settings.cache_clear()
+
+    files = {
+        "audio_file_a": ("clip_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        "audio_file_b": ("clip_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+    with patch("app.services.gnani_client.GnaniPrismaClient.transcribe") as mock_transcribe:
+        resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files)
+        assert resp.status_code == 403
+        mock_transcribe.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_live_audio_condition_validation(async_client, valid_wav_bytes, monkeypatch):
+    """Proves audio_condition is strictly validated against AudioCondition enum, rejecting unknown and simulation labels."""
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
+    monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    get_settings.cache_clear()
+
+    # 1. Reject unknown audio_condition
+    headers, data = await _get_live_auth(async_client, "pair_qty_001")
+    data["audio_condition"] = "fabricated_acoustic_label"
+    files = {
+        "audio_file_a": ("clip_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        "audio_file_b": ("clip_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+    with patch("app.services.gnani_client.GnaniPrismaClient.transcribe") as mock_transcribe:
+        resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files, data=data, headers=headers)
+        assert resp.status_code == 400
+        assert "invalid audio_condition" in resp.json()["detail"].lower()
+        mock_transcribe.assert_not_called()
+
+    # 2. Reject text_only_simulation on live audio route (simulation is not recorded audio)
+    headers, data = await _get_live_auth(async_client, "pair_qty_001")
+    data["audio_condition"] = "text_only_simulation"
+    files = {
+        "audio_file_a": ("clip_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        "audio_file_b": ("clip_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+    with patch("app.services.gnani_client.GnaniPrismaClient.transcribe") as mock_transcribe:
+        resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files, data=data, headers=headers)
+        assert resp.status_code == 400
+        assert "cannot be used for live audio evaluation" in resp.json()["detail"].lower()
+        mock_transcribe.assert_not_called()
+
+    # 3. Accept valid condition (e.g. noisy_recorded) and verify persisted metadata
+    headers, data = await _get_live_auth(async_client, "pair_qty_001")
+    data["audio_condition"] = "noisy_recorded"
+    files = {
+        "audio_file_a": ("clip_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        "audio_file_b": ("clip_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+    mock_resp = {
+        "success": True,
+        "transcript": "Do packet chahiye",
+        "request_id": "req_cond_test",
+        "model": "gnani-prisma-v2.5",
+        "client_request_elapsed_ms": 115.0,
+        "server_timestamp": "20261020_040000.000",
+        "language_code": "hi-IN",
+        "format": "verbatim",
+        "is_mocked": False,
+    }
+    with patch("app.services.gnani_client.GnaniPrismaClient.transcribe", return_value=mock_resp):
+        resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files, data=data, headers=headers)
+        assert resp.status_code == 200
+        run_data = resp.json()
+        assert run_data["audio_condition"] == "noisy_recorded"
+
+        # Verify correctly persisted in SQLite storage
+        run_id = run_data["run_id"]
+        resp_get = await async_client.get(f"/api/eval/results/{run_id}")
+        assert resp_get.status_code == 200
+        assert resp_get.json()["audio_condition"] == "noisy_recorded"
+
+
+@pytest.mark.asyncio
+async def test_run_live_missing_origin_non_local_rejected(async_client, monkeypatch):
+    """Proves missing Origin/Referer header on a non-local host is rejected with 403."""
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
+    monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    get_settings.cache_clear()
+
+    # Test live_guard.validate_same_origin directly with a mock request targeting a public host without Origin/Referer
+    from starlette.requests import Request
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/eval/run-live/pair_qty_001",
+        "headers": [
+            (b"host", b"demo.bolibench.org"),
+        ],
+        "server": ("demo.bolibench.org", 443),
+        "scheme": "https",
+    }
+    req = Request(scope)
+    with pytest.raises(HTTPException) as exc_info:
+        live_guard.validate_same_origin(req)
+    assert exc_info.value.status_code == 403
+    assert "missing origin or referer header" in exc_info.value.detail.lower()

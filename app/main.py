@@ -133,6 +133,7 @@ async def health_check():
     return HealthResponse(
         status="ok",
         gnani_api_configured=settings.is_api_configured,
+        live_evaluation_enabled=settings.live_evaluation_enabled,
         app_environment=settings.app_env,
         supported_languages=[lang.value for lang in LanguageCode],
         supported_formats=[fmt.value for fmt in TranscriptFormat],
@@ -149,6 +150,7 @@ async def index_page(request: Request):
         name="index.html",
         context={
             "is_configured": settings.is_api_configured,
+            "live_evaluation_enabled": settings.live_evaluation_enabled,
             "languages": LANGUAGE_META,
             "max_mb": settings.max_audio_size_bytes // (1024 * 1024),
             "test_cases": load_seed_dataset(),
@@ -203,6 +205,8 @@ async def transcribe_audio(
             language_code=language_code,
             format=format_mode,
             backend_latency_ms=15.5,
+            client_request_elapsed_ms=15.5,
+            provider_processing_time_ms=None,
             is_mocked=True,
         )
 
