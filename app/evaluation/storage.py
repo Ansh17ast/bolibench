@@ -235,7 +235,7 @@ class StorageManager:
             "audio_condition", "timestamp", "wer_a", "wer_b", "average_wer",
             "critical_field_accuracy", "distinction_preserved", "task_success",
             "primary_failure_category", "failure_explanation",
-            "client_measured_latency_ms", "provider_processing_time_ms", "simulated_latency_ms",
+            "client_request_elapsed_ms", "client_measured_latency_ms", "provider_processing_time_ms", "simulated_latency_ms",
             "actual_transcript_a", "actual_transcript_b"
         ]
         writer = csv.DictWriter(output, fieldnames=fieldnames)
@@ -258,6 +258,7 @@ class StorageManager:
                 "task_success": r.task_success,
                 "primary_failure_category": r.primary_failure_category.value if isinstance(r.primary_failure_category, FailureCategory) else str(r.primary_failure_category),
                 "failure_explanation": r.failure_explanation,
+                "client_request_elapsed_ms": r.client_request_elapsed_ms if r.client_request_elapsed_ms is not None else r.client_measured_latency_ms,
                 "client_measured_latency_ms": r.client_measured_latency_ms,
                 "provider_processing_time_ms": r.provider_processing_time_ms,
                 "simulated_latency_ms": r.simulated_latency_ms,

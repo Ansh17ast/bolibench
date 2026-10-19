@@ -64,7 +64,10 @@ async def test_gnani_client_success_200(mock_settings, valid_wav_bytes):
         assert result["transcript"] == "नमस्ते, आप कैसे हैं?"
         assert result["request_id"] == "req_mock_12345678"
         assert result["model"] == "gnani-prisma-v2.5"
-        assert result["backend_latency_ms"] >= 0.0
+        assert result["client_request_elapsed_ms"] >= 0.0
+        assert result["client_measured_latency_ms"] == result["client_request_elapsed_ms"]
+        assert result["backend_latency_ms"] == result["client_request_elapsed_ms"]
+        assert result["provider_processing_time_ms"] is None
         assert result["is_mocked"] is False
 
 

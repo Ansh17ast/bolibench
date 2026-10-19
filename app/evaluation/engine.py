@@ -158,7 +158,10 @@ class EvaluationEngine:
             language_code=test_case.language_code,
             format_mode="verbatim",
         )
-        elapsed_a_ms = round((time.perf_counter() - start_time_a) * 1000.0, 2)
+        elapsed_a_ms = resp_a.get("client_request_elapsed_ms")
+        if elapsed_a_ms is None:
+            elapsed_a_ms = round((time.perf_counter() - start_time_a) * 1000.0, 2)
+        prov_time_a = resp_a.get("provider_processing_time_ms")
 
         # Step 2: Transcribe Utterance B
         # If this call fails, the exception propagates and self.storage.save_run is never executed
@@ -170,12 +173,17 @@ class EvaluationEngine:
             language_code=test_case.language_code,
             format_mode="verbatim",
         )
-        elapsed_b_ms = round((time.perf_counter() - start_time_b) * 1000.0, 2)
+        elapsed_b_ms = resp_b.get("client_request_elapsed_ms")
+        if elapsed_b_ms is None:
+            elapsed_b_ms = round((time.perf_counter() - start_time_b) * 1000.0, 2)
+        prov_time_b = resp_b.get("provider_processing_time_ms")
 
         total_client_latency_ms = round(elapsed_a_ms + elapsed_b_ms, 2)
-        prov_a_ms = resp_a.get("backend_latency_ms") or 0.0
-        prov_b_ms = resp_b.get("backend_latency_ms") or 0.0
-        provider_latency_ms = round(prov_a_ms + prov_b_ms, 2)
+
+        # Provider latency is ONLY populated if genuinely reported by upstream provider
+        total_provider_latency_ms = None
+        if prov_time_a is not None and prov_time_b is not None:
+            total_provider_latency_ms = round(prov_time_a + prov_time_b, 2)
 
         result = score_pair(
             run_id=run_id,
@@ -186,10 +194,15 @@ class EvaluationEngine:
             audio_condition=audio_condition,
             timestamp=timestamp,
             client_latency_ms=total_client_latency_ms,
-            provider_latency_ms=provider_latency_ms,
+            client_request_elapsed_ms=total_client_latency_ms,
+            provider_latency_ms=total_provider_latency_ms,
             simulated_latency_ms=None,
-            latency_a_ms=prov_a_ms if prov_a_ms > 0 else elapsed_a_ms,
-            latency_b_ms=prov_b_ms if prov_b_ms > 0 else elapsed_b_ms,
+            latency_a_ms=elapsed_a_ms,
+            latency_b_ms=elapsed_b_ms,
+            client_elapsed_a_ms=elapsed_a_ms,
+            client_elapsed_b_ms=elapsed_b_ms,
+            provider_time_a_ms=prov_time_a,
+            provider_time_b_ms=prov_time_b,
             request_id_a=resp_a.get("request_id"),
             request_id_b=resp_b.get("request_id"),
         )

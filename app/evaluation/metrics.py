@@ -406,6 +406,8 @@ def evaluate_utterance(
     category: TestCategory,
     language_code: str = "hi-IN",
     latency_ms: Optional[float] = None,
+    client_request_elapsed_ms: Optional[float] = None,
+    provider_processing_time_ms: Optional[float] = None,
     simulated_latency_ms: Optional[float] = None,
     request_id: Optional[str] = None,
 ) -> UtteranceEvaluationResult:
@@ -443,6 +445,8 @@ def evaluate_utterance(
     # Task success requires both critical fields and intent match
     task_success = critical_fields_match and intent_match
 
+    effective_client_elapsed = client_request_elapsed_ms if client_request_elapsed_ms is not None else latency_ms
+
     return UtteranceEvaluationResult(
         utterance_id=utterance_spec.id,
         reference_transcript=utterance_spec.reference_transcript,
@@ -458,7 +462,9 @@ def evaluate_utterance(
         detected_intent=detected_intent,
         intent_match=intent_match,
         task_success=task_success,
-        latency_ms=latency_ms,
+        latency_ms=effective_client_elapsed,
+        client_request_elapsed_ms=effective_client_elapsed,
+        provider_processing_time_ms=provider_processing_time_ms,
         simulated_latency_ms=simulated_latency_ms,
         request_id=request_id,
     )
@@ -554,10 +560,15 @@ def score_pair(
     audio_condition: str = "text_only_simulation",
     timestamp: str = "",
     client_latency_ms: Optional[float] = None,
+    client_request_elapsed_ms: Optional[float] = None,
     provider_latency_ms: Optional[float] = None,
     simulated_latency_ms: Optional[float] = None,
     latency_a_ms: Optional[float] = None,
     latency_b_ms: Optional[float] = None,
+    client_elapsed_a_ms: Optional[float] = None,
+    client_elapsed_b_ms: Optional[float] = None,
+    provider_time_a_ms: Optional[float] = None,
+    provider_time_b_ms: Optional[float] = None,
     request_id_a: Optional[str] = None,
     request_id_b: Optional[str] = None,
 ) -> PairEvaluationResult:
@@ -567,15 +578,19 @@ def score_pair(
     - Mock execution mode NEVER populates client_measured_latency_ms or provider_processing_time_ms.
     - If latency is simulated for demonstration, it is recorded in simulated_latency_ms.
     - Live execution mode calculates client_measured_latency_ms strictly from elapsed provider requests.
+    - provider_processing_time_ms remains null unless genuinely reported by provider.
     """
     is_live = (execution_mode == "live")
 
     # Strictly enforce mock vs live latency fields
     if is_live:
-        final_client_latency = client_latency_ms
+        total_client = client_request_elapsed_ms if client_request_elapsed_ms is not None else client_latency_ms
+        final_client_latency = total_client
         final_provider_latency = provider_latency_ms
-        final_latency_a = latency_a_ms
-        final_latency_b = latency_b_ms
+        final_latency_a = client_elapsed_a_ms if client_elapsed_a_ms is not None else latency_a_ms
+        final_latency_b = client_elapsed_b_ms if client_elapsed_b_ms is not None else latency_b_ms
+        final_provider_a = provider_time_a_ms
+        final_provider_b = provider_time_b_ms
         final_simulated_latency = None
         final_request_id_a = request_id_a
         final_request_id_b = request_id_b
@@ -585,6 +600,8 @@ def score_pair(
         final_provider_latency = None
         final_latency_a = None
         final_latency_b = None
+        final_provider_a = None
+        final_provider_b = None
         final_simulated_latency = simulated_latency_ms
         final_request_id_a = None
         final_request_id_b = None
@@ -596,6 +613,8 @@ def score_pair(
         category=test_case.category,
         language_code=test_case.language_code,
         latency_ms=final_latency_a,
+        client_request_elapsed_ms=final_latency_a,
+        provider_processing_time_ms=final_provider_a,
         simulated_latency_ms=simulated_latency_ms if not is_live else None,
         request_id=final_request_id_a,
     )
@@ -607,6 +626,8 @@ def score_pair(
         category=test_case.category,
         language_code=test_case.language_code,
         latency_ms=final_latency_b,
+        client_request_elapsed_ms=final_latency_b,
+        provider_processing_time_ms=final_provider_b,
         simulated_latency_ms=simulated_latency_ms if not is_live else None,
         request_id=final_request_id_b,
     )
@@ -662,6 +683,7 @@ def score_pair(
         primary_failure_category=failure_category,
         failure_explanation=failure_explanation,
         client_measured_latency_ms=final_client_latency,
+        client_request_elapsed_ms=final_client_latency,
         provider_processing_time_ms=final_provider_latency,
         simulated_latency_ms=final_simulated_latency,
     )

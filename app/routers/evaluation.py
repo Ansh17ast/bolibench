@@ -1,8 +1,9 @@
 """API route handlers for Paired-Contrast Evaluation Engine."""
 
 from typing import List, Optional
-from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 
 from app.config import get_settings
 from app.evaluation.engine import EvaluationEngine
@@ -14,9 +15,45 @@ from app.evaluation.schemas import (
 )
 from app.services.audio_validator import AudioValidationError, AudioValidator
 from app.services.gnani_client import GnaniClientError, GnaniPrismaClient, MissingCredentialsError
+from app.services.live_guard import live_guard
 
 router = APIRouter(prefix="/api/eval", tags=["evaluation"])
 engine = EvaluationEngine()
+
+
+class AuthorizeLiveRequest(BaseModel):
+    test_id: str
+
+
+@router.post("/authorize-live")
+async def authorize_live_evaluation(
+    req: AuthorizeLiveRequest,
+    request: Request,
+):
+    """Authorizes an upcoming live evaluation run by issuing a single-use authorization token.
+
+    Security & Credit Guard:
+    - Validates same-origin headers (Sec-Fetch-Site, Origin, Referer).
+    - Requires target test case existence.
+    - Issues a cryptographically random, single-use, 5-minute token.
+    - NEVER makes any external network calls or consumes credits.
+    - NEVER logs the issued token secret.
+    """
+    test_case = engine.get_test_case(req.test_id)
+    if not test_case:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Test case with ID '{req.test_id}' not found.",
+        )
+
+    token = live_guard.issue_authorization_token(test_id=req.test_id, request=request)
+    return {
+        "status": "authorized",
+        "test_case_id": req.test_id,
+        "confirmation_token": token,
+        "expires_in_seconds": int(live_guard.TOKEN_TTL_SECONDS),
+        "warning": "Authorizing live evaluation. This operation will invoke 2 real requests to Gnani Prisma STT v3 and consume programme credits.",
+    }
 
 
 @router.get("/test-cases", response_model=List[TestCasePair])
@@ -58,15 +95,28 @@ async def run_mock_evaluation(
 @router.post("/run-live/{test_id}", response_model=PairEvaluationResult)
 async def run_live_evaluation(
     test_id: str,
+    request: Request,
     audio_file_a: UploadFile = File(..., description="Audio file for Utterance A (WAV, MP3, OGG, FLAC, AAC, M4A <= 60s)"),
     audio_file_b: UploadFile = File(..., description="Audio file for Utterance B (WAV, MP3, OGG, FLAC, AAC, M4A <= 60s)"),
     audio_condition: str = Form("clean_recorded", description="Acoustic environment metadata (e.g. clean_recorded, noisy_recorded)"),
+    confirmation_token: Optional[str] = Form(None, description="Single-use confirmation authorization token from /api/eval/authorize-live"),
 ):
     """Executes a live paired-contrast evaluation using Gnani Prisma STT REST API.
 
-    WARNING: This endpoint initiates two real provider requests to Gnani Prisma STT v3
-    and consumes programme credits. Requires GNANI_API_KEY to be configured in .env.
+    CREDIT PROTECTION & AUTHORIZATION GUARD:
+    - Rejects request BEFORE reading uploads into memory or invoking provider if:
+      - Origin is cross-site / cross-origin
+      - Anti-CSRF confirmation header X-BoliBench-Confirm-Live is missing or invalid
+      - Single-use confirmation token is missing, invalid, expired, or already consumed
+    - Requires GNANI_API_KEY to be configured in .env.
     """
+    # 0. STRICT AUTHORIZATION & CREDIT GUARD CHECK FIRST
+    live_guard.verify_authorization(
+        test_id=test_id,
+        confirmation_token=confirmation_token,
+        request=request,
+    )
+
     settings = get_settings()
     if not settings.is_api_configured:
         raise HTTPException(

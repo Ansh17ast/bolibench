@@ -230,10 +230,14 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/eval/run-mock/pai
 4. Review the credit warning notice and check the authorization checkbox:
    `[x] I authorize 2 live API requests to Gnani Prisma and credit deduction`
 5. Click **"Execute Paired Live Evaluation"** and confirm the interactive prompt.
-6. The backend:
+6. The frontend and backend execute the secure authorization flow:
+   - Frontend requests a single-use authorization token via `POST /api/eval/authorize-live`.
+   - Backend validates same-origin headers (`Sec-Fetch-Site`, `Origin`) and issues a 5-minute single-use cryptographic token.
+   - Frontend submits audio uploads with `confirmation_token` and custom header `X-BoliBench-Confirm-Live: CONFIRM_LIVE_EVALUATION`.
+   - Backend verifies authorization BEFORE reading files or initiating network requests.
    - Validates both audio files in-memory using `AudioValidator` (zero disk persistence).
    - Sequentially executes live calls to `https://api.vachana.ai/stt/v3` with your `GNANI_API_KEY`.
-   - Records genuine client elapsed time and provider latency.
+   - Records genuine client elapsed round-trip time (`client_request_elapsed_ms`) and keeps `provider_processing_time_ms = null` (since Gnani STT does not report server processing duration).
    - Evaluates returned transcripts using the deterministic scoring engine.
    - Preserves provider request IDs.
    - If either call fails, the evaluation halts immediately, ensuring no partial or misleading result is recorded.
@@ -247,17 +251,17 @@ Run the test suite:
 python -m pytest -v
 ```
 
-### Actual Test Suite Result (67 Tests Passing):
+### Actual Test Suite Result (78 Tests Passing):
 ```
-collected 67 items
+collected 78 items
 
-tests/test_audio_validator.py ............                               [ 17%]
-tests/test_evaluation_engine.py ....................                    [ 47%]
-tests/test_evaluation_routes.py .................                       [ 73%]
-tests/test_gnani_client.py ...........                                   [ 89%]
+tests/test_audio_validator.py ............                               [ 15%]
+tests/test_evaluation_engine.py .....................                   [ 42%]
+tests/test_evaluation_routes.py ...........................             [ 76%]
+tests/test_gnani_client.py ...........                                   [ 91%]
 tests/test_routes.py .......                                             [100%]
 
-============================= 67 passed in 0.82s ==============================
+============================= 78 passed in 1.13s ==============================
 ```
 
 ### Verified vs. Pending Status Matrix
@@ -265,10 +269,10 @@ tests/test_routes.py .......                                             [100%]
 | Component | Status | Verification Detail |
 |---|---|---|
 | **Audio File Validation** | **VERIFIED** | 12 tests: WAV, MP3, OGG, FLAC, AAC, M4A, file limits (25MB), duration limits (60s), magic byte headers. |
-| **Gnani REST STT v3 Client** | **VERIFIED** | 11 tests: Verified against official OpenAPI 3.1 specification. Handles 200, 400, 401, 403, 429, 500, 503, timeouts, and malformed responses. |
+| **Gnani REST STT v3 Client** | **VERIFIED** | 11 tests: Verified against official OpenAPI 3.1 specification. Measures client-side elapsed time; correctly reports `provider_processing_time_ms = null` when omitted by provider. |
 | **FastAPI Core Routes** | **VERIFIED** | 7 tests: `/health`, `/`, `/api/transcribe` in mock and live modes with validation. |
-| **Evaluation Metrics Engine** | **VERIFIED** | 20 tests: Exact Levenshtein WER, slot extractors, contrast scoring, mock vs live telemetry isolation, SQLite persistence. |
-| **Evaluation REST API** | **VERIFIED** | 17 tests: Test pair catalog, mock execution, custom transcripts, live paired audio endpoint, upload validation, partial failure handling, credential protection, and CSV/JSON export. |
+| **Evaluation Metrics Engine** | **VERIFIED** | 21 tests: Exact Levenshtein WER, slot extractors, contrast scoring, mock vs live telemetry isolation, SQLite persistence, latency semantics. |
+| **Evaluation REST API & Guard** | **VERIFIED** | 27 tests: Test pair catalog, mock execution, custom transcripts, live paired audio endpoint, upload validation, partial failure handling, server-side authorization token (`/authorize-live`), anti-CSRF header, cross-origin rejection, single-use token protection, and CSV/JSON export. |
 | **Live Account Transcription** | **PENDING USER SETUP** | Requires the user to insert their personal `GNANI_API_KEY` into `.env` and execute against their account credits. |
 
 ---
@@ -279,9 +283,10 @@ tests/test_routes.py .......                                             [100%]
 |---|---|---|
 | `GET` | `/api/eval/test-cases` | List all 12 seed paired-contrast test cases |
 | `GET` | `/api/eval/test-cases/{test_id}` | Retrieve specific test case metadata and expected fields |
+| `POST` | `/api/eval/authorize-live` | Issue single-use cryptographic authorization token for upcoming live run |
 | `POST` | `/api/eval/run-mock/{test_id}?scenario=ideal_preserved` | Run deterministic mock evaluation (preserves distinction; 0 credits) |
 | `POST` | `/api/eval/run-mock/{test_id}?scenario=crashed_distinction` | Run deterministic mock evaluation with hand-authored simulated corruption |
-| `POST` | `/api/eval/run-live/{test_id}` | Execute live paired audio evaluation against Gnani Prisma STT v3 (consumes credits) |
+| `POST` | `/api/eval/run-live/{test_id}` | Execute live paired audio evaluation against Gnani Prisma STT v3 (requires confirmation token & header; consumes credits) |
 | `POST` | `/api/eval/evaluate-transcripts` | Evaluate custom or actual transcripts against expected ground truth |
 | `GET` | `/api/eval/results` | List evaluation runs stored in SQLite |
 | `GET` | `/api/eval/results/{run_id}` | Retrieve specific evaluation run |
@@ -291,10 +296,13 @@ tests/test_routes.py .......                                             [100%]
 
 ---
 
-## 10. Security Guarantees & Credit Protection
+## 10. Security Guarantees & Hardened Credit Protection
 
+- **Server-Side Credit Guard:** Live evaluation requires an explicit authorization step (`POST /api/eval/authorize-live`) generating a single-use, 5-minute cryptographically random token.
+- **Anti-CSRF & Origin Verification:** Requests require `X-BoliBench-Confirm-Live: CONFIRM_LIVE_EVALUATION` and are checked against `Sec-Fetch-Site` and `Origin`. Cross-origin requests are blocked with `403 Forbidden` before reading file uploads or invoking the provider.
+- **Restricted CORS Policy:** Restricted to local same-origin development hosts (`localhost:8000`, `127.0.0.1:8000`, `localhost:3000`, `127.0.0.1:3000`).
 - **Zero Credential Exposure:** `GNANI_API_KEY` is loaded on the backend via Pydantic Settings and is **never** sent to the browser.
-- **Safe Representation:** `Settings.__repr__` masks credentials to prevent secret leakage in logs or terminal outputs.
+- **Safe Representation:** `Settings.__repr__` masks credentials to prevent secret leakage in logs or terminal outputs. Authorization tokens never appear in evaluation results or server logs.
 - **Privacy by Default:** Uploaded audio is processed in-memory as byte streams and is **never** persisted to disk. SQLite stores only structured evaluation metadata.
 - **Credit Protection:** Deterministic mock tests consume 0 Gnani credits. Automated tests use mocked clients exclusively and make zero external network requests.
 - **Partial Failure Guard:** Live paired evaluation aborts if either utterance fails, preventing corrupted or half-baked evaluations from being marked as successful.

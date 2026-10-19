@@ -161,22 +161,28 @@ When an evaluation run fails, the engine assigns an explicit diagnostic classifi
 
 ---
 
-## 6. Execution Modes, Telemetry & Credit Protection
+## 6. Execution Modes, Telemetry & Hardened Credit Protection
 
-BoliBench strictly isolates execution semantics and telemetry between mock and live modes:
+BoliBench strictly isolates execution semantics, telemetry, and credit protection between mock and live modes:
 
 - **Mock Execution Mode (`mock`):**
   - Executes deterministically using reference transcripts or hand-authored simulated crash transcripts.
   - Consumes **0 Gnani Prisma credits** and executes **0 external network requests**.
-  - **Telemetry Rules:** Fabricated latency numbers are strictly prohibited. `client_measured_latency_ms` and `provider_processing_time_ms` remain strictly `null`. If latency is simulated for demonstration, it is recorded exclusively in `simulated_latency_ms` and clearly labeled as simulated in the UI and exports.
+  - **Telemetry Semantics:** Fabricated latency numbers are strictly prohibited. `client_request_elapsed_ms`, `client_measured_latency_ms`, and `provider_processing_time_ms` remain strictly `null`. If latency is simulated for demonstration, it is recorded exclusively in `simulated_latency_ms` and clearly labeled as simulated in the UI and exports.
 - **Live Execution Mode (`live`):**
   - Available via the paired live-audio endpoint `POST /api/eval/run-live/{test_id}`.
-  - Validates both audio uploads in-memory against format, duration (≤ 60s), size (≤ 25MB), and container header signatures.
-  - Executes actual sequential HTTP POST multipart requests to `https://api.vachana.ai/stt/v3` using server-side credentials (`X-API-Key-ID`). Credentials are never exposed to the client.
-  - Preserves provider request IDs (`req_...`) and provider-reported backend processing latency ($T_{\text{provider}}$).
-  - Measures genuine client-side round-trip elapsed time ($T_{\text{client}}$).
+  - **Server-Side Authorization & Credit Guard:**
+    - Live execution requires an explicit authorization handshake via `POST /api/eval/authorize-live` before any provider calls are permitted.
+    - The server issues a cryptographically secure, time-limited (5-minute), single-use authorization token mapped to the specific test case.
+    - Requests must include the custom anti-CSRF header `X-BoliBench-Confirm-Live: CONFIRM_LIVE_EVALUATION`.
+    - Same-origin headers (`Sec-Fetch-Site`, `Origin`, `Referer`) are strictly validated against trusted local development origins (`localhost:8000`, `127.0.0.1:8000`, `localhost:3000`, `127.0.0.1:3000`). Untrusted or cross-origin requests are rejected with `403 Forbidden` before reading file uploads or invoking the provider.
+    - Single-use tokens cannot be replayed or reused for multiple evaluation runs.
+  - **Audio Validation:** Validates both audio uploads in-memory against format, duration (≤ 60s), size (≤ 25MB), and container header signatures.
+  - **Client & Provider Latency Semantics:**
+    - Measures genuine client-side round-trip elapsed time ($T_{\text{client}}$) via `time.perf_counter()` around the HTTP request and records it as `client_request_elapsed_ms` (and `client_measured_latency_ms`).
+    - Inspects the official Gnani response schema for provider-reported processing duration ($T_{\text{provider}}$). Because the official Gnani STT REST v3 API does not report server processing duration in its response payload, `provider_processing_time_ms` remains strictly `null`. Client-side elapsed time is **never** substituted for provider latency.
   - **Partial Failure Safeguard:** If either provider request fails or times out, the evaluation is aborted immediately. An incomplete pair is never persisted or presented as a successful evaluation.
-  - **Credit Protection:** Live evaluation requires explicit user confirmation and file selection. Automated tests always use deterministic mocked client responses and never consume programme credits.
+  - **Credit Protection:** Live evaluation requires an explicit user confirmation checkbox, confirmation dialog, and server authorization token. Automated tests always use deterministic mocked client responses and never consume programme credits.
 
 ---
 
@@ -186,10 +192,11 @@ BoliBench strictly isolates execution semantics and telemetry between mock and l
    - Deterministic paired-contrast evaluation scoring engine.
    - Exact dynamic programming Levenshtein Word Error Rate (WER).
    - Domain-specific critical field extractors (quantities, negation, corrections, entities, intent).
-   - Thread-safe SQLite persistence with JSON and CSV exports.
+   - Thread-safe SQLite persistence with JSON and CSV exports preserving latency semantics.
    - Telemetry separation ensuring mock runs never report fabricated measured latency.
-   - Live paired audio REST API (`POST /api/eval/run-live/{test_id}`) with dual audio validation.
-   - Comprehensive test suite (67 tests passing with 0 network calls and 0 credits consumed).
+   - Server-side credit guard and anti-CSRF authorization manager (`app/services/live_guard.py`).
+   - Live paired audio REST API (`POST /api/eval/run-live/{test_id}`) protected by `POST /api/eval/authorize-live`.
+   - Comprehensive test suite (78 tests passing with 0 network calls and 0 credits consumed).
 2. **Pending Acoustic Research (`pending_acoustic`):**
    - Calibrated acoustic noise testing with multi-speaker recordings under measured signal-to-noise ratios (street noise, cafeteria babble, reverberation).
    - Crowdsourced audio dataset recording all 24 seed utterances across diverse regional Indian accents.

@@ -213,6 +213,18 @@ class GnaniPrismaClient:
             model = resp_json.get("model")
             timestamp = resp_json.get("timestamp")
 
+            client_elapsed = round(elapsed_ms, 2)
+            # Inspect official Gnani response payload for provider processing time
+            # Note: The official Gnani STT v3 REST API does not report provider-side processing duration
+            prov_processing_time = resp_json.get("provider_processing_time_ms")
+            if prov_processing_time is None:
+                prov_processing_time = resp_json.get("processing_time_ms")
+            if prov_processing_time is not None:
+                try:
+                    prov_processing_time = round(float(prov_processing_time), 2)
+                except (ValueError, TypeError):
+                    prov_processing_time = None
+
             return {
                 "success": True,
                 "transcript": transcript,
@@ -221,7 +233,10 @@ class GnaniPrismaClient:
                 "server_timestamp": timestamp,
                 "language_code": language_code,
                 "format": format_mode,
-                "backend_latency_ms": round(elapsed_ms, 2),
+                "client_request_elapsed_ms": client_elapsed,
+                "client_measured_latency_ms": client_elapsed,
+                "backend_latency_ms": client_elapsed,
+                "provider_processing_time_ms": prov_processing_time,
                 "is_mocked": False,
             }
 

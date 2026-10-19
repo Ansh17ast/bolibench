@@ -48,12 +48,19 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS middleware for local frontend/API flexibility
+# Restricted CORS middleware: Only allow trusted same-origin local development hosts
+ALLOWED_ORIGINS = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 

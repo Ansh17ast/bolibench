@@ -365,6 +365,7 @@ def test_mock_vs_live_mode_distinction_and_metrics(tmp_path: Path):
     saved_mock = storage.get_run("run_mock_001")
     assert saved_mock.execution_mode.value == "mock"
     assert saved_mock.client_measured_latency_ms is None
+    assert saved_mock.client_request_elapsed_ms is None
     assert saved_mock.provider_processing_time_ms is None
     assert saved_mock.simulated_latency_ms == 12.5
 
@@ -372,6 +373,7 @@ def test_mock_vs_live_mode_distinction_and_metrics(tmp_path: Path):
     saved_live = storage.get_run("run_live_001")
     assert saved_live.execution_mode.value == "live"
     assert saved_live.client_measured_latency_ms == 245.8
+    assert saved_live.client_request_elapsed_ms == 245.8
     assert saved_live.provider_processing_time_ms == 190.2
     assert saved_live.simulated_latency_ms is None
     assert saved_live.utterance_a.request_id == "req_a_123"
@@ -382,3 +384,25 @@ def test_mock_vs_live_mode_distinction_and_metrics(tmp_path: Path):
     assert metrics.total_runs == 2
     assert metrics.mock_runs == 1
     assert metrics.live_runs == 1
+
+
+def test_live_paired_evaluation_preserves_null_provider_latency_when_missing():
+    """Proves provider_processing_time_ms remains null when upstream provider omits processing duration."""
+    pair = load_seed_dataset()[0]
+    live_run = score_pair(
+        run_id="run_live_null_prov",
+        test_case=pair,
+        transcript_a="Do packet chahiye",
+        transcript_b="Teen packet chahiye",
+        execution_mode="live",
+        client_request_elapsed_ms=210.0,
+        provider_latency_ms=None,  # Provider does not report server processing time
+        request_id_a="req_a_789",
+        request_id_b="req_b_012",
+    )
+
+    assert live_run.execution_mode.value == "live"
+    assert live_run.client_measured_latency_ms == 210.0
+    assert live_run.client_request_elapsed_ms == 210.0
+    assert live_run.provider_processing_time_ms is None
+    assert live_run.simulated_latency_ms is None

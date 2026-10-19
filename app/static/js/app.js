@@ -449,26 +449,52 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Explicit confirmation action protecting user credits
     const userConfirmed = window.confirm(
-      "Live Evaluation Confirmation:\n\n" +
-      "This action will send 2 separate requests to Gnani Prisma STT v3 and deduct credits from your account.\n\n" +
-      "Do you want to proceed?"
+      "Live Evaluation Credit Authorization:\n\n" +
+      "Evaluating this pair makes 2 real requests to Gnani Prisma STT v3 and may consume programme credits.\n\n" +
+      "Do you authorize 2 live requests for Utterance A and Utterance B?"
     );
     if (!userConfirmed) return;
 
-    const formData = new FormData();
-    formData.append("audio_file_a", liveAudioInputA.files[0]);
-    formData.append("audio_file_b", liveAudioInputB.files[0]);
-    formData.append("audio_condition", "clean_recorded");
-
     btnExecuteLiveEval.disabled = true;
     btnLiveSpinner.style.display = "inline-block";
-    btnLiveEvalText.textContent = "Transcribing Live via Gnani...";
+    btnLiveEvalText.textContent = "Authorizing Live Evaluation...";
     evalStatusBadge.className = "status-badge status-running";
-    evalStatusBadge.textContent = "Evaluating Live Audio Pair...";
+    evalStatusBadge.textContent = "Authorizing Credit Guard...";
 
     try {
+      // Step 1: Request single-use authorization token from server
+      const authResp = await fetch("/api/eval/authorize-live", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        body: JSON.stringify({ test_id: testId }),
+      });
+
+      if (!authResp.ok) {
+        const authErr = await authResp.json().catch(() => ({}));
+        throw new Error(authErr.detail || `Live authorization rejected (HTTP ${authResp.status})`);
+      }
+
+      const authData = await authResp.json();
+      const authToken = authData.confirmation_token;
+
+      // Step 2: Build multipart payload with confirmation token
+      const formData = new FormData();
+      formData.append("audio_file_a", liveAudioInputA.files[0]);
+      formData.append("audio_file_b", liveAudioInputB.files[0]);
+      formData.append("audio_condition", "clean_recorded");
+      formData.append("confirmation_token", authToken);
+
+      btnLiveEvalText.textContent = "Transcribing Live via Gnani...";
+      evalStatusBadge.textContent = "Evaluating Live Audio Pair...";
+
       const response = await fetch(`/api/eval/run-live/${testId}`, {
         method: "POST",
+        headers: {
+          "X-BoliBench-Confirm-Live": "CONFIRM_LIVE_EVALUATION",
+        },
         body: formData,
       });
 
@@ -632,14 +658,18 @@ document.addEventListener("DOMContentLoaded", () => {
     runIdDisplay.textContent = `Run ID: ${res.run_id}`;
     if (res.execution_mode === "mock") {
       if (res.simulated_latency_ms != null) {
-        runLatencyDisplay.textContent = `Simulated Latency: ${res.simulated_latency_ms} ms (Text Simulation)`;
+        runLatencyDisplay.textContent = `Simulated Latency: ${res.simulated_latency_ms} ms (Text Simulation — 0 Network Calls)`;
       } else {
-        runLatencyDisplay.textContent = "Measured Latency: N/A (Mock Mode — 0 Network Calls)";
+        runLatencyDisplay.textContent = "Measured Latency: null (Mock Mode — 0 Network Calls)";
       }
     } else {
-      const clientLat = res.client_measured_latency_ms != null ? `${res.client_measured_latency_ms} ms` : "N/A";
-      const provLat = res.provider_processing_time_ms != null ? ` (Provider: ${res.provider_processing_time_ms} ms)` : "";
-      runLatencyDisplay.textContent = `Measured Client Latency: ${clientLat}${provLat}`;
+      const clientLat = (res.client_request_elapsed_ms != null)
+        ? `${res.client_request_elapsed_ms} ms`
+        : (res.client_measured_latency_ms != null ? `${res.client_measured_latency_ms} ms` : "null");
+      const provLat = res.provider_processing_time_ms != null
+        ? `${res.provider_processing_time_ms} ms`
+        : "null (not reported by provider)";
+      runLatencyDisplay.textContent = `Client Request Elapsed: ${clientLat} | Provider Processing: ${provLat}`;
     }
     runTimestampDisplay.textContent = `Time: ${res.timestamp}`;
   }

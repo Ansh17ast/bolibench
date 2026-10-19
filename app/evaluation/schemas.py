@@ -103,7 +103,9 @@ class UtteranceEvaluationResult(BaseModel):
     detected_intent: str
     intent_match: bool
     task_success: bool
-    latency_ms: Optional[float] = Field(None, description="Actual measured latency (ms) for live call; null for mock")
+    latency_ms: Optional[float] = Field(None, description="Actual measured client-side elapsed latency (ms) for live call; null for mock")
+    client_request_elapsed_ms: Optional[float] = Field(None, description="Client-side measured HTTP round-trip elapsed time (ms) for this utterance; null in mock mode")
+    provider_processing_time_ms: Optional[float] = Field(None, description="Provider-reported backend processing latency (ms); null when not reported by provider")
     simulated_latency_ms: Optional[float] = Field(None, description="Simulated latency (ms) for demonstration; null if not simulated")
     request_id: Optional[str] = Field(None, description="Provider request ID for live call; null for mock")
 
@@ -127,8 +129,9 @@ class PairEvaluationResult(BaseModel):
     task_success: bool = Field(..., description="True if downstream actions for both utterances would be correct")
     primary_failure_category: FailureCategory
     failure_explanation: str
-    client_measured_latency_ms: Optional[float] = Field(None, description="Actual measured client elapsed latency (ms) for live requests; null in mock mode")
-    provider_processing_time_ms: Optional[float] = Field(None, description="Actual backend processing latency (ms) reported by provider; null in mock mode")
+    client_measured_latency_ms: Optional[float] = Field(None, description="Actual measured total client elapsed latency (ms) for live requests; null in mock mode")
+    client_request_elapsed_ms: Optional[float] = Field(None, description="Total client-side measured round-trip elapsed latency (ms) across both requests; alias for client_measured_latency_ms")
+    provider_processing_time_ms: Optional[float] = Field(None, description="Actual backend processing latency (ms) reported by provider; null if not reported by provider or in mock mode")
     simulated_latency_ms: Optional[float] = Field(None, description="Simulated latency for demonstration purposes (clearly distinguished from measured latency)")
 
 
