@@ -406,6 +406,7 @@ def evaluate_utterance(
     category: TestCategory,
     language_code: str = "hi-IN",
     latency_ms: Optional[float] = None,
+    simulated_latency_ms: Optional[float] = None,
     request_id: Optional[str] = None,
 ) -> UtteranceEvaluationResult:
     """Evaluates a single utterance transcript against its ground truth specification."""
@@ -458,6 +459,7 @@ def evaluate_utterance(
         intent_match=intent_match,
         task_success=task_success,
         latency_ms=latency_ms,
+        simulated_latency_ms=simulated_latency_ms,
         request_id=request_id,
     )
 
@@ -489,7 +491,7 @@ def classify_failure(
     if (result_a.wer > 0.6 and not result_a.actual_transcript.strip()) or (result_b.wer > 0.6 and not result_b.actual_transcript.strip()):
         return (
             FailureCategory.HIGH_WER_CORRUPTION,
-            "Severe transcription dropout or acoustic corruption prevented field extraction.",
+            "Severe transcription dropout or simulated corruption prevented field extraction.",
         )
 
     # 2. Negation Failure
@@ -549,24 +551,53 @@ def score_pair(
     transcript_a: str,
     transcript_b: str,
     execution_mode: str = "mock",
-    audio_condition: str = "clean_synthetic",
+    audio_condition: str = "text_only_simulation",
     timestamp: str = "",
     client_latency_ms: Optional[float] = None,
     provider_latency_ms: Optional[float] = None,
+    simulated_latency_ms: Optional[float] = None,
     latency_a_ms: Optional[float] = None,
     latency_b_ms: Optional[float] = None,
     request_id_a: Optional[str] = None,
     request_id_b: Optional[str] = None,
 ) -> PairEvaluationResult:
-    """Scores a paired contrast test deterministically."""
+    """Scores a paired contrast test deterministically.
+
+    Guarantees:
+    - Mock execution mode NEVER populates client_measured_latency_ms or provider_processing_time_ms.
+    - If latency is simulated for demonstration, it is recorded in simulated_latency_ms.
+    - Live execution mode calculates client_measured_latency_ms strictly from elapsed provider requests.
+    """
+    is_live = (execution_mode == "live")
+
+    # Strictly enforce mock vs live latency fields
+    if is_live:
+        final_client_latency = client_latency_ms
+        final_provider_latency = provider_latency_ms
+        final_latency_a = latency_a_ms
+        final_latency_b = latency_b_ms
+        final_simulated_latency = None
+        final_request_id_a = request_id_a
+        final_request_id_b = request_id_b
+    else:
+        # Mock mode: Measured latencies must remain null
+        final_client_latency = None
+        final_provider_latency = None
+        final_latency_a = None
+        final_latency_b = None
+        final_simulated_latency = simulated_latency_ms
+        final_request_id_a = None
+        final_request_id_b = None
+
     # 1. Evaluate Utterance A
     res_a = evaluate_utterance(
         utterance_spec=test_case.utterance_a,
         actual_transcript=transcript_a,
         category=test_case.category,
         language_code=test_case.language_code,
-        latency_ms=latency_a_ms,
-        request_id=request_id_a,
+        latency_ms=final_latency_a,
+        simulated_latency_ms=simulated_latency_ms if not is_live else None,
+        request_id=final_request_id_a,
     )
 
     # 2. Evaluate Utterance B
@@ -575,8 +606,9 @@ def score_pair(
         actual_transcript=transcript_b,
         category=test_case.category,
         language_code=test_case.language_code,
-        latency_ms=latency_b_ms,
-        request_id=request_id_b,
+        latency_ms=final_latency_b,
+        simulated_latency_ms=simulated_latency_ms if not is_live else None,
+        request_id=final_request_id_b,
     )
 
     # 3. Check Semantic Distinction Preservation
@@ -614,7 +646,7 @@ def score_pair(
     return PairEvaluationResult(
         run_id=run_id,
         test_case_id=test_case.id,
-        category=test_case.category.value,
+        category=test_case.category.value if hasattr(test_case.category, "value") else str(test_case.category),
         language_code=test_case.language_code,
         execution_mode=execution_mode,  # type: ignore[arg-type]
         audio_condition=audio_condition,
@@ -629,6 +661,7 @@ def score_pair(
         task_success=task_success,
         primary_failure_category=failure_category,
         failure_explanation=failure_explanation,
-        client_measured_latency_ms=client_latency_ms,
-        provider_processing_time_ms=provider_latency_ms,
+        client_measured_latency_ms=final_client_latency,
+        provider_processing_time_ms=final_provider_latency,
+        simulated_latency_ms=final_simulated_latency,
     )

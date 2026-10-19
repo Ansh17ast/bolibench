@@ -1,9 +1,10 @@
 """API route handlers for Paired-Contrast Evaluation Engine."""
 
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import PlainTextResponse
 
+from app.config import get_settings
 from app.evaluation.engine import EvaluationEngine
 from app.evaluation.schemas import (
     AggregateMetrics,
@@ -11,6 +12,8 @@ from app.evaluation.schemas import (
     PairEvaluationResult,
     TestCasePair,
 )
+from app.services.audio_validator import AudioValidationError, AudioValidator
+from app.services.gnani_client import GnaniClientError, GnaniPrismaClient, MissingCredentialsError
 
 router = APIRouter(prefix="/api/eval", tags=["evaluation"])
 engine = EvaluationEngine()
@@ -49,6 +52,82 @@ async def run_mock_evaluation(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
+        )
+
+
+@router.post("/run-live/{test_id}", response_model=PairEvaluationResult)
+async def run_live_evaluation(
+    test_id: str,
+    audio_file_a: UploadFile = File(..., description="Audio file for Utterance A (WAV, MP3, OGG, FLAC, AAC, M4A <= 60s)"),
+    audio_file_b: UploadFile = File(..., description="Audio file for Utterance B (WAV, MP3, OGG, FLAC, AAC, M4A <= 60s)"),
+    audio_condition: str = Form("clean_recorded", description="Acoustic environment metadata (e.g. clean_recorded, noisy_recorded)"),
+):
+    """Executes a live paired-contrast evaluation using Gnani Prisma STT REST API.
+
+    WARNING: This endpoint initiates two real provider requests to Gnani Prisma STT v3
+    and consumes programme credits. Requires GNANI_API_KEY to be configured in .env.
+    """
+    settings = get_settings()
+    if not settings.is_api_configured:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Gnani API key is not configured. Set GNANI_API_KEY in .env to perform live evaluations.",
+        )
+
+    test_case = engine.get_test_case(test_id)
+    if not test_case:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Test case with ID '{test_id}' not found.",
+        )
+
+    validator = AudioValidator(max_size_bytes=settings.max_audio_size_bytes)
+
+    # 1. Read & Validate Audio File A in memory
+    try:
+        content_a = await audio_file_a.read()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to read audio file A: {str(exc)}",
+        )
+    ext_a, content_type_a = validator.validate(audio_file_a.filename, content_a)
+
+    # 2. Read & Validate Audio File B in memory
+    try:
+        content_b = await audio_file_b.read()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to read audio file B: {str(exc)}",
+        )
+    ext_b, content_type_b = validator.validate(audio_file_b.filename, content_b)
+
+    # 3. Server-side Gnani client invocation
+    client = GnaniPrismaClient(settings=settings)
+
+    try:
+        result = await engine.evaluate_live_audio(
+            test_case_id=test_id,
+            audio_a_bytes=content_a,
+            filename_a=audio_file_a.filename or f"utterance_a{ext_a}",
+            content_type_a=content_type_a,
+            audio_b_bytes=content_b,
+            filename_b=audio_file_b.filename or f"utterance_b{ext_b}",
+            content_type_b=content_type_b,
+            client=client,
+            audio_condition=audio_condition,
+        )
+        return result
+    except GnaniClientError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=f"Gnani Prisma API error during paired evaluation: {exc.message}",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Live paired audio evaluation failed: {str(exc)}",
         )
 
 

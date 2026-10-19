@@ -1,6 +1,11 @@
 """Route tests for BoliBench Paired-Contrast Evaluation API endpoints."""
 
+import io
+from unittest.mock import patch
 import pytest
+
+from app.config import get_settings
+from app.services.gnani_client import GnaniServerError, GnaniTimeoutError
 
 
 @pytest.mark.asyncio
@@ -117,3 +122,276 @@ async def test_export_endpoints(async_client):
     assert resp_csv.status_code == 200
     assert "text/csv" in resp_csv.headers.get("content-type", "")
     assert "run_id,test_case_id" in resp_csv.text
+
+
+# -----------------------------------------------------------------------------
+# Phase 2: Telemetry Correction, Live Paired-Audio, and Credit Protection Tests
+# -----------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_mock_latency_not_represented_as_real_measured_latency(async_client):
+    """Proves mock runs never report fabricated numbers in client_measured_latency_ms."""
+    response = await async_client.post("/api/eval/run-mock/pair_qty_001?scenario=ideal_preserved")
+    assert response.status_code == 200
+    data = response.json()
+
+    # Measured latency fields must remain strictly null for mock runs
+    assert data["client_measured_latency_ms"] is None
+    assert data["provider_processing_time_ms"] is None
+    assert data["utterance_a"]["latency_ms"] is None
+    assert data["utterance_b"]["latency_ms"] is None
+    assert data["utterance_a"]["request_id"] is None
+    assert data["utterance_b"]["request_id"] is None
+
+    # Custom transcript mock evaluation
+    payload = {
+        "test_case_id": "pair_qty_001",
+        "transcript_a": "Do packet chahiye",
+        "transcript_b": "Teen packet chahiye",
+        "execution_mode": "mock",
+        "client_latency_ms": 25.0,  # Simulated latency provided by caller
+    }
+    resp_custom = await async_client.post("/api/eval/evaluate-transcripts", json=payload)
+    assert resp_custom.status_code == 200
+    custom_data = resp_custom.json()
+
+    # Must be categorized as simulated_latency_ms, NOT client_measured_latency_ms
+    assert custom_data["client_measured_latency_ms"] is None
+    assert custom_data["provider_processing_time_ms"] is None
+    assert custom_data["simulated_latency_ms"] == 25.0
+
+
+@pytest.mark.asyncio
+async def test_run_live_audio_validates_both_uploads(async_client, valid_wav_bytes, long_wav_bytes, monkeypatch):
+    """Proves POST /api/eval/run-live/{test_id} validates format, size, duration for both files."""
+    monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    get_settings.cache_clear()
+
+    # 1. Reject invalid file extension on Utterance A
+    files_bad_a = {
+        "audio_file_a": ("bad_a.py", io.BytesIO(b"print('invalid')"), "text/x-python"),
+        "audio_file_b": ("good_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+    resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files_bad_a)
+    assert resp.status_code == 400
+    assert resp.json()["error_type"] == "UNSUPPORTED_EXTENSION"
+
+    # 2. Reject empty file on Utterance A
+    files_empty_a = {
+        "audio_file_a": ("empty_a.wav", io.BytesIO(b""), "audio/wav"),
+        "audio_file_b": ("good_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+    resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files_empty_a)
+    assert resp.status_code == 400
+    assert resp.json()["error_type"] == "EMPTY_FILE"
+
+    # 3. Reject invalid file extension on Utterance B
+    files_bad_b = {
+        "audio_file_a": ("good_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        "audio_file_b": ("bad_b.txt", io.BytesIO(b"not an audio"), "text/plain"),
+    }
+    resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files_bad_b)
+    assert resp.status_code == 400
+    assert resp.json()["error_type"] == "UNSUPPORTED_EXTENSION"
+
+    # 4. Reject empty file on Utterance B
+    files_empty_b = {
+        "audio_file_a": ("good_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        "audio_file_b": ("empty_b.wav", io.BytesIO(b""), "audio/wav"),
+    }
+    resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files_empty_b)
+    assert resp.status_code == 400
+    assert resp.json()["error_type"] == "EMPTY_FILE"
+
+    # 5. Reject duration > 60s on Utterance B
+    files_long_b = {
+        "audio_file_a": ("good_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        "audio_file_b": ("long_b.wav", io.BytesIO(long_wav_bytes), "audio/wav"),
+    }
+    resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files_long_b)
+    assert resp.status_code == 400
+    assert resp.json()["error_type"] == "DURATION_EXCEEDED"
+
+
+@pytest.mark.asyncio
+async def test_run_live_invalid_test_id(async_client, valid_wav_bytes, monkeypatch):
+    """Proves POST /api/eval/run-live/{test_id} returns 404 for unknown test cases."""
+    monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    get_settings.cache_clear()
+
+    files = {
+        "audio_file_a": ("clip_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        "audio_file_b": ("clip_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+    resp = await async_client.post("/api/eval/run-live/non_existent_test_999", files=files)
+    assert resp.status_code == 404
+    assert "not found" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_run_live_missing_credentials(async_client, valid_wav_bytes, monkeypatch):
+    """Proves POST /api/eval/run-live/{test_id} returns 401 when API credentials are unset."""
+    monkeypatch.delenv("GNANI_API_KEY", raising=False)
+    get_settings.cache_clear()
+
+    files = {
+        "audio_file_a": ("clip_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        "audio_file_b": ("clip_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+    resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files)
+    assert resp.status_code == 401
+    assert "not configured" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_run_live_success_with_mocked_provider(async_client, valid_wav_bytes, monkeypatch):
+    """Proves paired live evaluation succeeds with deterministic mocked provider without network calls."""
+    monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    get_settings.cache_clear()
+
+    mock_resp_a = {
+        "success": True,
+        "transcript": "Do packet chahiye",
+        "request_id": "req_live_test_a_001",
+        "model": "gnani-prisma-v2.5",
+        "backend_latency_ms": 110.5,
+        "server_timestamp": "20261020_040000.000",
+        "language_code": "hi-IN",
+        "format": "verbatim",
+        "is_mocked": False,
+    }
+    mock_resp_b = {
+        "success": True,
+        "transcript": "Teen packet chahiye",
+        "request_id": "req_live_test_b_002",
+        "model": "gnani-prisma-v2.5",
+        "backend_latency_ms": 115.0,
+        "server_timestamp": "20261020_040001.000",
+        "language_code": "hi-IN",
+        "format": "verbatim",
+        "is_mocked": False,
+    }
+
+    files = {
+        "audio_file_a": ("utterance_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        "audio_file_b": ("utterance_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+    data = {"audio_condition": "clean_recorded"}
+
+    with patch("app.services.gnani_client.GnaniPrismaClient.transcribe", side_effect=[mock_resp_a, mock_resp_b]) as mock_transcribe:
+        response = await async_client.post("/api/eval/run-live/pair_qty_001", files=files, data=data)
+        assert response.status_code == 200
+        assert mock_transcribe.call_count == 2
+
+        result = response.json()
+        assert result["execution_mode"] == "live"
+        assert result["audio_condition"] == "clean_recorded"
+        assert result["semantic_distinction_preserved"] is True
+        assert result["task_success"] is True
+
+        # Check telemetry precision
+        assert result["client_measured_latency_ms"] is not None
+        assert result["client_measured_latency_ms"] > 0
+        assert result["provider_processing_time_ms"] == pytest.approx(225.5, abs=0.1)
+        assert result["simulated_latency_ms"] is None
+
+        # Check utterance-level telemetry and request IDs
+        assert result["utterance_a"]["request_id"] == "req_live_test_a_001"
+        assert result["utterance_b"]["request_id"] == "req_live_test_b_002"
+        assert result["utterance_a"]["latency_ms"] == 110.5
+        assert result["utterance_b"]["latency_ms"] == 115.0
+
+
+@pytest.mark.asyncio
+async def test_run_live_partial_failure_first_fails(async_client, valid_wav_bytes, monkeypatch):
+    """Proves failure of Utterance A never evaluates Utterance B or records a run."""
+    monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    get_settings.cache_clear()
+
+    files = {
+        "audio_file_a": ("utterance_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        "audio_file_b": ("utterance_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+
+    with patch(
+        "app.services.gnani_client.GnaniPrismaClient.transcribe",
+        side_effect=GnaniServerError("Gnani recognition cluster error", status_code=500),
+    ) as mock_transcribe:
+        response = await async_client.post("/api/eval/run-live/pair_qty_001", files=files)
+        assert response.status_code == 500
+        assert mock_transcribe.call_count == 1  # Utterance B was never called
+
+
+@pytest.mark.asyncio
+async def test_run_live_partial_failure_second_fails(async_client, valid_wav_bytes, monkeypatch):
+    """Proves if Utterance A succeeds but Utterance B fails, no partial success is recorded."""
+    monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    get_settings.cache_clear()
+
+    mock_resp_a = {
+        "success": True,
+        "transcript": "Do packet chahiye",
+        "request_id": "req_live_test_a_ok",
+        "model": "gnani-prisma-v2.5",
+        "backend_latency_ms": 105.0,
+        "server_timestamp": "20261020_040000.000",
+        "language_code": "hi-IN",
+        "format": "verbatim",
+        "is_mocked": False,
+    }
+
+    files = {
+        "audio_file_a": ("utterance_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        "audio_file_b": ("utterance_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+
+    with patch(
+        "app.services.gnani_client.GnaniPrismaClient.transcribe",
+        side_effect=[mock_resp_a, GnaniTimeoutError(timeout_seconds=30.0)],
+    ) as mock_transcribe:
+        response = await async_client.post("/api/eval/run-live/pair_qty_001", files=files)
+        assert response.status_code == 504
+        assert mock_transcribe.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_api_credentials_never_exposed(async_client, monkeypatch):
+    """Proves API credentials never appear in API responses, exports, or Settings repr."""
+    secret_key = "super_secret_gnani_key_xyz987"
+    monkeypatch.setenv("GNANI_API_KEY", secret_key)
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    # Settings repr must mask secret
+    assert secret_key not in repr(settings)
+    assert "gnani_api_configured=True" in repr(settings)
+
+    # Health check
+    resp_health = await async_client.get("/health")
+    assert secret_key not in resp_health.text
+
+    # Test cases list
+    resp_cases = await async_client.get("/api/eval/test-cases")
+    assert secret_key not in resp_cases.text
+
+    # Metrics
+    resp_metrics = await async_client.get("/api/eval/metrics")
+    assert secret_key not in resp_metrics.text
+
+    # JSON export
+    resp_export = await async_client.get("/api/eval/export?format=json")
+    assert secret_key not in resp_export.text
+
+
+@pytest.mark.asyncio
+async def test_programme_credits_protected_against_unauthorized_network(async_client, valid_wav_bytes, monkeypatch):
+    """Proves automated tests cannot consume credits by verifying mocked client isolation."""
+    monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    get_settings.cache_clear()
+
+    # Verify mock mode uses 0 network calls
+    files = {"audio_file": ("test.wav", io.BytesIO(valid_wav_bytes), "audio/wav")}
+    data = {"language_code": "hi-IN", "mock_mode": "true"}
+    resp = await async_client.post("/api/transcribe", files=files, data=data)
+    assert resp.status_code == 200
+    assert resp.json()["is_mocked"] is True

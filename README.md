@@ -199,14 +199,15 @@ Open your browser to:
 
 ### A. Running Mock Evaluations (Zero Credits Spent)
 
-1. Open [http://127.0.0.1:8000/](http://127.0.0.1:8000/) and click the **Crash-Test Evaluation Lab** tab.
+1. Open [http://127.0.0.1:8000/](http://127.0.0.1:8000/) and click the **Paired-Contrast Crash Lab** tab.
 2. Select any test pair (e.g. `pair_qty_001: 2 Packets vs 3 Packets`).
-3. Click **"Run Ideal (Preserved)"** to evaluate ground-truth transcripts. Notice:
+3. Click **"Run Preserved Distinction (Mock)"** to evaluate ground-truth transcripts. Notice:
    - WER: 0.0%
    - Critical Field Accuracy: 100%
    - Distinction Preserved: YES
    - Task Success: YES
-4. Click **"Run Crashed Distinction"** to simulate an acoustic speech recognition error where the quantity slot collapses. Notice:
+   - Measured Latency: N/A (0 network requests made)
+4. Click **"Simulate Transcript Crash (Error)"** to test downstream failure against hand-authored corrupted transcripts (demonstrates how downstream ordering agent crashes without claiming uncalibrated acoustic measurements). Notice:
    - Failure Classification: `QUANTITY_ERROR`
    - Distinction Preserved: NO
    - Task Success: NO
@@ -221,13 +222,21 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/eval/run-mock/pai
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/eval/run-mock/pair_qty_001?scenario=crashed_distinction"
 ```
 
-### B. Running Live Transcription with Gnani Prisma
+### B. Running Paired Live Audio Evaluation (Consumes Credits)
 
-1. In the **Single Audio Lab** tab, select the audio language (e.g. `Hindi (hi-IN)` or `English - India (en-IN)`).
-2. Choose formatting mode (`Verbatim` or `Transcribe` with Inverse Text Normalization).
-3. Toggle the **Mock Mode** switch off to make a live request to `https://api.vachana.ai/stt/v3`.
-4. Upload an audio file (`.wav`, `.mp3`, `.ogg`, `.flac`, `.aac`, `.m4a` ≤ 60 seconds).
-5. Click **Transcribe Audio**. The client reports provider latency ($T_{\text{provider}}$) and client round-trip latency ($T_{\text{client}}$).
+1. In the **Paired-Contrast Crash Lab** tab, select a test pair.
+2. Click **"🎙️ Live Audio Pair (Consumes Credits)"** to reveal the credit-protected live drawer.
+3. Select an audio file for Utterance A and an audio file for Utterance B (WAV, MP3, OGG, FLAC, AAC, M4A ≤ 60s).
+4. Review the credit warning notice and check the authorization checkbox:
+   `[x] I authorize 2 live API requests to Gnani Prisma and credit deduction`
+5. Click **"Execute Paired Live Evaluation"** and confirm the interactive prompt.
+6. The backend:
+   - Validates both audio files in-memory using `AudioValidator` (zero disk persistence).
+   - Sequentially executes live calls to `https://api.vachana.ai/stt/v3` with your `GNANI_API_KEY`.
+   - Records genuine client elapsed time and provider latency.
+   - Evaluates returned transcripts using the deterministic scoring engine.
+   - Preserves provider request IDs.
+   - If either call fails, the evaluation halts immediately, ensuring no partial or misleading result is recorded.
 
 ---
 
@@ -238,17 +247,17 @@ Run the test suite:
 python -m pytest -v
 ```
 
-### Actual Test Suite Result (57 Tests Passing):
+### Actual Test Suite Result (67 Tests Passing):
 ```
-collected 57 items
+collected 67 items
 
-tests/test_audio_validator.py ............                               [ 21%]
-tests/test_evaluation_engine.py ...................                     [ 54%]
-tests/test_evaluation_routes.py ........                                [ 68%]
-tests/test_gnani_client.py ...........                                   [ 87%]
+tests/test_audio_validator.py ............                               [ 17%]
+tests/test_evaluation_engine.py ....................                    [ 47%]
+tests/test_evaluation_routes.py .................                       [ 73%]
+tests/test_gnani_client.py ...........                                   [ 89%]
 tests/test_routes.py .......                                             [100%]
 
-============================= 57 passed in 0.58s ==============================
+============================= 67 passed in 0.82s ==============================
 ```
 
 ### Verified vs. Pending Status Matrix
@@ -258,8 +267,8 @@ tests/test_routes.py .......                                             [100%]
 | **Audio File Validation** | **VERIFIED** | 12 tests: WAV, MP3, OGG, FLAC, AAC, M4A, file limits (25MB), duration limits (60s), magic byte headers. |
 | **Gnani REST STT v3 Client** | **VERIFIED** | 11 tests: Verified against official OpenAPI 3.1 specification. Handles 200, 400, 401, 403, 429, 500, 503, timeouts, and malformed responses. |
 | **FastAPI Core Routes** | **VERIFIED** | 7 tests: `/health`, `/`, `/api/transcribe` in mock and live modes with validation. |
-| **Evaluation Metrics Engine** | **VERIFIED** | 19 tests: Exact Levenshtein WER, slot extractors (quantities, negation, corrections, entities, intent), contrast scoring, and SQLite persistence. |
-| **Evaluation REST API** | **VERIFIED** | 8 tests: Test pair catalog, mock execution, custom transcript evaluation, aggregate metrics, and CSV/JSON export. |
+| **Evaluation Metrics Engine** | **VERIFIED** | 20 tests: Exact Levenshtein WER, slot extractors, contrast scoring, mock vs live telemetry isolation, SQLite persistence. |
+| **Evaluation REST API** | **VERIFIED** | 17 tests: Test pair catalog, mock execution, custom transcripts, live paired audio endpoint, upload validation, partial failure handling, credential protection, and CSV/JSON export. |
 | **Live Account Transcription** | **PENDING USER SETUP** | Requires the user to insert their personal `GNANI_API_KEY` into `.env` and execute against their account credits. |
 
 ---
@@ -270,29 +279,31 @@ tests/test_routes.py .......                                             [100%]
 |---|---|---|
 | `GET` | `/api/eval/test-cases` | List all 12 seed paired-contrast test cases |
 | `GET` | `/api/eval/test-cases/{test_id}` | Retrieve specific test case metadata and expected fields |
-| `POST` | `/api/eval/run-mock/{test_id}?scenario=ideal_preserved` | Run deterministic mock evaluation (preserves distinction) |
-| `POST` | `/api/eval/run-mock/{test_id}?scenario=crashed_distinction` | Run deterministic mock evaluation (demonstrates acoustic crash) |
+| `POST` | `/api/eval/run-mock/{test_id}?scenario=ideal_preserved` | Run deterministic mock evaluation (preserves distinction; 0 credits) |
+| `POST` | `/api/eval/run-mock/{test_id}?scenario=crashed_distinction` | Run deterministic mock evaluation with hand-authored simulated corruption |
+| `POST` | `/api/eval/run-live/{test_id}` | Execute live paired audio evaluation against Gnani Prisma STT v3 (consumes credits) |
 | `POST` | `/api/eval/evaluate-transcripts` | Evaluate custom or actual transcripts against expected ground truth |
 | `GET` | `/api/eval/results` | List evaluation runs stored in SQLite |
 | `GET` | `/api/eval/results/{run_id}` | Retrieve specific evaluation run |
-| `GET` | `/api/eval/metrics` | Retrieve aggregate metrics (pass rate, task success rate, average WER) |
+| `GET` | `/api/eval/metrics` | Retrieve aggregate metrics (pass rate, task success rate, average WER, mock/live split) |
 | `GET` | `/api/eval/export?format=csv` | Export all evaluation runs as CSV |
 | `GET` | `/api/eval/export?format=json` | Export all evaluation runs as JSON |
 
 ---
 
-## 10. Security Guarantees & Privacy
+## 10. Security Guarantees & Credit Protection
 
 - **Zero Credential Exposure:** `GNANI_API_KEY` is loaded on the backend via Pydantic Settings and is **never** sent to the browser.
 - **Safe Representation:** `Settings.__repr__` masks credentials to prevent secret leakage in logs or terminal outputs.
 - **Privacy by Default:** Uploaded audio is processed in-memory as byte streams and is **never** persisted to disk. SQLite stores only structured evaluation metadata.
-- **Credit Protection:** Deterministic mock tests consume 0 Gnani credits. Live requests require explicit user configuration and confirmation.
+- **Credit Protection:** Deterministic mock tests consume 0 Gnani credits. Automated tests use mocked clients exclusively and make zero external network requests.
+- **Partial Failure Guard:** Live paired evaluation aborts if either utterance fails, preventing corrupted or half-baked evaluations from being marked as successful.
 
 ---
 
-## 11. Known Limitations & Future Work
+## 11. Known Limitations & Research Boundaries
 
-1. **Synthetic Clean Baseline:** The current 12 seed pairs are clean baseline utterances labeled as `synthetic_curated`. BoliBench does not fabricate artificial acoustic noise scores without calibrated ambient multi-speaker audio.
-2. **Language Coverage:** The current evaluation engine focuses on Hindi (`hi-IN`) and Indian English (`en-IN`), which cover the majority of code-switching voice agents in India. Future work will expand the paired-contrast catalog to Tamil (`ta-IN`), Telugu (`te-IN`), Kannada (`kn-IN`), and Bengali (`bn-IN`).
-3. **No Clinical or Superiority Claims:** BoliBench is a diagnostic evaluation framework designed to benchmark speech-recognition pipelines under paired semantic contrast. It makes no claims of clinical diagnostic validation or unverified benchmark superiority.
-4. **Planned Acoustic Benchmark Drive:** Future work includes a crowdsourced recording initiative to collect authentic microphone recordings across diverse Indian regional accents for all 24 utterances.
+1. **Text-Only Simulation Baseline:** The current 12 seed pairs are hand-authored linguistic test cases (`text_only_simulation`). BoliBench does not claim acoustic noise robustness has been evaluated until real audio has been processed.
+2. **Pending Calibrated Acoustic Research (`pending_acoustic`):** Future extensions will record all 24 utterances under calibrated multi-speaker noise environments (street noise, call center chatter, reverberant rooms) with measured SNR.
+3. **Regional Indian Language Expansion:** Current coverage spans Hindi (`hi-IN`) and Indian English (`en-IN`). Planned additions will expand into Tamil (`ta-IN`), Telugu (`te-IN`), Kannada (`kn-IN`), and Bengali (`bn-IN`).
+4. **No Clinical or Superiority Claims:** BoliBench is an objective diagnostic framework benchmarking downstream voice agent semantic robustness. It makes no claims of clinical diagnostic validation or unverified benchmark superiority.

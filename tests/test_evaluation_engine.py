@@ -327,3 +327,58 @@ def test_storage_manager_lifecycle(tmp_path: Path):
     csv_export = storage.export_csv()
     assert "run_storage_001" in csv_export
     assert "pair_qty_001" in csv_export
+
+
+def test_mock_vs_live_mode_distinction_and_metrics(tmp_path: Path):
+    """Proves mock and live modes are distinct in storage, metrics, and latency fields."""
+    db_file = tmp_path / "test_modes.db"
+    storage = StorageManager(db_path=db_file)
+    pair = load_seed_dataset()[0]
+
+    # 1. Mock run with simulated latency
+    mock_run = score_pair(
+        run_id="run_mock_001",
+        test_case=pair,
+        transcript_a="Do packet chahiye",
+        transcript_b="Teen packet chahiye",
+        execution_mode="mock",
+        simulated_latency_ms=12.5,
+        client_latency_ms=999.0,  # Accidental client_latency must be ignored in mock
+    )
+    storage.save_run(mock_run)
+
+    # 2. Live run with genuine measured latency
+    live_run = score_pair(
+        run_id="run_live_001",
+        test_case=pair,
+        transcript_a="Do packet chahiye",
+        transcript_b="Teen packet chahiye",
+        execution_mode="live",
+        client_latency_ms=245.8,
+        provider_latency_ms=190.2,
+        request_id_a="req_a_123",
+        request_id_b="req_b_456",
+    )
+    storage.save_run(live_run)
+
+    # Assert mock run isolation
+    saved_mock = storage.get_run("run_mock_001")
+    assert saved_mock.execution_mode.value == "mock"
+    assert saved_mock.client_measured_latency_ms is None
+    assert saved_mock.provider_processing_time_ms is None
+    assert saved_mock.simulated_latency_ms == 12.5
+
+    # Assert live run isolation
+    saved_live = storage.get_run("run_live_001")
+    assert saved_live.execution_mode.value == "live"
+    assert saved_live.client_measured_latency_ms == 245.8
+    assert saved_live.provider_processing_time_ms == 190.2
+    assert saved_live.simulated_latency_ms is None
+    assert saved_live.utterance_a.request_id == "req_a_123"
+    assert saved_live.utterance_b.request_id == "req_b_456"
+
+    # Assert aggregate metrics separates mock and live
+    metrics = storage.get_aggregate_metrics()
+    assert metrics.total_runs == 2
+    assert metrics.mock_runs == 1
+    assert metrics.live_runs == 1

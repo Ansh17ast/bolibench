@@ -118,13 +118,19 @@ Error JSON Structure:
 | **10 Language Codes** | **CONFIRMED** | OpenAPI Spec `language_code` enum | `bn-IN`, `en-IN`, `gu-IN`, `hi-IN`, `kn-IN`, `ml-IN`, `mr-IN`, `pa-IN`, `ta-IN`, `te-IN` |
 | **Response Format** | **CONFIRMED** | OpenAPI Spec `STTResponse` schema | `success`, `transcript`, `timestamp`, `request_id` (`model` is optional) |
 | **Error Format (400, 401, 403, 429, 500, 503)** | **CONFIRMED** | OpenAPI Spec `StandardErrorResponse` schema | `success: false`, `error: {type, message}` |
-| **Live Account Authentication** | **PENDING USER SETUP** | User's Gnani Console Account | Live request pending configuration of `GNANI_API_KEY` in `.env`. |
-| **Account Credits / Quotas** | **PENDING USER SETUP** | User's Gnani Dashboard | 5,000 challenge credits apply per registration. |
+| **Paired Live Audio Route** | **CONFIRMED & TESTED** | `POST /api/eval/run-live/{test_id}` | Validates dual uploads, preserves request IDs, aborts on partial failure. Tested via mocked client. |
+| **Live Account Authentication** | **PENDING USER SETUP** | User's Gnani Console Account | Live request pending user-supplied `GNANI_API_KEY` in `.env`. |
+| **Credit Protection** | **CONFIRMED** | BoliBench Safety Guardrails | Automated tests consume 0 credits. UI requires explicit user confirmation before initiating live requests. |
 
 ---
 
-## 4. Live API Test Status Notice
+## 4. Live API Test Status & Credit Protection Notice
 
-> **IMPORTANT DECLARATION:**  
-> In accordance with project instructions, **no live API call is claimed to have succeeded** until an actual request with real credentials is executed by the user.  
-> The backend client is built with strict adherence to the verified official OpenAPI 3.1 specification. Automated test suites validate all client methods, file constraints, timeouts, and error handling paths using deterministic mocked responses.
+> **IMPORTANT SCIENTIFIC & SECURITY DECLARATION:**
+> In accordance with project instructions, **no live API call is claimed to have succeeded** until an actual request with real credentials is executed by the user against their personal quota.
+>
+> **Credit Protection Guarantees:**
+> 1. The automated test suite (`python -m pytest -v`) runs exclusively against deterministic mocked provider responses. Zero live network calls are made during tests, consuming zero programme credits.
+> 2. The web application never triggers live requests automatically on page load or when switching tabs.
+> 3. The paired live evaluation endpoint (`POST /api/eval/run-live/{test_id}`) requires dual valid audio files and user configuration. The interactive UI enforces an explicit user confirmation step warning that 2 provider requests will be made and credits deducted.
+> 4. API keys are managed strictly on the server backend and are never sent to the client browser.

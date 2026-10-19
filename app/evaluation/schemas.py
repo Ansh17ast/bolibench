@@ -44,11 +44,12 @@ class ExecutionMode(str, Enum):
 
 
 class AudioCondition(str, Enum):
-    """Acoustic environment metadata."""
-    CLEAN_SYNTHETIC = "clean_synthetic"
+    """Acoustic environment metadata and simulation classification."""
+    TEXT_ONLY_SIMULATION = "text_only_simulation"
     CLEAN_RECORDED = "clean_recorded"
-    NOISY_SYNTHETIC = "noisy_synthetic"
     NOISY_RECORDED = "noisy_recorded"
+    CLEAN_SYNTHETIC = "clean_synthetic"
+    NOISY_SYNTHETIC = "noisy_synthetic"
     PENDING_ACOUSTIC = "pending_acoustic"
 
 
@@ -65,7 +66,7 @@ class UtteranceSpec(BaseModel):
     expected_action: str = Field(..., description="Downstream agent action that should be executed")
     simulated_crashed_transcript: Optional[str] = Field(
         None,
-        description="Acoustically realistic error transcript used for deterministic crash demonstration",
+        description="Hand-authored simulated transcript corruption for crash demonstration (text-only simulation, not measured model error)",
     )
 
 
@@ -81,9 +82,9 @@ class TestCasePair(BaseModel):
     utterance_b: UtteranceSpec = Field(..., description="Second utterance in the contrast pair")
     expected_distinction: str = Field(..., description="Expected semantic distinction between A and B")
     distinction_field: str = Field(..., description="Primary field name where distinction resides (e.g. quantity, is_negated)")
-    audio_condition: AudioCondition = Field(AudioCondition.CLEAN_SYNTHETIC, description="Acoustic environment condition")
-    provenance: str = Field("synthetic_curated", description="Data origin and authoring notes")
-    consent_metadata: Optional[str] = Field("synthetic_no_pii", description="Consent and privacy declaration")
+    audio_condition: AudioCondition = Field(AudioCondition.TEXT_ONLY_SIMULATION, description="Acoustic environment condition or text simulation classification")
+    provenance: str = Field("hand_authored_text_simulation", description="Data origin and authoring notes")
+    consent_metadata: Optional[str] = Field("text_simulation_no_pii", description="Consent and privacy declaration")
 
 
 class UtteranceEvaluationResult(BaseModel):
@@ -102,8 +103,9 @@ class UtteranceEvaluationResult(BaseModel):
     detected_intent: str
     intent_match: bool
     task_success: bool
-    latency_ms: Optional[float] = None
-    request_id: Optional[str] = None
+    latency_ms: Optional[float] = Field(None, description="Actual measured latency (ms) for live call; null for mock")
+    simulated_latency_ms: Optional[float] = Field(None, description="Simulated latency (ms) for demonstration; null if not simulated")
+    request_id: Optional[str] = Field(None, description="Provider request ID for live call; null for mock")
 
 
 class PairEvaluationResult(BaseModel):
@@ -125,8 +127,9 @@ class PairEvaluationResult(BaseModel):
     task_success: bool = Field(..., description="True if downstream actions for both utterances would be correct")
     primary_failure_category: FailureCategory
     failure_explanation: str
-    client_measured_latency_ms: Optional[float] = None
-    provider_processing_time_ms: Optional[float] = None
+    client_measured_latency_ms: Optional[float] = Field(None, description="Actual measured client elapsed latency (ms) for live requests; null in mock mode")
+    provider_processing_time_ms: Optional[float] = Field(None, description="Actual backend processing latency (ms) reported by provider; null in mock mode")
+    simulated_latency_ms: Optional[float] = Field(None, description="Simulated latency for demonstration purposes (clearly distinguished from measured latency)")
 
 
 class AggregateMetrics(BaseModel):
@@ -148,5 +151,6 @@ class EvaluateTranscriptsRequest(BaseModel):
     transcript_a: str
     transcript_b: str
     execution_mode: ExecutionMode = ExecutionMode.MOCK
-    audio_condition: AudioCondition = AudioCondition.CLEAN_SYNTHETIC
+    audio_condition: AudioCondition = AudioCondition.TEXT_ONLY_SIMULATION
     client_latency_ms: Optional[float] = None
+    simulated_latency_ms: Optional[float] = None

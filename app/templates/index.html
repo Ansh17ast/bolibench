@@ -320,10 +320,46 @@
                 <span>Run Preserved Distinction (Mock)</span>
               </button>
               <button type="button" class="btn-danger" id="btnRunMockCrashed">
-                <span>Simulate Acoustic Crash (Error)</span>
+                <span>Simulate Transcript Crash (Error)</span>
               </button>
               <button type="button" class="btn-secondary" id="btnToggleCustomInputs">
                 <span>Custom Transcript Test</span>
+              </button>
+              <button type="button" class="btn-warning-action" id="btnToggleLiveEval">
+                <span>🎙️ Live Audio Pair (Consumes Credits)</span>
+              </button>
+            </div>
+
+            <!-- Live Audio Pair Evaluation Drawer (Credit Protected) -->
+            <div class="live-eval-drawer" id="liveEvalDrawer" style="display: none;">
+              <div class="credit-warning-box">
+                <span class="credit-warning-icon">⚠️</span>
+                <div class="credit-warning-text">
+                  <strong>Credit Protection Notice:</strong>
+                  <p>Evaluating this pair makes <strong>2 real requests</strong> to Gnani Prisma STT v3 and consumes account credits. Automated tests never consume credits.</p>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="liveAudioInputA">Utterance A Audio (<span id="liveRefPromptA">Do packet chahiye</span>)</label>
+                <input type="file" id="liveAudioInputA" accept=".wav,.mp3,.ogg,.flac,.aac,.m4a" class="form-control">
+              </div>
+
+              <div class="form-group">
+                <label for="liveAudioInputB">Utterance B Audio (<span id="liveRefPromptB">Teen packet chahiye</span>)</label>
+                <input type="file" id="liveAudioInputB" accept=".wav,.mp3,.ogg,.flac,.aac,.m4a" class="form-control">
+              </div>
+
+              <div class="form-group">
+                <label class="checkbox-label highlight-checkbox">
+                  <input type="checkbox" id="confirmLiveCreditUsage">
+                  <span>I authorize 2 live API requests to Gnani Prisma and credit deduction</span>
+                </label>
+              </div>
+
+              <button type="button" class="btn-primary" id="btnExecuteLiveEval" disabled>
+                <span id="btnLiveEvalText">Execute Paired Live Evaluation</span>
+                <span class="btn-spinner" id="btnLiveSpinner" style="display: none;"></span>
               </button>
             </div>
 

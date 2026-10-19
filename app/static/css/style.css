@@ -954,6 +954,59 @@ body {
   background: rgba(255, 255, 255, 0.1);
 }
 
+.btn-warning-action {
+  background: linear-gradient(135deg, #d97706, #f59e0b);
+  color: #111827;
+  border: none;
+  padding: 0.7rem 1rem;
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.2);
+}
+
+.btn-warning-action:hover {
+  background: linear-gradient(135deg, #b45309, #d97706);
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.live-eval-drawer {
+  margin-top: 1rem;
+  background: rgba(245, 158, 11, 0.05);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--radius-md);
+  padding: 1.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.credit-warning-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  color: #fde68a;
+}
+
+.credit-warning-icon {
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.credit-warning-text p {
+  margin-top: 0.25rem;
+  color: #fef3c7;
+}
+
 .custom-transcript-drawer {
   margin-top: 1rem;
   background: rgba(0, 0, 0, 0.35);

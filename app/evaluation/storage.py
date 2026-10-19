@@ -52,6 +52,7 @@ class StorageManager:
                     failure_explanation TEXT NOT NULL,
                     client_latency_ms REAL,
                     provider_latency_ms REAL,
+                    simulated_latency_ms REAL,
                     created_at TEXT NOT NULL,
                     payload_json TEXT NOT NULL
                 )
@@ -69,6 +70,11 @@ class StorageManager:
                 ON evaluation_runs (category)
                 """
             )
+            # Backward-compatible schema migration if simulated_latency_ms column is missing
+            try:
+                cursor.execute("ALTER TABLE evaluation_runs ADD COLUMN simulated_latency_ms REAL")
+            except sqlite3.OperationalError:
+                pass
             conn.commit()
 
     def save_run(self, result: PairEvaluationResult) -> str:
@@ -83,8 +89,8 @@ class StorageManager:
                     audio_condition, wer_a, wer_b, average_wer, critical_field_accuracy,
                     distinction_preserved, task_success, primary_failure_category,
                     failure_explanation, client_latency_ms, provider_latency_ms,
-                    created_at, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    simulated_latency_ms, created_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     result.run_id,
@@ -103,6 +109,7 @@ class StorageManager:
                     result.failure_explanation,
                     result.client_measured_latency_ms,
                     result.provider_processing_time_ms,
+                    result.simulated_latency_ms,
                     result.timestamp,
                     payload_json,
                 ),
@@ -227,7 +234,8 @@ class StorageManager:
             "run_id", "test_case_id", "category", "language_code", "execution_mode",
             "audio_condition", "timestamp", "wer_a", "wer_b", "average_wer",
             "critical_field_accuracy", "distinction_preserved", "task_success",
-            "primary_failure_category", "failure_explanation", "client_latency_ms",
+            "primary_failure_category", "failure_explanation",
+            "client_measured_latency_ms", "provider_processing_time_ms", "simulated_latency_ms",
             "actual_transcript_a", "actual_transcript_b"
         ]
         writer = csv.DictWriter(output, fieldnames=fieldnames)
@@ -250,7 +258,9 @@ class StorageManager:
                 "task_success": r.task_success,
                 "primary_failure_category": r.primary_failure_category.value if isinstance(r.primary_failure_category, FailureCategory) else str(r.primary_failure_category),
                 "failure_explanation": r.failure_explanation,
-                "client_latency_ms": r.client_measured_latency_ms,
+                "client_measured_latency_ms": r.client_measured_latency_ms,
+                "provider_processing_time_ms": r.provider_processing_time_ms,
+                "simulated_latency_ms": r.simulated_latency_ms,
                 "actual_transcript_a": r.utterance_a.actual_transcript,
                 "actual_transcript_b": r.utterance_b.actual_transcript,
             })

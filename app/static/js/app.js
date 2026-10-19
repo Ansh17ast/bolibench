@@ -319,6 +319,17 @@ document.addEventListener("DOMContentLoaded", () => {
   const customTranscriptB = document.getElementById("customTranscriptB");
   const btnScoreCustomTranscripts = document.getElementById("btnScoreCustomTranscripts");
 
+  const btnToggleLiveEval = document.getElementById("btnToggleLiveEval");
+  const liveEvalDrawer = document.getElementById("liveEvalDrawer");
+  const liveRefPromptA = document.getElementById("liveRefPromptA");
+  const liveRefPromptB = document.getElementById("liveRefPromptB");
+  const liveAudioInputA = document.getElementById("liveAudioInputA");
+  const liveAudioInputB = document.getElementById("liveAudioInputB");
+  const confirmLiveCreditUsage = document.getElementById("confirmLiveCreditUsage");
+  const btnExecuteLiveEval = document.getElementById("btnExecuteLiveEval");
+  const btnLiveEvalText = document.getElementById("btnLiveEvalText");
+  const btnLiveSpinner = document.getElementById("btnLiveSpinner");
+
   const evalStatusBadge = document.getElementById("evalStatusBadge");
   const evalResultsPlaceholder = document.getElementById("evalResultsPlaceholder");
   const evalResultsContainer = document.getElementById("evalResultsContainer");
@@ -378,6 +389,9 @@ document.addEventListener("DOMContentLoaded", () => {
       specDistinctionField.textContent = `Critical Distinction: ${tc.distinction_field}`;
       specExpectedDistinctionText.textContent = tc.expected_distinction;
 
+      if (liveRefPromptA) liveRefPromptA.textContent = tc.utterance_a.reference_transcript;
+      if (liveRefPromptB) liveRefPromptB.textContent = tc.utterance_b.reference_transcript;
+
       // Populate custom inputs as starting template
       customTranscriptA.value = tc.utterance_a.reference_transcript;
       customTranscriptB.value = tc.utterance_b.reference_transcript;
@@ -392,6 +406,91 @@ document.addEventListener("DOMContentLoaded", () => {
     const isHidden = customTranscriptDrawer.style.display === "none";
     customTranscriptDrawer.style.display = isHidden ? "flex" : "none";
     btnToggleCustomInputs.textContent = isHidden ? "Hide Custom Inputs" : "Custom Transcript Test";
+    if (isHidden) {
+      liveEvalDrawer.style.display = "none";
+      btnToggleLiveEval.textContent = "🎙️ Live Audio Pair (Consumes Credits)";
+    }
+  });
+
+  btnToggleLiveEval.addEventListener("click", () => {
+    const isHidden = liveEvalDrawer.style.display === "none";
+    liveEvalDrawer.style.display = isHidden ? "flex" : "none";
+    btnToggleLiveEval.textContent = isHidden ? "Hide Live Audio Pair" : "🎙️ Live Audio Pair (Consumes Credits)";
+    if (isHidden) {
+      customTranscriptDrawer.style.display = "none";
+      btnToggleCustomInputs.textContent = "Custom Transcript Test";
+    }
+  });
+
+  function checkLiveEvalFormValidity() {
+    const hasA = liveAudioInputA.files && liveAudioInputA.files.length > 0;
+    const hasB = liveAudioInputB.files && liveAudioInputB.files.length > 0;
+    const isConfirmed = confirmLiveCreditUsage.checked;
+    btnExecuteLiveEval.disabled = !(hasA && hasB && isConfirmed);
+  }
+
+  liveAudioInputA.addEventListener("change", checkLiveEvalFormValidity);
+  liveAudioInputB.addEventListener("change", checkLiveEvalFormValidity);
+  confirmLiveCreditUsage.addEventListener("change", checkLiveEvalFormValidity);
+
+  btnExecuteLiveEval.addEventListener("click", async () => {
+    const testId = evalTestCaseSelect.value;
+    if (!testId) return;
+
+    if (!confirmLiveCreditUsage.checked) {
+      alert("Please confirm the credit usage authorization before executing live evaluation.");
+      return;
+    }
+
+    if (!liveAudioInputA.files || !liveAudioInputA.files[0] || !liveAudioInputB.files || !liveAudioInputB.files[0]) {
+      alert("Please select audio recordings for both Utterance A and Utterance B.");
+      return;
+    }
+
+    // Explicit confirmation action protecting user credits
+    const userConfirmed = window.confirm(
+      "Live Evaluation Confirmation:\n\n" +
+      "This action will send 2 separate requests to Gnani Prisma STT v3 and deduct credits from your account.\n\n" +
+      "Do you want to proceed?"
+    );
+    if (!userConfirmed) return;
+
+    const formData = new FormData();
+    formData.append("audio_file_a", liveAudioInputA.files[0]);
+    formData.append("audio_file_b", liveAudioInputB.files[0]);
+    formData.append("audio_condition", "clean_recorded");
+
+    btnExecuteLiveEval.disabled = true;
+    btnLiveSpinner.style.display = "inline-block";
+    btnLiveEvalText.textContent = "Transcribing Live via Gnani...";
+    evalStatusBadge.className = "status-badge status-running";
+    evalStatusBadge.textContent = "Evaluating Live Audio Pair...";
+
+    try {
+      const response = await fetch(`/api/eval/run-live/${testId}`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.detail || `Live evaluation failed with HTTP ${response.status}`);
+      }
+
+      const result = await response.json();
+      displayEvaluationScorecard(result);
+      loadBenchmarkMetrics();
+      loadEvaluationHistory();
+    } catch (err) {
+      console.error("Live paired evaluation error:", err);
+      evalStatusBadge.className = "status-badge status-error";
+      evalStatusBadge.textContent = "Live Evaluation Failed";
+      alert(`Live Evaluation Error: ${err.message}`);
+    } finally {
+      btnLiveSpinner.style.display = "none";
+      btnLiveEvalText.textContent = "Execute Paired Live Evaluation";
+      checkLiveEvalFormValidity();
+    }
   });
 
   async function executeMockRun(scenario) {
@@ -446,8 +545,7 @@ document.addEventListener("DOMContentLoaded", () => {
           transcript_a: txtA,
           transcript_b: txtB,
           execution_mode: "mock",
-          audio_condition: "clean_synthetic",
-          client_latency_ms: 18.5,
+          audio_condition: "text_only_simulation",
         }),
       });
 
@@ -530,9 +628,19 @@ document.addEventListener("DOMContentLoaded", () => {
       <span class="code-pill">Mean WER: ${(res.average_wer * 100).toFixed(1)}%</span>
     `;
 
-    // Telemetry footer
+    // Telemetry footer with strict distinction between mock and live
     runIdDisplay.textContent = `Run ID: ${res.run_id}`;
-    runLatencyDisplay.textContent = `Client Latency: ${res.client_measured_latency_ms || 0} ms`;
+    if (res.execution_mode === "mock") {
+      if (res.simulated_latency_ms != null) {
+        runLatencyDisplay.textContent = `Simulated Latency: ${res.simulated_latency_ms} ms (Text Simulation)`;
+      } else {
+        runLatencyDisplay.textContent = "Measured Latency: N/A (Mock Mode — 0 Network Calls)";
+      }
+    } else {
+      const clientLat = res.client_measured_latency_ms != null ? `${res.client_measured_latency_ms} ms` : "N/A";
+      const provLat = res.provider_processing_time_ms != null ? ` (Provider: ${res.provider_processing_time_ms} ms)` : "";
+      runLatencyDisplay.textContent = `Measured Client Latency: ${clientLat}${provLat}`;
+    }
     runTimestampDisplay.textContent = `Time: ${res.timestamp}`;
   }
 

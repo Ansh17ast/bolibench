@@ -143,35 +143,55 @@ When an evaluation run fails, the engine assigns an explicit diagnostic classifi
 
 ---
 
-## 5. Seed Dataset Specifications
+## 5. Seed Dataset Specifications & Simulation Semantics
 
 - **Total Pairs:** 12 curated contrast pairs (24 unique utterances).
 - **Languages Covered:**
   - `hi-IN` (Hindi): Monolingual Hindi & Hinglish code-mixed commands.
   - `en-IN` (English - India): Indian English accent & syntax patterns.
-- **Dataset Label:** All 12 seed pairs are labeled as **`synthetic_curated`** until verified against acoustic multi-speaker recordings.
-- **Privacy & PII:** Contains zero personal data, telephone numbers, or real customer call audio.
+- **Dataset Classification (`audio_condition: text_only_simulation`):**
+  All 12 seed pairs represent **hand-authored text specifications**. In accordance with scientific integrity guidelines, BoliBench explicitly categorizes them as text-only simulations (`text_only_simulation`, provenance `hand_authored_text_simulation`).
+- **Terminology & Boundary Guarantees:**
+  - **Hand-authored simulated transcript corruption:** Predetermined text corruptions injected for deterministic crash demonstration (e.g. demonstrating how a quantity substitution crashes an order agent). These are **not** reported as measured model errors or acoustic noise tests.
+  - **Actual recorded audio processed by Gnani Prisma:** Genuine spoken audio recordings evaluated via `POST /api/eval/run-live/{test_id}` or `POST /api/transcribe`.
+  - **Actual recorded audio tested under a measured noisy condition:** Testing under calibrated ambient noise (e.g. street noise, call center babble). Marked as `pending_acoustic` until authentic multi-speaker audio with calibrated SNR is collected.
+  - **Synthetic or generated audio:** Spoken audio produced by TTS engines (e.g. Gnani Timbre), only classified as synthetic audio when genuine audio files exist.
+- **Privacy & PII:** Contains zero personal data, telephone numbers, or real customer call audio (`text_simulation_no_pii`).
 - **Storage:** Persisted as versioned JSON in `app/evaluation/data/seed_pairs.json`.
 
 ---
 
-## 6. Execution Modes & Telemetry
+## 6. Execution Modes, Telemetry & Credit Protection
 
-BoliBench strictly distinguishes between execution modes:
+BoliBench strictly isolates execution semantics and telemetry between mock and live modes:
 
 - **Mock Execution Mode (`mock`):**
-  - Executes deterministically using reference transcripts or simulated acoustic crash transcripts.
-  - Consumes **0 Gnani Prisma credits**.
-  - Measures in-memory evaluation engine latency separately from provider latency.
+  - Executes deterministically using reference transcripts or hand-authored simulated crash transcripts.
+  - Consumes **0 Gnani Prisma credits** and executes **0 external network requests**.
+  - **Telemetry Rules:** Fabricated latency numbers are strictly prohibited. `client_measured_latency_ms` and `provider_processing_time_ms` remain strictly `null`. If latency is simulated for demonstration, it is recorded exclusively in `simulated_latency_ms` and clearly labeled as simulated in the UI and exports.
 - **Live Execution Mode (`live`):**
-  - Executes actual HTTP POST multipart requests to `https://api.vachana.ai/stt/v3` using `X-API-Key-ID`.
-  - Records real provider-reported timestamps and request IDs (`req_...`).
-  - Separately records client-measured round-trip latency ($T_{\text{client}}$) and provider latency ($T_{\text{provider}}$).
+  - Available via the paired live-audio endpoint `POST /api/eval/run-live/{test_id}`.
+  - Validates both audio uploads in-memory against format, duration (≤ 60s), size (≤ 25MB), and container header signatures.
+  - Executes actual sequential HTTP POST multipart requests to `https://api.vachana.ai/stt/v3` using server-side credentials (`X-API-Key-ID`). Credentials are never exposed to the client.
+  - Preserves provider request IDs (`req_...`) and provider-reported backend processing latency ($T_{\text{provider}}$).
+  - Measures genuine client-side round-trip elapsed time ($T_{\text{client}}$).
+  - **Partial Failure Safeguard:** If either provider request fails or times out, the evaluation is aborted immediately. An incomplete pair is never persisted or presented as a successful evaluation.
+  - **Credit Protection:** Live evaluation requires explicit user confirmation and file selection. Automated tests always use deterministic mocked client responses and never consume programme credits.
 
 ---
 
-## 7. Known Limitations & Future Work
+## 7. Current Implementation Status & Pending Acoustic Research
 
-1. **Acoustic Noise Testing:** In accordance with project engineering rules, BoliBench marks tests as `clean_synthetic` and does not fabricate simulated acoustic noise scores without calibrated ambient noise audio (e.g. street noise, call center chatter).
-2. **Expansion to Regional Indian Languages:** While the current evaluation engine supports Hindi and Indian English (which account for the majority of code-switching voice bots), future extensions will add dedicated test pairs for Tamil (`ta-IN`), Telugu (`te-IN`), Kannada (`kn-IN`), and Bengali (`bn-IN`).
-3. **Live Audio Dataset Sourcing:** A planned crowdsourced acoustic recording drive will record all 24 seed utterances across diverse Indian accents and microphone conditions to create an open benchmark.
+1. **Implemented & Verified:**
+   - Deterministic paired-contrast evaluation scoring engine.
+   - Exact dynamic programming Levenshtein Word Error Rate (WER).
+   - Domain-specific critical field extractors (quantities, negation, corrections, entities, intent).
+   - Thread-safe SQLite persistence with JSON and CSV exports.
+   - Telemetry separation ensuring mock runs never report fabricated measured latency.
+   - Live paired audio REST API (`POST /api/eval/run-live/{test_id}`) with dual audio validation.
+   - Comprehensive test suite (67 tests passing with 0 network calls and 0 credits consumed).
+2. **Pending Acoustic Research (`pending_acoustic`):**
+   - Calibrated acoustic noise testing with multi-speaker recordings under measured signal-to-noise ratios (street noise, cafeteria babble, reverberation).
+   - Crowdsourced audio dataset recording all 24 seed utterances across diverse regional Indian accents.
+3. **Regional Language Expansion:**
+   - Future planned paired-contrast catalogs for Tamil (`ta-IN`), Telugu (`te-IN`), Kannada (`kn-IN`), and Bengali (`bn-IN`).
