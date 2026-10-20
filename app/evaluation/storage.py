@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from app.evaluation.schemas import (
     AggregateMetrics,
+    DerivedAssessment,
     ExecutionMode,
     FailureCategory,
     ModePerformanceMetrics,
@@ -121,6 +122,25 @@ class StorageManager:
                         cursor.execute("UPDATE evaluation_runs SET overall_status = ? WHERE run_id = ?", (status, row["run_id"]))
                 except Exception:
                     pass
+
+            # Table for isolated offline derived assessments (re-scores)
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS derived_assessments (
+                    derived_id TEXT PRIMARY KEY,
+                    source_run_id TEXT NOT NULL,
+                    test_case_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload_json TEXT NOT NULL
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_derived_assessments_source_run_id
+                ON derived_assessments (source_run_id)
+                """
+            )
 
             conn.commit()
 
@@ -440,4 +460,70 @@ class StorageManager:
                 "actual_transcript_b": r.utterance_b.actual_transcript,
             })
 
+        return output.getvalue()
+
+    # -------------------------------------------------------------------------
+    # Offline Derived Assessments (Isolated Re-Scores)
+    # -------------------------------------------------------------------------
+
+    def save_derived_assessment(self, assessment: DerivedAssessment) -> str:
+        """Persists an offline derived evaluation assessment without modifying source evaluation runs."""
+        payload_json = json.dumps(assessment.model_dump(), ensure_ascii=False)
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO derived_assessments (
+                    derived_id, source_run_id, test_case_id, created_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    assessment.derived_id,
+                    assessment.source_run_id,
+                    assessment.test_case_id,
+                    assessment.created_at,
+                    payload_json,
+                ),
+            )
+            conn.commit()
+        return assessment.derived_id
+
+    def get_derived_assessment(self, identifier: str) -> Optional[DerivedAssessment]:
+        """Retrieves a derived assessment by derived_id or source_run_id."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT payload_json FROM derived_assessments WHERE derived_id = ? OR source_run_id = ? ORDER BY created_at DESC LIMIT 1",
+                (identifier, identifier),
+            )
+            row = cursor.fetchone()
+            if row:
+                data = json.loads(row["payload_json"])
+                return DerivedAssessment(**data)
+        return None
+
+    def list_derived_assessments(self, limit: int = 100) -> List[DerivedAssessment]:
+        """Lists all offline derived evaluation assessments."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT payload_json FROM derived_assessments ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+            return [DerivedAssessment(**json.loads(row["payload_json"])) for row in cursor.fetchall()]
+
+    def export_derived_assessments_json(self) -> str:
+        """Exports all derived assessments as a formatted JSON string."""
+        items = self.list_derived_assessments(limit=1000)
+        return json.dumps([item.model_dump() for item in items], indent=2, ensure_ascii=False)
+
+    def export_derived_assessments_csv(self) -> str:
+        """Exports all derived assessments as CSV with explicit separation of original vs rescored metrics."""
+        items = self.list_derived_assessments(limit=1000)
+        output = io.StringIO()
+        fieldnames = list(DerivedAssessment.model_fields.keys())
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        for item in items:
+            writer.writerow(item.model_dump())
         return output.getvalue()

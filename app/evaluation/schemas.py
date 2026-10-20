@@ -189,3 +189,82 @@ class EvaluateTranscriptsRequest(BaseModel):
     audio_condition: AudioCondition = AudioCondition.TEXT_ONLY_SIMULATION
     client_latency_ms: Optional[float] = None
     simulated_latency_ms: Optional[float] = None
+
+
+class DerivedAssessment(BaseModel):
+    """Offline derived evaluation assessment for a historical evaluation run.
+
+    Guarantees:
+    - Never mutates or overwrites the source evaluation record.
+    - Strictly preserves original provider request IDs, raw WER, latencies, and original outcomes.
+    - Separates raw script-sensitive WER from supplementary cross-script-normalized WER.
+    - Records explicit offline provenance, documenting 0 provider calls and 0 credits consumed.
+    - Is completely isolated from live execution counts in aggregate metrics.
+    """
+    derived_id: str = Field(..., description="Unique derived assessment identifier (e.g. rescore_eval_live_...)")
+    source_run_id: str = Field(..., description="ID of the original immutable source evaluation run")
+    test_case_id: str
+    category: str
+    language_code: str
+    provenance: str = Field("offline_deterministic_rescore", description="Audit provenance proving offline execution")
+    created_at: str = Field(..., description="Timestamp when the offline re-scoring was performed")
+    provider_calls_made: int = Field(0, description="Strictly 0 external network/provider calls made")
+    credits_consumed: int = Field(0, description="Strictly 0 programme credits consumed")
+
+    # Original historical evidence (verbatim from source live run)
+    original_execution_mode: str
+    original_overall_status: str
+    original_raw_wer_a: float
+    original_raw_wer_b: float
+    original_average_raw_wer: float
+    original_substitutions_a: int
+    original_substitutions_b: int
+    original_deletions_a: int
+    original_deletions_b: int
+    original_insertions_a: int
+    original_insertions_b: int
+    original_detected_intent_a: str
+    original_detected_intent_b: str
+    original_task_success: bool
+    original_primary_failure_category: str
+    original_failure_explanation: str
+    request_id_a: Optional[str] = None
+    request_id_b: Optional[str] = None
+    client_request_elapsed_ms: Optional[float] = None
+    latency_a_ms: Optional[float] = None
+    latency_b_ms: Optional[float] = None
+
+    # Text payloads
+    reference_a: str
+    reference_b: str
+    actual_transcript_a: str
+    actual_transcript_b: str
+
+    # Derived Cross-Script Normalized Metrics
+    normalized_wer_a: float
+    normalized_wer_b: float
+    average_normalized_wer: float
+    normalized_substitutions_a: int = 0
+    normalized_substitutions_b: int = 0
+    normalized_deletions_a: int = 0
+    normalized_deletions_b: int = 0
+    normalized_insertions_a: int = 0
+    normalized_insertions_b: int = 0
+
+    # Corrected Deterministic Intents & Outcomes
+    rescore_detected_intent_a: str
+    rescore_detected_intent_b: str
+    rescore_intent_match_a: bool
+    rescore_intent_match_b: bool
+    rescore_critical_fields_match_a: bool
+    rescore_critical_fields_match_b: bool
+    rescore_task_success_a: bool
+    rescore_task_success_b: bool
+    rescore_semantic_distinction_preserved: bool
+    rescore_task_success: bool
+    rescore_primary_failure_category: str
+    rescore_failure_explanation: str
+    rescore_notes: str = Field(
+        "Offline deterministic re-scoring applying cross-script vocabulary canonicalization "
+        "and Devanagari Hindi intent recognition to historical transcripts without provider calls."
+    )

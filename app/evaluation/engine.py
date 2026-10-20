@@ -6,10 +6,15 @@ from typing import Dict, List, Optional
 import uuid
 
 from app.evaluation.dataset import get_test_case_by_id, load_seed_dataset
-from app.evaluation.metrics import evaluate_utterance, score_pair
+from app.evaluation.metrics import (
+    calculate_cross_script_normalized_wer,
+    evaluate_utterance,
+    score_pair,
+)
 from app.evaluation.schemas import (
     AggregateMetrics,
     AudioCondition,
+    DerivedAssessment,
     EvaluateTranscriptsRequest,
     ExecutionMode,
     FailureCategory,
@@ -374,3 +379,145 @@ class EvaluationEngine:
     def export_json(self) -> str:
         """Exports evaluation runs as JSON."""
         return self.storage.export_json()
+
+    # -------------------------------------------------------------------------
+    # Offline Derived Re-Scoring (Isolated from Live Runs)
+    # -------------------------------------------------------------------------
+
+    def generate_derived_rescore(self, source_run_id: str, persist: bool = True) -> DerivedAssessment:
+        """Performs an offline deterministic derived re-scoring of a historical evaluation run.
+
+        Guarantees:
+        - Strictly 0 external provider calls and 0 credit usage.
+        - Source run in evaluation_runs is completely untouched.
+        - Preserves original raw WER, S/D/I counts, provider request IDs, and latencies.
+        - Computes supplementary cross-script-normalized WER and corrected Hindi intent matching.
+        """
+        source_run = self.get_run(source_run_id)
+        if not source_run:
+            raise ValueError(f"Source evaluation run '{source_run_id}' not found.")
+
+        test_case = self.get_test_case(source_run.test_case_id)
+        if not test_case:
+            raise ValueError(f"Test case '{source_run.test_case_id}' not found.")
+
+        # Re-score deterministically using existing stored transcripts and references
+        res = score_pair(
+            run_id=f"rescore_{source_run_id}",
+            test_case=test_case,
+            transcript_a=source_run.utterance_a.actual_transcript,
+            transcript_b=source_run.utterance_b.actual_transcript,
+            execution_mode=source_run.execution_mode.value if hasattr(source_run.execution_mode, "value") else str(source_run.execution_mode),
+            audio_condition=source_run.audio_condition,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            client_latency_ms=source_run.client_measured_latency_ms,
+            client_request_elapsed_ms=source_run.client_request_elapsed_ms,
+            provider_latency_ms=source_run.provider_processing_time_ms,
+            simulated_latency_ms=source_run.simulated_latency_ms,
+            latency_a_ms=source_run.utterance_a.latency_ms,
+            latency_b_ms=source_run.utterance_b.latency_ms,
+            client_elapsed_a_ms=source_run.utterance_a.client_request_elapsed_ms,
+            client_elapsed_b_ms=source_run.utterance_b.client_request_elapsed_ms,
+            provider_time_a_ms=source_run.utterance_a.provider_processing_time_ms,
+            provider_time_b_ms=source_run.utterance_b.provider_processing_time_ms,
+            request_id_a=source_run.utterance_a.request_id,
+            request_id_b=source_run.utterance_b.request_id,
+        )
+
+        norm_wer_a, ns_a, nd_a, ni_a, _ = calculate_cross_script_normalized_wer(
+            reference=test_case.utterance_a.reference_transcript,
+            hypothesis=source_run.utterance_a.actual_transcript,
+            language_code=test_case.language_code,
+        )
+        norm_wer_b, ns_b, nd_b, ni_b, _ = calculate_cross_script_normalized_wer(
+            reference=test_case.utterance_b.reference_transcript,
+            hypothesis=source_run.utterance_b.actual_transcript,
+            language_code=test_case.language_code,
+        )
+
+        assessment = DerivedAssessment(
+            derived_id=f"rescore_{source_run_id}",
+            source_run_id=source_run_id,
+            test_case_id=source_run.test_case_id,
+            category=source_run.category,
+            language_code=source_run.language_code,
+            provenance="offline_deterministic_rescore",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            provider_calls_made=0,
+            credits_consumed=0,
+
+            # Original historical evidence
+            original_execution_mode=source_run.execution_mode.value if hasattr(source_run.execution_mode, "value") else str(source_run.execution_mode),
+            original_overall_status=source_run.overall_status,
+            original_raw_wer_a=source_run.wer_a,
+            original_raw_wer_b=source_run.wer_b,
+            original_average_raw_wer=source_run.average_wer,
+            original_substitutions_a=source_run.utterance_a.substitutions,
+            original_substitutions_b=source_run.utterance_b.substitutions,
+            original_deletions_a=source_run.utterance_a.deletions,
+            original_deletions_b=source_run.utterance_b.deletions,
+            original_insertions_a=source_run.utterance_a.insertions,
+            original_insertions_b=source_run.utterance_b.insertions,
+            original_detected_intent_a=source_run.utterance_a.detected_intent,
+            original_detected_intent_b=source_run.utterance_b.detected_intent,
+            original_task_success=source_run.task_success,
+            original_primary_failure_category=source_run.primary_failure_category.value if hasattr(source_run.primary_failure_category, "value") else str(source_run.primary_failure_category),
+            original_failure_explanation=source_run.failure_explanation,
+            request_id_a=source_run.utterance_a.request_id,
+            request_id_b=source_run.utterance_b.request_id,
+            client_request_elapsed_ms=source_run.client_request_elapsed_ms,
+            latency_a_ms=source_run.utterance_a.latency_ms,
+            latency_b_ms=source_run.utterance_b.latency_ms,
+
+            # Text payloads
+            reference_a=source_run.utterance_a.reference_transcript,
+            reference_b=source_run.utterance_b.reference_transcript,
+            actual_transcript_a=source_run.utterance_a.actual_transcript,
+            actual_transcript_b=source_run.utterance_b.actual_transcript,
+
+            # Derived Cross-Script Normalized Metrics
+            normalized_wer_a=norm_wer_a,
+            normalized_wer_b=norm_wer_b,
+            average_normalized_wer=round((norm_wer_a + norm_wer_b) / 2.0, 4),
+            normalized_substitutions_a=ns_a,
+            normalized_substitutions_b=ns_b,
+            normalized_deletions_a=nd_a,
+            normalized_deletions_b=nd_b,
+            normalized_insertions_a=ni_a,
+            normalized_insertions_b=ni_b,
+
+            # Corrected Deterministic Intents & Outcomes
+            rescore_detected_intent_a=res.utterance_a.detected_intent,
+            rescore_detected_intent_b=res.utterance_b.detected_intent,
+            rescore_intent_match_a=res.utterance_a.intent_match,
+            rescore_intent_match_b=res.utterance_b.intent_match,
+            rescore_critical_fields_match_a=res.utterance_a.critical_fields_match,
+            rescore_critical_fields_match_b=res.utterance_b.critical_fields_match,
+            rescore_task_success_a=res.utterance_a.task_success,
+            rescore_task_success_b=res.utterance_b.task_success,
+            rescore_semantic_distinction_preserved=res.semantic_distinction_preserved,
+            rescore_task_success=res.task_success,
+            rescore_primary_failure_category=res.primary_failure_category.value if hasattr(res.primary_failure_category, "value") else str(res.primary_failure_category),
+            rescore_failure_explanation=res.failure_explanation,
+        )
+
+        if persist:
+            self.storage.save_derived_assessment(assessment)
+
+        return assessment
+
+    def get_derived_assessment(self, identifier: str) -> Optional[DerivedAssessment]:
+        """Retrieves a derived assessment by derived_id or source_run_id."""
+        return self.storage.get_derived_assessment(identifier)
+
+    def list_derived_assessments(self, limit: int = 100) -> List[DerivedAssessment]:
+        """Lists offline derived evaluation assessments."""
+        return self.storage.list_derived_assessments(limit=limit)
+
+    def export_derived_csv(self) -> str:
+        """Exports offline derived assessments as CSV."""
+        return self.storage.export_derived_assessments_csv()
+
+    def export_derived_json(self) -> str:
+        """Exports offline derived assessments as JSON."""
+        return self.storage.export_derived_assessments_json()

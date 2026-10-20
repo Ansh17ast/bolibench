@@ -10,6 +10,7 @@ from app.evaluation.engine import EvaluationEngine
 from app.evaluation.schemas import (
     AggregateMetrics,
     AudioCondition,
+    DerivedAssessment,
     EvaluateTranscriptsRequest,
     PairEvaluationResult,
     TestCasePair,
@@ -279,4 +280,56 @@ async def export_evaluation_results(
             content=json_data,
             media_type="application/json",
             headers={"Content-Disposition": "attachment; filename=bolibench_evaluation_results.json"},
+        )
+
+
+# -----------------------------------------------------------------------------
+# Derived Offline Assessments & Re-Scores
+# -----------------------------------------------------------------------------
+
+@router.get("/runs/{run_id}/derived-rescore", response_model=DerivedAssessment)
+async def get_or_create_derived_rescore(run_id: str):
+    """Retrieves or generates an offline derived re-score for a historical evaluation run.
+
+    Guarantees:
+    - Strictly 0 external provider calls and 0 credit usage.
+    - Leaves the source evaluation run in evaluation_runs completely untouched.
+    - Isolated from aggregate metrics (does not inflate live or mock attempt counts).
+    """
+    existing = engine.get_derived_assessment(run_id)
+    if existing:
+        return existing
+    try:
+        return engine.generate_derived_rescore(run_id, persist=True)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        )
+
+
+@router.get("/derived-assessments", response_model=List[DerivedAssessment])
+async def list_derived_assessments(limit: int = Query(100, ge=1, le=1000)):
+    """Lists all offline derived evaluation assessments."""
+    return engine.list_derived_assessments(limit=limit)
+
+
+@router.get("/derived-assessments/export")
+async def export_derived_assessments(
+    format: str = Query("json", description="'json' or 'csv'"),
+):
+    """Exports offline derived assessments as CSV or JSON."""
+    if format.lower() == "csv":
+        csv_data = engine.export_derived_csv()
+        return Response(
+            content=csv_data,
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=bolibench_derived_rescores.csv"},
+        )
+    else:
+        json_data = engine.export_derived_json()
+        return Response(
+            content=json_data,
+            media_type="application/json",
+            headers={"Content-Disposition": "attachment; filename=bolibench_derived_rescores.json"},
         )

@@ -1536,3 +1536,57 @@ async def test_network_blocking_fixture_prevents_unmocked_outbound_httpx():
     with pytest.raises(RuntimeError, match="Outbound network request blocked in test suite"):
         async with httpx.AsyncClient() as client:
             await client.get("https://api.vachana.ai/stt/v3/health")
+
+
+@pytest.mark.asyncio
+async def test_derived_rescore_api_endpoints(async_client):
+    """Proves derived re-score API endpoints can generate, retrieve, list, and export derived assessments."""
+    from app.evaluation.dataset import load_seed_dataset
+    from app.evaluation.metrics import score_pair
+    from app.routers.evaluation import engine
+
+    seed_cases = load_seed_dataset()
+    pair_qty = next(tc for tc in seed_cases if tc.id == "pair_qty_001")
+
+    # Save a run with the live pair transcripts
+    run = score_pair(
+        run_id="run_api_derived_test",
+        test_case=pair_qty,
+        transcript_a="2 पैकेट चाहिए",
+        transcript_b="3 पैकेट चाहिए",
+        execution_mode="mock",
+    )
+    engine.storage.save_run(run)
+
+    # 1. Generate/retrieve derived re-score
+    resp_rescore = await async_client.get("/api/eval/runs/run_api_derived_test/derived-rescore")
+    assert resp_rescore.status_code == 200
+    data = resp_rescore.json()
+    assert data["source_run_id"] == "run_api_derived_test"
+    assert data["provenance"] == "offline_deterministic_rescore"
+    assert data["provider_calls_made"] == 0
+    assert data["normalized_wer_a"] == 0.0
+    assert data["average_normalized_wer"] == 0.0
+    assert data["rescore_task_success"] is True
+
+    # 2. List derived assessments
+    resp_list = await async_client.get("/api/eval/derived-assessments")
+    assert resp_list.status_code == 200
+    items = resp_list.json()
+    assert any(item["source_run_id"] == "run_api_derived_test" for item in items)
+
+    # 3. Export CSV
+    resp_csv = await async_client.get("/api/eval/derived-assessments/export?format=csv")
+    assert resp_csv.status_code == 200
+    assert "text/csv" in resp_csv.headers["content-type"]
+    assert "run_api_derived_test" in resp_csv.text
+
+    # 4. Export JSON
+    resp_json = await async_client.get("/api/eval/derived-assessments/export?format=json")
+    assert resp_json.status_code == 200
+    assert "application/json" in resp_json.headers["content-type"]
+    assert "run_api_derived_test" in resp_json.text
+
+    # 5. Nonexistent run returns 404
+    resp_404 = await async_client.get("/api/eval/runs/nonexistent_fake_run/derived-rescore")
+    assert resp_404.status_code == 404

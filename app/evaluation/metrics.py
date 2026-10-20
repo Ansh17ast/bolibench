@@ -60,7 +60,8 @@ def normalize_text(text: Optional[str], language_code: str = "hi-IN") -> str:
 CROSS_SCRIPT_MAP: Dict[str, str] = {
     # Quantities & Numbers: Map to canonical digit strings (never conflating different numbers)
     "ek": "1", "एक": "1", "1": "1", "१": "1", "one": "1",
-    "do": "2", "दो": "2", "2": "2", "२": "2", "two": "2",
+    # 'do' and 'दो' are contextually disambiguated in canonicalize_cross_script_text()
+    "2": "2", "२": "2", "two": "2",
     "teen": "3", "tin": "3", "तीन": "3", "3": "3", "३": "3", "three": "3",
     "char": "4", "chaar": "4", "चार": "4", "4": "4", "४": "4", "four": "4",
     "paanch": "5", "panch": "5", "पाँच": "5", "पांच": "5", "5": "5", "५": "5", "five": "5",
@@ -96,6 +97,7 @@ CROSS_SCRIPT_MAP: Dict[str, str] = {
     "packet": "packet", "packets": "packet", "पैकेट": "packet", "पेकेट": "packet",
     "chahiye": "chahiye", "चाहिए": "chahiye", "चाहिये": "chahiye",
     "rupaye": "rupaye", "rupees": "rupaye", "रुपये": "rupaye", "रुपए": "rupaye", "rs": "rupaye",
+    "kar": "kar", "कर": "kar", "karo": "karo", "करो": "karo",
     "bhejo": "bhejo", "भेजो": "bhejo",
     "transfer": "transfer", "ट्रांसफर": "transfer",
     "nahi": "nahi", "nahin": "nahi", "नहीं": "nahi", "ना": "nahi",
@@ -118,21 +120,94 @@ CROSS_SCRIPT_MAP: Dict[str, str] = {
     "flight": "flight", "फ्लाइट": "flight",
 }
 
+# Auxiliary verbal triggers where 'do' / 'दो' functions as the imperative/auxiliary verb ("give" / "perform")
+VERBAL_AUXILIARY_PRECEDING_TOKENS: Set[str] = {
+    "kar", "कर", "karo", "करो", "karna", "करना",
+    "bhej", "भेज", "bhejo", "भेजो",
+    "de", "दे", "dijiye", "दीजिए", "dekh", "देख",
+    "le", "ले", "lo", "लो",
+    "rok", "रोक", "roko", "रोको",
+    "rakh", "रख", "rakho", "रखो",
+    "bata", "बता", "batao", "बताओ",
+    "hata", "हटा", "hatao", "हटाओ",
+    "daal", "डाल", "daalo", "डालो",
+    "khol", "खोल", "kholo", "खोलो",
+    "chhod", "छोड़", "chhodo", "छोड़ो",
+    "mat", "मत", "nahi", "nahin", "नहीं",
+    "paise", "पैसे", "kitab", "किताब",
+}
+
+# Tokens following 'do' / 'दो' that indicate it is functioning as the cardinal NUMERAL 2
+NUMERAL_QUANTIFIED_NOUN_TOKENS: Set[str] = {
+    "packet", "packets", "पैकेट", "पेकेट",
+    "plate", "plates", "प्लेट",
+    "rupaye", "rupees", "रुपये", "रुपए", "rs",
+    "sau", "सौ", "hazaar", "हज़ार", "hazar", "हजार", "lakh", "लाख", "crore", "करोड़",
+    "item", "items", "चीज", "चीजें",
+    "ticket", "tickets", "टिकट",
+    "piece", "pieces", "पीस",
+    "kilo", "kg", "gram", "किलो", "ग्राम",
+    "cup", "glass", "bottle", "bottles", "कप", "ग्लास", "बोतल",
+    "saal", "mahine", "din", "ghante", "साल", "महीने", "दिन", "घंटे",
+    "log", "लोग", "dost", "दोस्त",
+    "chahiye", "चाहिए", "चाहिये",
+    "aur", "और",
+    "pizza", "पिज़्ज़ा", "पिज्जा", "biryani", "बिरयानी",
+    "thousand", "hundred",
+}
+
 
 def canonicalize_cross_script_text(text: Optional[str], language_code: str = "hi-IN") -> str:
-    """Normalizes script and numeric representations across Hindi and Romanized Hindi.
+    """Normalizes script and numeric representations across Hindi and Romanized Hindi for evaluation.
+
+    Scope Limitation & Domain Specificity:
+    - This is a targeted, domain-scoped supplementary normalization procedure for Indian voice AI
+      benchmarking (specifically e-commerce orders, banking transactions, ticketing, and numbers).
+    - It is NOT a universal arbitrary Hindi-English machine transliteration engine.
+    - Raw Word Error Rate (WER) and its Levenshtein operations (S/D/I) are strictly preserved and
+      never masked by this metric.
+
+    Context-Aware Disambiguation for Romanized 'do' / Devanagari 'दो':
+    - In Hindi, 'do' / 'दो' is polysemous: it represents either the cardinal numeral 2 (e.g. 'Do packet')
+      or the imperative / auxiliary light verb 'to give/perform' (e.g. 'kar do', 'bhej do', 'band kar do').
+    - To prevent silent semantic conflation, 'do' / 'दो' is contextually classified:
+        1. When preceded by verbal roots (e.g. 'kar', 'bhej', 'de', 'rok', 'rakh', 'mat'), it is preserved
+           as the verbal token 'do', avoiding spurious conversion to numeral '2'.
+        2. When followed by quantified nouns, units, scales, or ordering predicates (e.g. 'packet', 'plate',
+           'rupaye', 'sau', 'chahiye'), it is canonicalized to digit '2'.
+        3. Devanagari 'दो' without verbal trigger defaults to numeral '2', but when preceded by a verbal
+           auxiliary (e.g. 'कर दो'), it preserves the verbal token 'do'.
+        4. Standalone or ambiguous occurrences without quantifier context default conservatively to 'do'.
 
     Guarantees:
-    - Never collapses different numbers (e.g. '2' and '3' remain distinct tokens).
-    - Preserves semantic contrasts such as negation ('nahi' vs 'haan') and verbs.
-    - Resolves cross-script equivalents such as 'Do' / 'दो' / '2' and 'packet' / 'पैकेट'.
+    - Cardinal numbers remain strictly distinct (e.g. '2' and '3' are never conflated).
+    - Semantic contrasts such as negation ('nahi' vs 'haan') and imperative actions are preserved.
+    - Equivalences for supported benchmark pairs (e.g. 'Do packet chahiye' vs '2 पैकेट चाहिए',
+      'Teen packet chahiye' vs '3 पैकेट चाहिए') evaluate cleanly to 0.0 normalized WER.
     """
     if not text:
         return ""
 
     norm = normalize_text(text, language_code)
     words = norm.split()
-    canonical_tokens = [CROSS_SCRIPT_MAP.get(w, w) for w in words]
+    canonical_tokens: List[str] = []
+
+    for i, w in enumerate(words):
+        if w in ("do", "दो"):
+            is_verbal = (i > 0 and words[i - 1] in VERBAL_AUXILIARY_PRECEDING_TOKENS)
+            is_numeral = (i + 1 < len(words) and words[i + 1] in NUMERAL_QUANTIFIED_NOUN_TOKENS)
+
+            if is_verbal:
+                canonical_tokens.append("do")
+            elif is_numeral:
+                canonical_tokens.append("2")
+            elif w == "दो" and not is_verbal:
+                canonical_tokens.append("2")
+            else:
+                canonical_tokens.append("do")
+        else:
+            canonical_tokens.append(CROSS_SCRIPT_MAP.get(w, w))
+
     return " ".join(canonical_tokens)
 
 

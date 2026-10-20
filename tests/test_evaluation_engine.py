@@ -37,6 +37,7 @@ from app.evaluation.schemas import (
     UtteranceEvaluationResult,
     UtteranceSpec,
 )
+from app.evaluation.engine import EvaluationEngine
 from app.evaluation.storage import StorageManager
 
 
@@ -1041,43 +1042,68 @@ def test_cross_script_normalization_preserves_semantic_distinctions():
 
     Guarantees:
     - Never collapses different numbers (quantity 2 and quantity 3 remain distinct tokens).
-    - Preserves semantic contrasts such as negation ('nahi' vs 'haan').
-    - Successfully resolves script representations across Latin/Devanagari numerals and vocabulary.
+    - Preserves semantic contrasts such as negation ('nahi' vs 'haan') and corrections.
+    - Contextually disambiguates 'do' / 'दो':
+      * When acting as numeral: 'Do packet', 'दो पैकेट', '2 पैकेट' -> canonical '2'
+      * When acting as imperative/auxiliary verb: 'kar do', 'band kar do', 'bhej do', 'कर दो' -> canonical 'do' (NOT '2')
     - Preserves raw WER as standard metric while providing normalized WER.
     """
-    # 1. Distinct quantity tokens preserved across representations
-    canon_do = canonicalize_cross_script_text("Do")
-    canon_do_dev = canonicalize_cross_script_text("दो")
-    canon_2 = canonicalize_cross_script_text("2")
-    canon_teen = canonicalize_cross_script_text("Teen")
-    canon_teen_dev = canonicalize_cross_script_text("तीन")
-    canon_3 = canonicalize_cross_script_text("3")
+    # 1. Numeral contexts: 'do', 'दो', '2' canonicalize to '2' when followed by quantified nouns/scales
+    canon_do_pkt = canonicalize_cross_script_text("Do packet chahiye")
+    canon_dev_pkt = canonicalize_cross_script_text("दो पैकेट चाहिए")
+    canon_dig_pkt = canonicalize_cross_script_text("2 पैकेट चाहिए")
 
-    assert canon_do == "2"
-    assert canon_do_dev == "2"
-    assert canon_2 == "2"
-    assert canon_teen == "3"
-    assert canon_teen_dev == "3"
-    assert canon_3 == "3"
+    assert canon_do_pkt == "2 packet chahiye"
+    assert canon_dev_pkt == "2 packet chahiye"
+    assert canon_dig_pkt == "2 packet chahiye"
+
+    # Numeral contexts: 'teen', 'तीन', '3' canonicalize to '3'
+    canon_teen_pkt = canonicalize_cross_script_text("Teen packet chahiye")
+    canon_teen_dev_pkt = canonicalize_cross_script_text("तीन पैकेट चाहिए")
+    canon_teen_dig_pkt = canonicalize_cross_script_text("3 पैकेट चाहिए")
+
+    assert canon_teen_pkt == "3 packet chahiye"
+    assert canon_teen_dev_pkt == "3 packet chahiye"
+    assert canon_teen_dig_pkt == "3 packet chahiye"
+
     # Quantity 2 and 3 must NEVER collapse to the same token
-    assert canon_do != canon_teen
-    assert canon_2 != canon_3
+    assert canon_do_pkt != canon_teen_pkt
+    assert canon_dig_pkt != canon_teen_dig_pkt
 
-    # 2. Vocabulary equivalences
+    # 2. Ambiguous Romanized 'do' / Devanagari 'दो' as auxiliary/imperative verb:
+    # Must NOT be silently conflated to numeral '2'
+    canon_band_roman = canonicalize_cross_script_text("Mera account band kar do")
+    canon_band_dev = canonicalize_cross_script_text("मेरा अकाउंट बंद कर दो")
+    assert "2" not in canon_band_roman  # Must NOT be 'band kar 2'!
+    assert canon_band_roman.endswith("kar do")
+    assert "2" not in canon_band_dev
+    assert canon_band_dev.endswith("kar do")
+
+    canon_cancel = canonicalize_cross_script_text("booking cancel kar do")
+    assert canon_cancel.endswith("kar do")
+    assert "2" not in canon_cancel
+
+    canon_bhej = canonicalize_cross_script_text("paise bhej do")
+    assert "2" not in canon_bhej
+
+    canon_mat_do = canonicalize_cross_script_text("cancel mat do")
+    assert "2" not in canon_mat_do
+
+    # 3. Vocabulary equivalences
     assert canonicalize_cross_script_text("packet") == "packet"
     assert canonicalize_cross_script_text("पैकेट") == "packet"
     assert canonicalize_cross_script_text("chahiye") == "chahiye"
     assert canonicalize_cross_script_text("चाहिए") == "chahiye"
     assert canonicalize_cross_script_text("चाहिये") == "chahiye"
 
-    # 3. Negation contrasts preserved
+    # 4. Negation contrasts preserved
     assert canonicalize_cross_script_text("nahi") == "nahi"
     assert canonicalize_cross_script_text("नहीं") == "nahi"
     assert canonicalize_cross_script_text("haan") == "haan"
     assert canonicalize_cross_script_text("हाँ") == "haan"
     assert canonicalize_cross_script_text("nahi") != canonicalize_cross_script_text("haan")
 
-    # 4. Raw WER vs Cross-Script Normalized WER on the live pair
+    # 5. Raw WER vs Cross-Script Normalized WER on the live pair
     ref_a = "Do packet chahiye"
     hyp_a = "2 पैकेट चाहिए"
     raw_wer_a, s_a, d_a, i_a, r_len_a = calculate_wer(ref_a, hyp_a)
@@ -1196,3 +1222,106 @@ def test_storage_persists_and_exports_cross_script_wer(tmp_path: Path):
     assert "normalized_wer_a" in csv_out
     assert "average_normalized_wer" in csv_out
     assert "run_storage_norm_test" in csv_out
+
+
+def test_derived_rescore_preserves_source_run_and_is_isolated(tmp_path: Path):
+    """Derived offline re-score preserves source run, request IDs, raw metrics, and is isolated from aggregate metrics."""
+    db_file = tmp_path / "test_derived_isolation.db"
+    storage = StorageManager(db_file)
+    engine = EvaluationEngine(storage)
+
+    seed_cases = load_seed_dataset()
+    pair_qty = next(tc for tc in seed_cases if tc.id == "pair_qty_001")
+
+    # 1. Create a simulated genuine historical live run (matching eval_live_758277ca81d8)
+    # where raw WER is 1.0, intent was unclassified (task_success=False)
+    historical_live_run = score_pair(
+        run_id="eval_live_test_orig",
+        test_case=pair_qty,
+        transcript_a="2 पैकेट चाहिए",
+        transcript_b="3 पैकेट चाहिए",
+        execution_mode="live",
+        audio_condition="clean_recorded",
+        client_request_elapsed_ms=2027.77,
+        latency_a_ms=1157.92,
+        latency_b_ms=869.85,
+        request_id_a="01a15b46-a360-7cff-9e6d-8fcb69c7da6b",
+        request_id_b="01a15b46-a6b5-78bf-baf9-10d531921fe0",
+    )
+    # Simulate pre-fix historical state
+    hist_dump = historical_live_run.model_dump()
+    hist_dump["task_success"] = False
+    hist_dump["primary_failure_category"] = "intent_error"
+    hist_dump["failure_explanation"] = "Command intent misclassified. Downstream workflow triggered incorrect business logic handler."
+    hist_dump["utterance_a"]["detected_intent"] = "UNKNOWN_INTENT"
+    hist_dump["utterance_a"]["intent_match"] = False
+    hist_dump["utterance_a"]["task_success"] = False
+    hist_dump["utterance_b"]["detected_intent"] = "UNKNOWN_INTENT"
+    hist_dump["utterance_b"]["intent_match"] = False
+    hist_dump["utterance_b"]["task_success"] = False
+    hist_run = PairEvaluationResult(**hist_dump)
+    storage.save_run(hist_run)
+
+    # Verify baseline metrics
+    baseline_metrics = engine.get_aggregate_metrics()
+    assert baseline_metrics.total_runs == 1
+    assert baseline_metrics.live_runs == 1
+    assert baseline_metrics.completed_runs == 1
+    assert baseline_metrics.task_success_rate == 0.0
+
+    # 2. Perform offline derived re-score
+    derived = engine.generate_derived_rescore("eval_live_test_orig", persist=True)
+
+    # 3. Assert provenance and zero provider calls
+    assert derived.provenance == "offline_deterministic_rescore"
+    assert derived.provider_calls_made == 0
+    assert derived.credits_consumed == 0
+
+    # 4. Assert source run in evaluation_runs is completely UNCHANGED
+    source_after = storage.get_run("eval_live_test_orig")
+    assert source_after is not None
+    assert source_after.wer_a == 1.0
+    assert source_after.average_wer == 1.0
+    assert source_after.task_success is False
+    assert source_after.primary_failure_category == FailureCategory.INTENT_ERROR
+    assert source_after.utterance_a.request_id == "01a15b46-a360-7cff-9e6d-8fcb69c7da6b"
+    assert source_after.utterance_b.request_id == "01a15b46-a6b5-78bf-baf9-10d531921fe0"
+
+    # 5. Assert aggregate metrics are completely ISOLATED (derived assessment does not inflate counts)
+    metrics_after = engine.get_aggregate_metrics()
+    assert metrics_after.total_runs == 1  # Still 1, NOT 2!
+    assert metrics_after.live_runs == 1
+    assert metrics_after.completed_runs == 1
+
+    # 6. Assert derived assessment correctly reflects both original evidence and corrected re-score
+    assert derived.original_raw_wer_a == 1.0
+    assert derived.original_raw_wer_b == 1.0
+    assert derived.original_average_raw_wer == 1.0
+    assert derived.original_task_success is False
+    assert derived.request_id_a == "01a15b46-a360-7cff-9e6d-8fcb69c7da6b"
+    assert derived.request_id_b == "01a15b46-a6b5-78bf-baf9-10d531921fe0"
+
+    assert derived.normalized_wer_a == 0.0
+    assert derived.normalized_wer_b == 0.0
+    assert derived.average_normalized_wer == 0.0
+    assert derived.rescore_detected_intent_a == "ORDER_PRODUCT"
+    assert derived.rescore_detected_intent_b == "ORDER_PRODUCT"
+    assert derived.rescore_task_success is True
+    assert derived.rescore_primary_failure_category == "none"
+
+    # 7. Assert derived assessment is retrievable by derived_id and source_run_id
+    retrieved_by_dev = engine.get_derived_assessment(derived.derived_id)
+    retrieved_by_src = engine.get_derived_assessment("eval_live_test_orig")
+    assert retrieved_by_dev is not None
+    assert retrieved_by_src is not None
+    assert retrieved_by_dev.derived_id == derived.derived_id
+    assert retrieved_by_src.derived_id == derived.derived_id
+
+    # 8. Assert exportable as JSON and CSV
+    csv_exp = engine.export_derived_csv()
+    assert "offline_deterministic_rescore" in csv_exp
+    assert "01a15b46-a360-7cff-9e6d-8fcb69c7da6b" in csv_exp
+
+    json_exp = engine.export_derived_json()
+    assert "offline_deterministic_rescore" in json_exp
+    assert "01a15b46-a360-7cff-9e6d-8fcb69c7da6b" in json_exp
