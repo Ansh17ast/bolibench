@@ -655,3 +655,41 @@ async def test_crash_lab_mode_separated_summaries_and_no_mixed_metrics(async_cli
 
     finally:
         engine.storage = orig_storage
+
+
+@pytest.mark.asyncio
+async def test_derived_rescore_modal_and_showcase_elements_rendered(async_client):
+    """Proves the judge-facing side-by-side contrast audit modal and trigger buttons exist in index.html."""
+    resp = await async_client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+
+    # 1. Trigger buttons in Overview and History
+    assert 'id="btnOverviewOpenCompare"' in html
+    assert 'id="btnHistoryOpenCompare"' in html
+
+    # 2. Modal container & structure
+    assert 'id="rescoreCompareModal"' in html
+    assert 'id="modalCompareTitle"' in html
+    assert "Live Measurement vs. Offline Derived Re-Score" in html
+
+    # 3. Live measurement column elements
+    assert 'id="modalLiveRunId"' in html
+    assert 'id="modalLiveReqA"' in html
+    assert 'id="modalLiveReqB"' in html
+    assert 'id="modalLiveClientLatency"' in html
+    assert 'id="modalLiveActualA"' in html
+    assert 'id="modalLiveActualB"' in html
+    assert 'id="modalLiveAvgWer"' in html
+
+    # 4. Offline derived re-score column elements
+    assert 'id="modalDerivedId"' in html
+    assert 'id="modalDerivedSrcId"' in html
+    assert 'id="modalDerivedActualA"' in html
+    assert 'id="modalDerivedActualB"' in html
+    assert 'id="modalDerivedAvgWer"' in html
+    assert 'id="modalDerivedIntent"' in html
+    assert 'id="modalDerivedTaskSuccess"' in html
+
+    # 5. Export links
+    assert 'id="modalBtnExportJson"' in html

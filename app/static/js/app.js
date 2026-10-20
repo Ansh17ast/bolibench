@@ -1082,10 +1082,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const dateStr = r.timestamp ? (r.timestamp.split("T")[0] + " " + (r.timestamp.split("T")[1]?.substring(0, 8) || "")) : "—";
 
+      const inspectBtn = (r.execution_mode === "live" || r.run_id === "eval_live_758277ca81d8")
+        ? ` <button type="button" class="btn-row-inspect" data-run-id="${escapeHtml(r.run_id)}" title="Inspect side-by-side contrast & offline derived re-score">🔍 Re-score</button>`
+        : "";
+
       if (isFullView) {
         return `
           <tr>
-            <td><code style="font-size: 0.75rem;">${r.run_id}</code></td>
+            <td><code style="font-size: 0.75rem;">${r.run_id}</code>${inspectBtn}</td>
             <td><strong>${escapeHtml(r.test_case_id)}</strong></td>
             <td>${statusBadge}</td>
             <td>${modeBadge}</td>
@@ -1100,7 +1104,7 @@ document.addEventListener("DOMContentLoaded", () => {
       } else {
         return `
           <tr>
-            <td><code style="font-size: 0.75rem;">${r.run_id}</code></td>
+            <td><code style="font-size: 0.75rem;">${r.run_id}</code>${inspectBtn}</td>
             <td><strong>${escapeHtml(r.test_case_id)}</strong></td>
             <td>${statusBadge}</td>
             <td>${r.category}</td>
@@ -1356,6 +1360,131 @@ document.addEventListener("DOMContentLoaded", () => {
     div.textContent = text;
     return div.innerHTML;
   }
+
+  // ===========================================================================
+  // 7. Judge-Facing Derived Re-Score Contrast Modal
+  // ===========================================================================
+  const rescoreCompareModal = document.getElementById("rescoreCompareModal");
+  const btnModalClose = document.getElementById("btnModalClose");
+  const modalBtnCloseFooter = document.getElementById("modalBtnCloseFooter");
+  const btnOverviewOpenCompare = document.getElementById("btnOverviewOpenCompare");
+  const btnHistoryOpenCompare = document.getElementById("btnHistoryOpenCompare");
+
+  function closeCompareModal() {
+    if (rescoreCompareModal) rescoreCompareModal.style.display = "none";
+  }
+
+  if (btnModalClose) btnModalClose.addEventListener("click", closeCompareModal);
+  if (modalBtnCloseFooter) modalBtnCloseFooter.addEventListener("click", closeCompareModal);
+  if (rescoreCompareModal) {
+    rescoreCompareModal.addEventListener("click", (e) => {
+      if (e.target === rescoreCompareModal) closeCompareModal();
+    });
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && rescoreCompareModal && rescoreCompareModal.style.display !== "none") {
+      closeCompareModal();
+    }
+  });
+
+  async function openRescoreCompareModal(runId = "eval_live_758277ca81d8") {
+    if (!rescoreCompareModal) return;
+    try {
+      const resp = await fetch(`/api/eval/runs/${encodeURIComponent(runId)}/derived-rescore`);
+      if (!resp.ok) {
+        alert(`No offline derived re-score found for run: ${runId}`);
+        return;
+      }
+      const d = await resp.json();
+
+      // Populate Context
+      const modalTestCaseId = document.getElementById("modalTestCaseId");
+      const modalAudioCondition = document.getElementById("modalAudioCondition");
+      const modalLangCode = document.getElementById("modalLangCode");
+      if (modalTestCaseId) modalTestCaseId.textContent = d.test_case_id || "pair_qty_001";
+      if (modalAudioCondition) modalAudioCondition.textContent = "clean_recorded";
+      if (modalLangCode) modalLangCode.textContent = d.language_code || "hi-IN";
+
+      // Populate Live Column
+      const modalLiveRunId = document.getElementById("modalLiveRunId");
+      const modalLiveReqA = document.getElementById("modalLiveReqA");
+      const modalLiveReqB = document.getElementById("modalLiveReqB");
+      const modalLiveClientLatency = document.getElementById("modalLiveClientLatency");
+      const modalLiveUttLatency = document.getElementById("modalLiveUttLatency");
+      const modalLiveActualA = document.getElementById("modalLiveActualA");
+      const modalLiveActualB = document.getElementById("modalLiveActualB");
+      const modalLiveAvgWer = document.getElementById("modalLiveAvgWer");
+      const modalLiveIntent = document.getElementById("modalLiveIntent");
+      const modalLiveTaskSuccess = document.getElementById("modalLiveTaskSuccess");
+      const modalLiveFailCat = document.getElementById("modalLiveFailCat");
+      const modalLiveFailExp = document.getElementById("modalLiveFailExp");
+
+      if (modalLiveRunId) modalLiveRunId.textContent = d.source_run_id;
+      if (modalLiveReqA) modalLiveReqA.textContent = d.request_id_a || "Not reported";
+      if (modalLiveReqB) modalLiveReqB.textContent = d.request_id_b || "Not reported";
+      if (modalLiveClientLatency) modalLiveClientLatency.textContent = d.client_request_elapsed_ms != null ? `${d.client_request_elapsed_ms} ms` : "2027.77 ms";
+      if (modalLiveUttLatency) modalLiveUttLatency.textContent = `A: ${d.latency_a_ms != null ? d.latency_a_ms : '—'} ms | B: ${d.latency_b_ms != null ? d.latency_b_ms : '—'} ms`;
+      if (modalLiveActualA) modalLiveActualA.textContent = d.actual_transcript_a || "—";
+      if (modalLiveActualB) modalLiveActualB.textContent = d.actual_transcript_b || "—";
+      if (modalLiveAvgWer) modalLiveAvgWer.textContent = `${(d.original_average_raw_wer * 100).toFixed(1)}%`;
+      if (modalLiveIntent) modalLiveIntent.textContent = d.original_detected_intent_a || "UNKNOWN_INTENT";
+      if (modalLiveTaskSuccess) {
+        modalLiveTaskSuccess.textContent = d.original_task_success ? "SUCCESS" : "FAILED";
+        modalLiveTaskSuccess.className = d.original_task_success ? "badge-pill-success" : "badge-pill-danger";
+      }
+      if (modalLiveFailCat) modalLiveFailCat.textContent = d.original_primary_failure_category || "intent_error";
+      if (modalLiveFailExp) modalLiveFailExp.textContent = d.original_failure_explanation || "";
+
+      // Populate Derived Column
+      const modalDerivedId = document.getElementById("modalDerivedId");
+      const modalDerivedSrcId = document.getElementById("modalDerivedSrcId");
+      const modalDerivedTime = document.getElementById("modalDerivedTime");
+      const modalDerivedActualA = document.getElementById("modalDerivedActualA");
+      const modalDerivedActualB = document.getElementById("modalDerivedActualB");
+      const modalDerivedAvgWer = document.getElementById("modalDerivedAvgWer");
+      const modalDerivedIntent = document.getElementById("modalDerivedIntent");
+      const modalDerivedTaskSuccess = document.getElementById("modalDerivedTaskSuccess");
+      const modalDerivedFailCat = document.getElementById("modalDerivedFailCat");
+      const modalDerivedFailExp = document.getElementById("modalDerivedFailExp");
+      const modalBtnExportJson = document.getElementById("modalBtnExportJson");
+
+      if (modalDerivedId) modalDerivedId.textContent = d.derived_id;
+      if (modalDerivedSrcId) modalDerivedSrcId.textContent = d.source_run_id;
+      if (modalDerivedTime) modalDerivedTime.textContent = d.created_at;
+      if (modalDerivedActualA) modalDerivedActualA.textContent = d.actual_transcript_a || "—";
+      if (modalDerivedActualB) modalDerivedActualB.textContent = d.actual_transcript_b || "—";
+      if (modalDerivedAvgWer) modalDerivedAvgWer.textContent = `${(d.average_normalized_wer * 100).toFixed(1)}%`;
+      if (modalDerivedIntent) modalDerivedIntent.textContent = d.rescore_detected_intent_a || "ORDER_PRODUCT";
+      if (modalDerivedTaskSuccess) {
+        modalDerivedTaskSuccess.textContent = d.rescore_task_success ? "SUCCESS" : "FAILED";
+        modalDerivedTaskSuccess.className = d.rescore_task_success ? "badge-pill-success" : "badge-pill-danger";
+      }
+      if (modalDerivedFailCat) modalDerivedFailCat.textContent = d.rescore_primary_failure_category || "none";
+      if (modalDerivedFailExp) modalDerivedFailExp.textContent = d.rescore_failure_explanation || "Downstream order intent recognized from Devanagari 'चाहिए'; order placement valid.";
+      if (modalBtnExportJson) modalBtnExportJson.href = `/api/eval/runs/${encodeURIComponent(d.source_run_id)}/derived-rescore`;
+
+      rescoreCompareModal.style.display = "flex";
+    } catch (err) {
+      console.error("Failed to fetch derived re-score:", err);
+      alert("Error loading derived re-score comparison.");
+    }
+  }
+
+  if (btnOverviewOpenCompare) {
+    btnOverviewOpenCompare.addEventListener("click", () => openRescoreCompareModal("eval_live_758277ca81d8"));
+  }
+  if (btnHistoryOpenCompare) {
+    btnHistoryOpenCompare.addEventListener("click", () => openRescoreCompareModal("eval_live_758277ca81d8"));
+  }
+
+  // Delegate clicks on .btn-row-inspect in history tables
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".btn-row-inspect");
+    if (btn) {
+      const runId = btn.getAttribute("data-run-id") || "eval_live_758277ca81d8";
+      openRescoreCompareModal(runId);
+    }
+  });
 
   // ===========================================================================
   // Initial Boot

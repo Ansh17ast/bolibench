@@ -106,6 +106,44 @@ $$TaskSuccess(i) = \mathbb{I}\left(\forall f \in F_i, \hat{v}_{i, f} = v_{i, f}^
 - **Mean Word Error Rate ($\overline{\text{WER}}$):**
   $$\overline{\text{WER}} = \frac{1}{R} \sum_{r=1}^R \frac{\text{WER}_{r, A} + \text{WER}_{r, B}}{2}$$
 
+### 2.7 Cross-Script Normalization & Supplementary Normalized WER ($WER_{norm}$)
+
+Acoustic evaluations on Indian language speech AI face a widespread orthographic challenge: **reference transcripts often use Romanized Hindi (Latin script) while enterprise ASR models (e.g. Gnani Prisma STT v3) output Devanagari script and Hindu-Arabic numerals**.
+
+#### 2.7.1 Why Raw WER is 1.0 (100%) Under Script Mismatches
+Dynamic programming Levenshtein distance compares surface token representations. For example:
+- **Reference:** `"Do packet chahiye"` (3 words: `Do`, `packet`, `chahiye`)
+- **Hypothesis:** `"2 पैकेट चाहिए"` (3 words: `2`, `पैकेट`, `चाहिए`)
+
+Because Latin characters share zero token overlap with Devanagari tokens, all 3 words are scored as substitutions ($S = 3, D = 0, I = 0, N = 3$):
+$$\text{WER}_{raw} = \frac{3 + 0 + 0}{3} = 1.0 \;(100.0\%)$$
+Raw WER is strictly orthographic; it accurately reflects the unmapped script divergence, but conceals that the acoustic recognition was phonetically and semantically correct.
+
+#### 2.7.2 Supplementary Cross-Script Normalizer
+To evaluate phonetic and semantic accuracy independently of script encoding, BoliBench provides a supplementary deterministic normalizer:
+`canonicalize_cross_script_text(text)`
+
+This function canonicalizes supported numerical and lexical equivalences:
+- Numerals: `"do"` (when modifying quantified nouns) $\rightarrow$ `"2"`, `"teen"` $\rightarrow$ `"3"`, `"ek"` $\rightarrow$ `"1"`, `"chaar"` $\rightarrow$ `"4"`
+- Vocabulary: `"packet"` $\leftrightarrow$ `"पैकेट"`, `"chahiye"` $\leftrightarrow$ `"चाहिए"`, `"order"` $\leftrightarrow$ `"ऑर्डर"`
+- Output: Both reference and hypothesis canonicalize to `"2 पैकेट चाहिए"`, producing:
+$$\text{WER}_{norm} = \frac{0 + 0 + 0}{3} = 0.0 \;(0.0\%)$$
+
+#### 2.7.3 Scope Limitations & Disambiguation Rules
+- **Task-Specific, Not Universal:** Cross-script normalization is strictly restricted to supported benchmark domain equivalences. It is **not** a general-purpose Hindi transliteration or translation model.
+- **Context-Aware Disambiguation of Ambiguous Tokens:** Romanized `"do"` and Devanagari `"दो"` are polysemous in Hindi: they can denote the cardinal number $2$ or the imperative verb *"give"* / verbal auxiliary (e.g. *"kar do"*, *"bhej do"*, *"rok do"*, *"cancel kar do"*).
+  - When preceded by verbal auxiliary stems (`kar`, `bhej`, `de`, `rok`, `rakh`, `mat`, `cancel`), `"do"` / `"दो"` is preserved as the verbal token `"do"` and is **never** converted to numeral `"2"`.
+  - When followed by quantified noun stems (`packet`, `plate`, `kilo`, `sau`, `rupaye`, `chahiye`) or appearing as a standalone count, it canonicalizes to `"2"`.
+- **Integrity Rule:** Raw WER is **always** preserved verbatim in benchmark logs and exports. Supplementary normalized WER is never reported as raw WER.
+
+### 2.8 Offline Derived Re-Scoring & Audit Isolation
+
+When upstream STT models return valid acoustic transcripts that initially fail downstream task execution due to unmapped downstream regex patterns (e.g. `UNKNOWN_INTENT` when Devanagari `"चाहिए"` was not yet recognized by `extract_command_intent()`), BoliBench supports **Offline Deterministic Re-Scoring**:
+1. **Source Run Immutability:** The original live record in SQLite (`evaluation_runs`) remains strictly untouched, preserving the original measurement, raw WER, provider request IDs, client latency, and initial failure category.
+2. **Dedicated Storage:** Derived assessments are stored in a separate table (`derived_assessments`) with provenance `offline_deterministic_rescore`.
+3. **Credit & Network Invariant:** Re-scoring operates entirely offline on previously stored transcripts. It makes **0 external provider calls** and consumes **0 credits**.
+4. **Metric Isolation:** Derived assessments are never counted as additional live runs in aggregate metrics (`get_aggregate_metrics()`), preventing artificial inflation of completed experiment counts.
+
 ---
 
 ## 3. Deterministic Extraction Engine Architecture
@@ -203,22 +241,50 @@ BoliBench strictly isolates execution semantics, telemetry, and credit protectio
     - No automatic retries are performed.
   - **Credit Protection:** Live evaluation requires an explicit user confirmation checkbox, confirmation dialog, and server authorization token. Automated tests always use deterministic mocked client responses and never consume programme credits.
 
+### 6.1 Taxonomy of Evaluation Artifact Classes
+
+BoliBench establishes a strict separation across three distinct evaluation artifact classes:
+
+| Artifact Class | Upstream Provider Interaction | External Network & Credit Consumption | Storage Table | Aggregate Metric Inclusion | Primary Purpose |
+|---|---|---|---|---|---|
+| **Provider-Backed Live Runs (`execution_mode='live'`)** | Genuine Gnani Prisma STT v3 REST API invocation | Real network requests; consumes programme credits | `evaluation_runs` | Yes (included in live aggregates) | Empirically validate real-world speech recognition, measure client round-trip latency, record provider request IDs, and test downstream agent execution on live transcripts. |
+| **Deterministic Mock Runs (`execution_mode='mock'`)** | Hand-authored ground-truth or simulated corrupted transcripts | 0 network calls; 0 credits spent | `evaluation_runs` | Yes (isolated under mock aggregates) | Continuous integration, unit testing, and reproducible regression testing without external dependencies. |
+| **Derived Offline Assessments (`provenance='offline_deterministic_rescore'`)** | None (pure local deterministic re-score of already stored transcripts) | 0 network calls; 0 credits spent | `derived_assessments` | **No** (strictly excluded from aggregate run counts) | Re-evaluate historical transcripts under updated normalization or intent rules without rewriting the original live measurement or inflating run counts. |
+
+### 6.2 Live Evidence Scope & Honest Scientific Boundaries
+
+1. **Current Empirical Evidence Scope:**
+   The live evaluation evidence currently consists of **one paired experiment with two utterances**:
+   - Run ID: `eval_live_758277ca81d8`
+   - Test Case: `pair_qty_001` (Numeral contrast: Utterance A *"Do packet chahiye"* vs Utterance B *"Teen packet chahiye"*)
+   - Audio Condition: `clean_recorded` (User-declared metadata)
+   - Genuine Request IDs: `01a15b46-a360-7cff-9e6d-8fcb69c7da6b` (Utterance A) and `01a15b46-a6b5-78bf-baf9-10d531921fe0` (Utterance B)
+2. **Strict Non-Generalization Principle:**
+   BoliBench **does not claim broad model accuracy, statistically significant findings, or general downstream voice agent failure** from this single paired experiment. This run serves as an empirical proof of the paired-contrast crash-testing methodology, demonstrating that:
+   - The upstream provider correctly recognized both spoken numbers in Devanagari (`"2 पैकेट चाहिए"` and `"3 पैकेट चाहिए"`), preserving the paired numeral contrast ($2 \neq 3$).
+   - Script-sensitive raw WER was 100.0% due to Latin reference transcripts vs Devanagari provider output.
+   - Initial downstream task execution failed because the domain intent parser initially lacked support for Devanagari `"चाहिए"`.
+3. **Latency Reporting Transparency:**
+   The client-measured round-trip elapsed time was **2027.77 ms** (Utterance A: 1157.92 ms, Utterance B: 869.85 ms). Because the Gnani Prisma STT v3 REST API response payload does not report internal processing duration, provider-internal processing latency is explicitly recorded as `null` and displayed as *"Not reported"* rather than substituting client-measured values.
+
 ---
 
 ## 7. Current Implementation Status & Pending Acoustic Research
 
 1. **Implemented & Verified:**
    - Deterministic paired-contrast evaluation scoring engine.
-   - Exact dynamic programming Levenshtein Word Error Rate (WER).
+   - Exact dynamic programming Levenshtein Word Error Rate (WER) and supplementary cross-script normalized WER ($WER_{norm}$).
+   - Context-aware token disambiguation (preserving verbal auxiliary *"do"* vs cardinal numeral *"2"*).
    - Domain-specific critical field extractors (quantities, negation, corrections, entities, intent).
    - Thread-safe SQLite persistence with JSON and CSV exports preserving latency semantics and execution status.
+   - Dedicated `derived_assessments` table and API endpoints for reproducible offline re-scoring.
    - Strict telemetry separation ensuring mock runs never report fabricated measured latency.
    - Single-audio telemetry cleanly distinguishing browser end-to-end latency, backend-measured Gnani API request time, and provider-internal processing time ("Not reported").
    - Server-side credit guard, origin validation, and anti-CSRF authorization manager (`app/services/live_guard.py`).
    - Default disabled live evaluation deployment safety guard (`LIVE_EVALUATION_ENABLED=false`).
    - Live paired audio REST API (`POST /api/eval/run-live/{test_id}`) with strict acoustic condition enum validation and format restriction to WAV (verifiably $\le 60$s).
-   - Backward-compatible SQLite migration and metric aggregation isolation ensuring operational errors never contaminate benchmark performance averages.
-   - Comprehensive test suite (95 tests passing with 0 network calls and 0 credits consumed).
+   - Backward-compatible SQLite migration and metric aggregation isolation ensuring operational errors and derived re-scores never contaminate benchmark performance averages.
+   - Comprehensive test suite (**122 tests passing with 0 network calls and 0 credits consumed**).
 2. **Pending Acoustic Research (`pending_acoustic`):**
    - Calibrated acoustic noise testing with multi-speaker recordings under measured signal-to-noise ratios (street noise, cafeteria babble, reverberation).
    - Crowdsourced audio dataset recording all 24 seed utterances across diverse regional Indian accents.

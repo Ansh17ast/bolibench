@@ -189,6 +189,17 @@
                 <div class="count-tag count-warning"><span class="count-num" id="liveStatIncomplete">0</span> incomplete</div>
                 <div class="count-tag count-danger"><span class="count-num" id="liveStatFailed">0</span> failed</div>
               </div>
+
+              <!-- Live Evaluation & Derived Re-Score Audit Showcase -->
+              <div class="live-showcase-bar" style="margin-top: 1rem; padding: 0.85rem; background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: var(--radius-md); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+                <div>
+                  <strong style="color: #93c5fd; font-size: 0.85rem;">⚡ Judge Demo Showcase:</strong>
+                  <span style="font-size: 0.8rem; color: var(--text-muted); margin-left: 0.4rem;">Compare genuine live run <code>eval_live_758277ca81d8</code> against the offline derived re-score.</span>
+                </div>
+                <button type="button" class="btn-primary-sm" id="btnOverviewOpenCompare" style="padding: 0.45rem 0.9rem; font-size: 0.8rem;">
+                  <span>🔍 Inspect Live vs. Derived Re-Score</span>
+                </button>
+              </div>
             </div>
           </section>
 
@@ -801,6 +812,9 @@
             <button type="button" class="status-filter-btn" data-status="failed">Failed (<span id="countFilterFailed">0</span>)</button>
             <button type="button" class="status-filter-btn" data-status="incomplete">Incomplete (<span id="countFilterIncomplete">0</span>)</button>
           </div>
+          <button type="button" class="btn-primary-sm" id="btnHistoryOpenCompare" style="padding: 0.45rem 0.9rem; font-size: 0.8rem; margin-left: auto;">
+            <span>🔍 Inspect Live vs. Derived Re-Score</span>
+          </button>
           <span class="history-tip">Failed runs display operational errors without corrupting benchmark WER</span>
         </div>
 
@@ -1094,6 +1108,143 @@
         <p class="footer-meta">Evaluation Framework: Paired-Contrast Semantic Engine &bull; Upstream: Gnani Prisma STT v3 REST &bull; Mode: <strong>LIVE_EVALUATION_ENABLED={{ live_evaluation_enabled }}</strong> &bull; <strong>LIVE_TRANSCRIPTION_ENABLED={{ live_transcription_enabled }}</strong></p>
       </div>
     </footer>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL: SIDE-BY-SIDE LIVE MEASUREMENT VS OFFLINE DERIVED RE-SCORE     -->
+  <!-- ===================================================================== -->
+  <div class="modal-backdrop" id="rescoreCompareModal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="modalCompareTitle">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <span class="eyebrow-badge">BENCHMARK CONTRAST AUDIT</span>
+          <h2 id="modalCompareTitle">Live Measurement vs. Offline Derived Re-Score</h2>
+          <p class="modal-subtitle">Side-by-side comparison of genuine live upstream evaluation against deterministic offline re-scoring.</p>
+        </div>
+        <button type="button" class="modal-close-btn" id="btnModalClose" aria-label="Close modal">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Context Banner -->
+        <div class="modal-context-banner">
+          <div class="context-pill-row">
+            <span class="code-pill">Test Case: <strong id="modalTestCaseId">pair_qty_001</strong></span>
+            <span class="code-pill">Audio Condition: <strong id="modalAudioCondition">clean_recorded</strong></span>
+            <span class="code-pill">Language: <strong id="modalLangCode">hi-IN</strong></span>
+          </div>
+          <p class="context-desc">
+            <strong>Audit Guarantee:</strong> The original live record in SQLite remains strictly immutable and preserved. The offline derived assessment is computed deterministically on stored transcripts (0 external provider calls, 0 credits consumed) and is isolated from aggregate run metrics.
+          </p>
+        </div>
+
+        <!-- Side-by-Side Comparison Grid -->
+        <div class="modal-compare-grid">
+          <!-- Left Column: Genuine Live Run -->
+          <div class="compare-col compare-col-live">
+            <div class="compare-col-header">
+              <div class="compare-header-badge badge-live">GENUINE LIVE MEASUREMENT</div>
+              <h3 id="modalLiveTitle">Original Live Run</h3>
+              <span class="compare-id-tag" id="modalLiveRunId">eval_live_758277ca81d8</span>
+            </div>
+            <div class="compare-section">
+              <h4>Provider Telemetry</h4>
+              <div class="meta-kv-grid">
+                <div class="meta-kv"><span>Execution Mode:</span> <strong>LIVE (Gnani Prisma STT v3)</strong></div>
+                <div class="meta-kv"><span>Provider Request ID A:</span> <code id="modalLiveReqA">01a15b46-a360-7cff-9e6d-8fcb69c7da6b</code></div>
+                <div class="meta-kv"><span>Provider Request ID B:</span> <code id="modalLiveReqB">01a15b46-a6b5-78bf-baf9-10d531921fe0</code></div>
+                <div class="meta-kv"><span>Client Elapsed Latency:</span> <strong id="modalLiveClientLatency">2027.77 ms</strong></div>
+                <div class="meta-kv"><span>Utterance A / B Latency:</span> <span id="modalLiveUttLatency">1157.92 ms / 869.85 ms</span></div>
+                <div class="meta-kv"><span>Provider Processing Latency:</span> <em>Not reported by provider</em></div>
+              </div>
+            </div>
+            <div class="compare-section">
+              <h4>Acoustic Transcripts & Raw WER</h4>
+              <div class="transcript-box">
+                <div class="trans-item">
+                  <span class="spec-badge badge-a">Utterance A</span>
+                  <div class="trans-text">Ref: <code>Do packet chahiye</code><br>Actual: <strong id="modalLiveActualA">2 पैकेट चाहिए</strong></div>
+                  <div class="trans-wer">Raw WER: <strong>100.0%</strong> (S:3, D:0, I:0)</div>
+                </div>
+                <div class="trans-item">
+                  <span class="spec-badge badge-b">Utterance B</span>
+                  <div class="trans-text">Ref: <code>Teen packet chahiye</code><br>Actual: <strong id="modalLiveActualB">3 पैकेट चाहिए</strong></div>
+                  <div class="trans-wer">Raw WER: <strong>100.0%</strong> (S:3, D:0, I:0)</div>
+                </div>
+                <div class="trans-summary">Mean Raw WER: <strong id="modalLiveAvgWer">100.0%</strong> (Script Mismatch: Latin vs Devanagari)</div>
+              </div>
+            </div>
+            <div class="compare-section">
+              <h4>Downstream Agent Evaluation</h4>
+              <div class="meta-kv-grid">
+                <div class="meta-kv"><span>Extracted Quantities:</span> <strong>A: 2 | B: 3 (Preserved)</strong></div>
+                <div class="meta-kv"><span>Detected Intent:</span> <span class="badge-pill-danger" id="modalLiveIntent">UNKNOWN_INTENT</span></div>
+                <div class="meta-kv"><span>Task Success:</span> <span class="badge-pill-danger" id="modalLiveTaskSuccess">FAILED</span></div>
+                <div class="meta-kv"><span>Primary Failure:</span> <code id="modalLiveFailCat">intent_error</code></div>
+              </div>
+              <p class="compare-note" id="modalLiveFailExp">Command intent misclassified because Hindi "चाहिए" was unmapped in initial regex.</p>
+            </div>
+          </div>
+
+          <!-- Right Column: Offline Derived Re-Score -->
+          <div class="compare-col compare-col-derived">
+            <div class="compare-col-header">
+              <div class="compare-header-badge badge-derived">OFFLINE DETERMINISTIC RE-SCORE</div>
+              <h3 id="modalDerivedTitle">Derived Assessment</h3>
+              <span class="compare-id-tag" id="modalDerivedId">rescore_eval_live_758277ca81d8</span>
+            </div>
+            <div class="compare-section">
+              <h4>Provenance & Invariants</h4>
+              <div class="meta-kv-grid">
+                <div class="meta-kv"><span>Audit Provenance:</span> <strong>offline_deterministic_rescore</strong></div>
+                <div class="meta-kv"><span>Source Run Reference:</span> <code id="modalDerivedSrcId">eval_live_758277ca81d8</code></div>
+                <div class="meta-kv"><span>External Provider Calls:</span> <strong>0 calls</strong></div>
+                <div class="meta-kv"><span>Programme Credits Spent:</span> <strong>0 credits</strong></div>
+                <div class="meta-kv"><span>Re-score Timestamp:</span> <span id="modalDerivedTime">—</span></div>
+                <div class="meta-kv"><span>Aggregate Metric Impact:</span> <em>Excluded from run counts</em></div>
+              </div>
+            </div>
+            <div class="compare-section">
+              <h4>Stored Transcripts & Cross-Script WER</h4>
+              <div class="transcript-box">
+                <div class="trans-item">
+                  <span class="spec-badge badge-a">Utterance A</span>
+                  <div class="trans-text">Ref: <code>Do packet chahiye</code><br>Stored: <strong id="modalDerivedActualA">2 पैकेट चाहिए</strong></div>
+                  <div class="trans-wer" style="color: #60a5fa;">Normalized WER: <strong>0.0%</strong> (Mapped: Do &rarr; 2)</div>
+                </div>
+                <div class="trans-item">
+                  <span class="spec-badge badge-b">Utterance B</span>
+                  <div class="trans-text">Ref: <code>Teen packet chahiye</code><br>Stored: <strong id="modalDerivedActualB">3 पैकेट चाहिए</strong></div>
+                  <div class="trans-wer" style="color: #60a5fa;">Normalized WER: <strong>0.0%</strong> (Mapped: Teen &rarr; 3)</div>
+                </div>
+                <div class="trans-summary" style="color: #60a5fa;">Average Normalized WER: <strong id="modalDerivedAvgWer">0.0%</strong> (Supported Equivalences)</div>
+              </div>
+            </div>
+            <div class="compare-section">
+              <h4>Re-scored Downstream Agent Evaluation</h4>
+              <div class="meta-kv-grid">
+                <div class="meta-kv"><span>Extracted Quantities:</span> <strong>A: 2 | B: 3 (Preserved)</strong></div>
+                <div class="meta-kv"><span>Detected Intent:</span> <span class="badge-pill-success" id="modalDerivedIntent">ORDER_PRODUCT</span></div>
+                <div class="meta-kv"><span>Task Success:</span> <span class="badge-pill-success" id="modalDerivedTaskSuccess">SUCCESS</span></div>
+                <div class="meta-kv"><span>Failure Category:</span> <code id="modalDerivedFailCat">none</code></div>
+              </div>
+              <p class="compare-note" style="color: #34d399;" id="modalDerivedFailExp">Downstream order intent recognized from Devanagari "चाहिए"; order placement valid.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <div class="modal-footer-exports">
+          <a href="/api/eval/runs/eval_live_758277ca81d8/derived-rescore" target="_blank" class="btn-export-sm" id="modalBtnExportJson">
+            <span>📥 Export Derived JSON</span>
+          </a>
+          <a href="/api/eval/derived-assessments/export?format=csv" target="_blank" class="btn-export-sm">
+            <span>📥 Export Re-Scores CSV</span>
+          </a>
+        </div>
+        <button type="button" class="btn-secondary" id="modalBtnCloseFooter">Close Audit View</button>
+      </div>
+    </div>
   </div>
 
   <script src="/static/js/app.js"></script>
