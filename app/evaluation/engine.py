@@ -6,14 +6,16 @@ from typing import Dict, List, Optional
 import uuid
 
 from app.evaluation.dataset import get_test_case_by_id, load_seed_dataset
-from app.evaluation.metrics import score_pair
+from app.evaluation.metrics import evaluate_utterance, score_pair
 from app.evaluation.schemas import (
     AggregateMetrics,
     AudioCondition,
     EvaluateTranscriptsRequest,
     ExecutionMode,
+    FailureCategory,
     PairEvaluationResult,
     TestCasePair,
+    UtteranceEvaluationResult,
 )
 from app.evaluation.storage import StorageManager
 from app.services.gnani_client import GnaniPrismaClient
@@ -151,28 +153,165 @@ class EvaluationEngine:
 
         # Step 1: Transcribe Utterance A
         start_time_a = time.perf_counter()
-        resp_a = await client.transcribe(
-            audio_bytes=audio_a_bytes,
-            filename=filename_a,
-            content_type=content_type_a,
-            language_code=test_case.language_code,
-            format_mode="verbatim",
-        )
+        try:
+            resp_a = await client.transcribe(
+                audio_bytes=audio_a_bytes,
+                filename=filename_a,
+                content_type=content_type_a,
+                language_code=test_case.language_code,
+                preferred_language=test_case.language_code,
+                format_mode="transcribe",
+            )
+        except Exception as exc:
+            elapsed_a_ms = round((time.perf_counter() - start_time_a) * 1000.0, 2)
+            safe_error = getattr(exc, "message", str(exc))
+            # Persist safe failed run record so failure is audited without leaking credentials or audio
+            failed_run = PairEvaluationResult(
+                run_id=run_id,
+                test_case_id=test_case_id,
+                category=test_case.category.value if hasattr(test_case.category, "value") else str(test_case.category),
+                language_code=test_case.language_code,
+                execution_mode=ExecutionMode.LIVE,
+                audio_condition=audio_condition,
+                timestamp=timestamp,
+                overall_status="failed",
+                utterance_a=UtteranceEvaluationResult(
+                    utterance_id=test_case.utterance_a.id,
+                    reference_transcript=test_case.utterance_a.reference_transcript,
+                    actual_transcript="",
+                    wer=1.0,
+                    substitutions=0,
+                    deletions=len(test_case.utterance_a.reference_transcript.split()),
+                    insertions=0,
+                    reference_length=len(test_case.utterance_a.reference_transcript.split()),
+                    critical_fields_match=False,
+                    detected_intent="UNKNOWN",
+                    intent_match=False,
+                    task_success=False,
+                    status="failed",
+                    error_message=safe_error,
+                    latency_ms=elapsed_a_ms,
+                    client_request_elapsed_ms=elapsed_a_ms,
+                ),
+                utterance_b=UtteranceEvaluationResult(
+                    utterance_id=test_case.utterance_b.id,
+                    reference_transcript=test_case.utterance_b.reference_transcript,
+                    actual_transcript="",
+                    wer=1.0,
+                    substitutions=0,
+                    deletions=len(test_case.utterance_b.reference_transcript.split()),
+                    insertions=0,
+                    reference_length=len(test_case.utterance_b.reference_transcript.split()),
+                    critical_fields_match=False,
+                    detected_intent="UNKNOWN",
+                    intent_match=False,
+                    task_success=False,
+                    status="skipped",
+                    error_message="Skipped because Utterance A failed.",
+                ),
+                wer_a=1.0,
+                wer_b=1.0,
+                average_wer=1.0,
+                critical_field_accuracy=0.0,
+                semantic_distinction_preserved=False,
+                task_success=False,
+                primary_failure_category=FailureCategory.PROVIDER_ERROR,
+                failure_explanation=f"Provider request for Utterance A failed: {safe_error}. Utterance B was not attempted.",
+                client_measured_latency_ms=elapsed_a_ms,
+                client_request_elapsed_ms=elapsed_a_ms,
+                provider_processing_time_ms=None,
+                simulated_latency_ms=None,
+            )
+            self.storage.save_run(failed_run)
+            raise
+
         elapsed_a_ms = resp_a.get("client_request_elapsed_ms")
         if elapsed_a_ms is None:
             elapsed_a_ms = round((time.perf_counter() - start_time_a) * 1000.0, 2)
         prov_time_a = resp_a.get("provider_processing_time_ms")
 
         # Step 2: Transcribe Utterance B
-        # If this call fails, the exception propagates and self.storage.save_run is never executed
         start_time_b = time.perf_counter()
-        resp_b = await client.transcribe(
-            audio_bytes=audio_b_bytes,
-            filename=filename_b,
-            content_type=content_type_b,
-            language_code=test_case.language_code,
-            format_mode="verbatim",
-        )
+        try:
+            resp_b = await client.transcribe(
+                audio_bytes=audio_b_bytes,
+                filename=filename_b,
+                content_type=content_type_b,
+                language_code=test_case.language_code,
+                preferred_language=test_case.language_code,
+                format_mode="transcribe",
+            )
+        except Exception as exc:
+            elapsed_b_ms = round((time.perf_counter() - start_time_b) * 1000.0, 2)
+            safe_error = getattr(exc, "message", str(exc))
+            total_client_latency_ms = round(elapsed_a_ms + elapsed_b_ms, 2)
+            req_id_a = resp_a.get("request_id")
+
+            # Score Utterance A so its extracted fields, WER, and request ID are faithfully preserved
+            res_a = evaluate_utterance(
+                utterance_spec=test_case.utterance_a,
+                actual_transcript=resp_a.get("transcript", ""),
+                category=test_case.category,
+                language_code=test_case.language_code,
+                latency_ms=elapsed_a_ms,
+                client_request_elapsed_ms=elapsed_a_ms,
+                provider_processing_time_ms=prov_time_a,
+                request_id=req_id_a,
+            )
+            res_a.status = "completed"
+
+            res_b = UtteranceEvaluationResult(
+                utterance_id=test_case.utterance_b.id,
+                reference_transcript=test_case.utterance_b.reference_transcript,
+                actual_transcript="",
+                wer=1.0,
+                substitutions=0,
+                deletions=len(test_case.utterance_b.reference_transcript.split()),
+                insertions=0,
+                reference_length=len(test_case.utterance_b.reference_transcript.split()),
+                critical_fields_match=False,
+                detected_intent="UNKNOWN",
+                intent_match=False,
+                task_success=False,
+                status="failed",
+                error_message=safe_error,
+                latency_ms=elapsed_b_ms,
+                client_request_elapsed_ms=elapsed_b_ms,
+            )
+
+            # Persist incomplete run record documenting that Utterance A succeeded
+            # and that provider credits may have been consumed for Utterance A.
+            incomplete_run = PairEvaluationResult(
+                run_id=run_id,
+                test_case_id=test_case_id,
+                category=test_case.category.value if hasattr(test_case.category, "value") else str(test_case.category),
+                language_code=test_case.language_code,
+                execution_mode=ExecutionMode.LIVE,
+                audio_condition=audio_condition,
+                timestamp=timestamp,
+                overall_status="incomplete",
+                utterance_a=res_a,
+                utterance_b=res_b,
+                wer_a=res_a.wer,
+                wer_b=1.0,
+                average_wer=round((res_a.wer + 1.0) / 2.0, 4),
+                critical_field_accuracy=round(float(res_a.critical_fields_match) * 0.5, 4),
+                semantic_distinction_preserved=False,
+                task_success=False,
+                primary_failure_category=FailureCategory.PROVIDER_ERROR,
+                failure_explanation=(
+                    f"Partial live evaluation failure: Utterance A succeeded (request_id={req_id_a}), "
+                    f"but Utterance B failed with error: {safe_error}. "
+                    "Note: Provider credits may have been consumed for Utterance A."
+                ),
+                client_measured_latency_ms=total_client_latency_ms,
+                client_request_elapsed_ms=total_client_latency_ms,
+                provider_processing_time_ms=None,
+                simulated_latency_ms=None,
+            )
+            self.storage.save_run(incomplete_run)
+            raise
+
         elapsed_b_ms = resp_b.get("client_request_elapsed_ms")
         if elapsed_b_ms is None:
             elapsed_b_ms = round((time.perf_counter() - start_time_b) * 1000.0, 2)

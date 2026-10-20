@@ -27,18 +27,38 @@ class AuthTokenRecord(NamedTuple):
 
 
 class LiveEvaluationGuard:
-    """Manages authorization tokens and validates same-origin requests for live evaluations."""
+    """Manages authorization tokens and validates same-origin requests for live evaluations.
+
+    Token Architecture:
+    - Cryptographically random 256-bit token (secrets.token_hex(32)).
+    - Server-stored in an in-memory dictionary (_tokens) with TTL of 300 seconds (5 minutes).
+    - Single-use: marked consumed immediately upon verification to prevent replay attacks.
+    - Not a signed JWT; validation is stateful and bound to the issued test_case_id.
+    """
 
     REQUIRED_CONFIRM_HEADER = "X-BoliBench-Confirm-Live"
     EXPECTED_HEADER_VALUE = "CONFIRM_LIVE_EVALUATION"
     TOKEN_TTL_SECONDS = 300.0  # 5 minutes validity
 
+    # Explicit complete allowed origins (scheme + host + port)
+    ALLOWED_SCHEMES = {"http", "https"}
+    ALLOWED_ORIGINS = {
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://test",
+        "http://testserver",
+        "https://test",
+        "https://testserver",
+    }
+
     def __init__(self):
-        # In-memory token store: { token: AuthTokenRecord }
+        # In-memory server token store: { token: AuthTokenRecord }
         self._tokens: Dict[str, AuthTokenRecord] = {}
 
     def issue_authorization_token(self, test_id: str, request: Request) -> str:
-        """Issues a cryptographically secure, time-limited, single-use authorization token."""
+        """Issues a cryptographically random, server-stored, time-limited, single-use authorization token."""
         self.validate_same_origin(request)
 
         token = secrets.token_hex(32)
@@ -58,16 +78,15 @@ class LiveEvaluationGuard:
         return token
 
     def validate_same_origin(self, request: Request) -> None:
-        """Rejects cross-origin, cross-site, or missing-origin requests to live evaluation routes.
+        """Rejects cross-origin, cross-site, or untrusted-origin requests to live evaluation routes.
 
         Origin Verification Policy:
-        - In browser flows, browsers always provide either 'Origin' (on POST) or 'Referer'.
-        - Requests with untrusted Origin or Referer are rejected with 403 Forbidden.
-        - Requests missing both Origin and Referer are rejected with 403 Forbidden.
+        - In browser flows, browsers provide either 'Origin' (on POST) or 'Referer'.
+        - Validates complete origins (scheme, host, and port) against explicit allowed local origins.
+        - Requests missing both Origin and Referer are rejected on non-local hosts.
         - Documented Development / Test Exception:
-          Automated test harnesses (e.g. starlette TestClient targeting 'testserver') or direct
-          local loopback tools running on localhost / 127.0.0.1 may omit Origin headers if
-          specifically operating on local loopback hosts (testserver, 127.0.0.1, localhost).
+          Automated test harnesses (e.g. starlette TestClient targeting 'testserver' or 'test')
+          and local loopback development callers on 127.0.0.1 or localhost may omit Origin headers.
         """
         # 1. Sec-Fetch-Site (modern browser defense against CSRF)
         fetch_site = request.headers.get("sec-fetch-site")
@@ -103,18 +122,24 @@ class LiveEvaluationGuard:
                 )
         else:
             parsed = urlparse(raw_origin)
-            host = parsed.netloc.lower()
-            req_host = request.url.netloc.lower()
-            allowed_hosts = {
-                req_host,
-                "localhost:8000",
-                "127.0.0.1:8000",
-                "localhost:3000",
-                "127.0.0.1:3000",
-                "test",
-                "testserver",  # pytest starlette TestClient host
-            }
-            if host not in allowed_hosts and parsed.hostname not in {"localhost", "127.0.0.1", "test", "testserver"}:
+            origin_scheme = (parsed.scheme or "").lower()
+            origin_netloc = (parsed.netloc or "").lower()
+
+            if origin_scheme not in self.ALLOWED_SCHEMES or not origin_netloc:
+                logger.warning("Rejected live evaluation with untrusted origin: %s", raw_origin)
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Forbidden: Untrusted origin. Cross-origin access to live evaluation is prohibited.",
+                )
+
+            full_origin = f"{origin_scheme}://{origin_netloc}"
+            req_origin = f"{(request.url.scheme or 'http').lower()}://{(request.url.netloc or '').lower()}"
+
+            is_valid = full_origin in self.ALLOWED_ORIGINS
+            if not is_valid and req_hostname in ("localhost", "127.0.0.1", "test", "testserver"):
+                is_valid = (full_origin == req_origin)
+
+            if not is_valid:
                 logger.warning("Rejected live evaluation with untrusted origin: %s", raw_origin)
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,

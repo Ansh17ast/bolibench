@@ -230,6 +230,18 @@ async def test_run_live_audio_validates_both_uploads(async_client, valid_wav_byt
     assert resp.status_code == 400
     assert resp.json()["error_type"] == "DURATION_EXCEEDED"
 
+    # 6. Reject non-WAV container (e.g. MP3) on live route because duration cannot be verified
+    headers, data = await _get_live_auth(async_client, "pair_qty_001")
+    mp3_bytes = b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff\xfb\x90d" + b"\x00" * 100
+    files_mp3 = {
+        "audio_file_a": ("speech_a.mp3", io.BytesIO(mp3_bytes), "audio/mpeg"),
+        "audio_file_b": ("good_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+    resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files_mp3, data=data, headers=headers)
+    assert resp.status_code == 400
+    assert resp.json()["error_type"] == "UNSUPPORTED_LIVE_FORMAT"
+    assert "formats with verified duration" in resp.json()["message"]
+
 
 @pytest.mark.asyncio
 async def test_run_live_invalid_test_id(async_client, valid_wav_bytes, monkeypatch):
@@ -276,7 +288,7 @@ async def test_run_live_success_with_mocked_provider(async_client, valid_wav_byt
         "client_request_elapsed_ms": 110.5,
         "server_timestamp": "20261020_040000.000",
         "language_code": "hi-IN",
-        "format": "verbatim",
+        "format": "transcribe",
         "is_mocked": False,
     }
     mock_resp_b = {
@@ -287,7 +299,7 @@ async def test_run_live_success_with_mocked_provider(async_client, valid_wav_byt
         "client_request_elapsed_ms": 115.0,
         "server_timestamp": "20261020_040001.000",
         "language_code": "hi-IN",
-        "format": "verbatim",
+        "format": "transcribe",
         "is_mocked": False,
     }
 
@@ -303,7 +315,19 @@ async def test_run_live_success_with_mocked_provider(async_client, valid_wav_byt
         assert response.status_code == 200
         assert mock_transcribe.call_count == 2
 
+        # Verify contract compliance: format_mode="transcribe" and preferred_language="hi-IN"
+        call_a = mock_transcribe.call_args_list[0].kwargs
+        assert call_a["format_mode"] == "transcribe"
+        assert call_a["preferred_language"] == "hi-IN"
+        assert call_a["language_code"] == "hi-IN"
+
+        call_b = mock_transcribe.call_args_list[1].kwargs
+        assert call_b["format_mode"] == "transcribe"
+        assert call_b["preferred_language"] == "hi-IN"
+        assert call_b["language_code"] == "hi-IN"
+
         result = response.json()
+        assert result["overall_status"] == "completed"
         assert result["execution_mode"] == "live"
         assert result["audio_condition"] == "clean_recorded"
         assert result["semantic_distinction_preserved"] is True
@@ -329,7 +353,7 @@ async def test_run_live_success_with_mocked_provider(async_client, valid_wav_byt
 
 @pytest.mark.asyncio
 async def test_run_live_partial_failure_first_fails(async_client, valid_wav_bytes, monkeypatch):
-    """Proves failure of Utterance A never evaluates Utterance B or records a run."""
+    """Proves failure of Utterance A never evaluates Utterance B, but records a safe failed audit run."""
     monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
     monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
@@ -348,10 +372,21 @@ async def test_run_live_partial_failure_first_fails(async_client, valid_wav_byte
         assert response.status_code == 500
         assert mock_transcribe.call_count == 1  # Utterance B was never called
 
+        from app.routers.evaluation import engine
+        runs = engine.list_runs(limit=1)
+        assert len(runs) >= 1
+        latest = runs[0]
+        assert latest.overall_status == "failed"
+        assert latest.utterance_a.status == "failed"
+        assert latest.utterance_b.status == "skipped"
+        assert latest.task_success is False
+        assert latest.semantic_distinction_preserved is False
+        assert latest.primary_failure_category.value == "provider_error"
+
 
 @pytest.mark.asyncio
 async def test_run_live_partial_failure_second_fails(async_client, valid_wav_bytes, monkeypatch):
-    """Proves if Utterance A succeeds but Utterance B fails, no partial success is recorded."""
+    """Proves if Utterance A succeeds but Utterance B fails, an incomplete audit run is safely recorded."""
     monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
     monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
@@ -364,7 +399,7 @@ async def test_run_live_partial_failure_second_fails(async_client, valid_wav_byt
         "client_request_elapsed_ms": 105.0,
         "server_timestamp": "20261020_040000.000",
         "language_code": "hi-IN",
-        "format": "verbatim",
+        "format": "transcribe",
         "is_mocked": False,
     }
 
@@ -381,6 +416,20 @@ async def test_run_live_partial_failure_second_fails(async_client, valid_wav_byt
         response = await async_client.post("/api/eval/run-live/pair_qty_001", files=files, data=data, headers=headers)
         assert response.status_code == 504
         assert mock_transcribe.call_count == 2
+
+        from app.routers.evaluation import engine
+        runs = engine.list_runs(limit=1)
+        assert len(runs) >= 1
+        latest = runs[0]
+        assert latest.overall_status == "incomplete"
+        assert latest.utterance_a.status == "completed"
+        assert latest.utterance_a.request_id == "req_live_test_a_ok"
+        assert latest.utterance_b.status == "failed"
+        assert latest.task_success is False
+        assert latest.semantic_distinction_preserved is False
+        assert latest.primary_failure_category.value == "provider_error"
+        assert "Utterance A succeeded" in latest.failure_explanation
+        assert "credits may have been consumed" in latest.failure_explanation
 
 
 # -----------------------------------------------------------------------------

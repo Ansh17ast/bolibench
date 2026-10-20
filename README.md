@@ -99,9 +99,9 @@ BoliBench tracks four primary metrics to measure both acoustic accuracy and sema
 - **Backend:** FastAPI (Python 3.10+) with Pydantic v2 Settings & Schemas
 - **Database:** Thread-safe SQLite persistence (`bolibench_evaluation.db`) with CSV and JSON streaming exports
 - **Frontend:** Vanilla HTML5, CSS3, and JavaScript (Zero external CDN dependencies, self-contained)
-- **Audio Validation:** In-memory container, duration (≤ 60s), size (≤ 25MB), and header signature validation
+- **Audio Validation:** In-memory container, duration (≤ 60s), size (≤ 25MB), and header signature validation; live evaluation strictly enforces WAV container for guaranteed server-side duration verification
 - **Evaluation Engine:** Deterministic rule-based slot extractors, dynamic programming Levenshtein WER, and paired-contrast scoring
-- **Automated Testing:** `pytest` (84 tests passing in ~1.18s, 0 network calls, 0 credits spent)
+- **Automated Testing:** `pytest` (91 tests passing in ~1.7s, 0 network calls, 0 credits spent)
 
 Official Gnani API verification details are documented in [`docs/gnani_api_verification.md`](docs/gnani_api_verification.md).
 
@@ -232,7 +232,7 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/eval/run-mock/pai
 1. Set `LIVE_EVALUATION_ENABLED=true` and configure your `GNANI_API_KEY` in `.env`.
 2. In the **Paired-Contrast Crash Lab** tab, select a test pair.
 3. Click **"🎙️ Live Audio Pair (Consumes Credits)"** to reveal the credit-protected live drawer.
-4. Select an audio file for Utterance A and an audio file for Utterance B (WAV, MP3, OGG, FLAC, AAC, M4A ≤ 60s).
+4. Select an audio file for Utterance A and an audio file for Utterance B (**WAV format only, duration verifiably $\le$ 60s**).
 5. Select the **Acoustic Condition** (`clean_recorded`, `noisy_recorded`, `clean_synthetic`, `noisy_synthetic`, `pending_acoustic`). This is explicitly user-declared metadata for benchmark cataloguing, not automatic acoustic detection.
 6. Review the credit warning notice and check the authorization checkbox:
    `[x] I authorize 2 live API requests to Gnani Prisma and credit deduction`
@@ -240,15 +240,15 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/eval/run-mock/pai
 8. The frontend and backend execute the secure authorization flow:
    - Frontend requests a single-use authorization token via `POST /api/eval/authorize-live`.
    - Backend verifies `LIVE_EVALUATION_ENABLED=true` and validates same-origin headers (`Sec-Fetch-Site`, `Origin`).
-   - Issues a 5-minute single-use cryptographic token.
+   - Issues a 300-second (5-minute) cryptographically random, server-stored, single-use token.
    - Frontend submits audio uploads with `confirmation_token`, `audio_condition`, and custom header `X-BoliBench-Confirm-Live: CONFIRM_LIVE_EVALUATION`.
    - Backend verifies authorization and validates `audio_condition` against the `AudioCondition` enum BEFORE reading files or initiating network requests.
-   - Validates both audio files in-memory using `AudioValidator` (zero disk persistence).
-   - Sequentially executes live calls to `https://api.vachana.ai/stt/v3` with your `GNANI_API_KEY`.
+   - Validates both audio files in-memory using `AudioValidator.validate_live_audio` (verifying WAV header duration $\le$ 60s, zero disk persistence).
+   - Sequentially executes live calls to `https://api.vachana.ai/stt/v3` with your `GNANI_API_KEY` passing `format=transcribe` and `preferred_language`.
    - Records genuine client elapsed round-trip time (`client_request_elapsed_ms`, with `backend_latency_ms` alias) and keeps `provider_processing_time_ms = null` ("Not reported" in UI).
    - Evaluates returned transcripts using the deterministic scoring engine.
    - Preserves provider request IDs and persists run to SQLite.
-   - If either call fails, the evaluation halts immediately, ensuring no partial or misleading result is recorded.
+   - If Utterance A fails, Utterance B is never called and a failed run is recorded. If Utterance A succeeds and B fails, an incomplete audit run is recorded documenting that Utterance A consumed credits while B failed. Failed or incomplete runs are never presented as successful paired evaluations.
 
 ---
 

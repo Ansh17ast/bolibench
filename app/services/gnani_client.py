@@ -103,7 +103,8 @@ class GnaniPrismaClient:
         filename: str,
         content_type: str,
         language_code: str,
-        format_mode: str = "verbatim",
+        preferred_language: Optional[str] = None,
+        format_mode: str = "transcribe",
         itn_native_numerals: bool = False,
         enable_substitution: bool = False,
         substitution_map: Optional[str] = None,
@@ -124,11 +125,14 @@ class GnaniPrismaClient:
             "X-API-Key-ID": self.settings.gnani_api_key.strip(),  # type: ignore[union-attr]
         }
 
-        # Prepare multipart form data
+        # Prepare multipart form data matching Gnani Prisma STT v3 REST contract
         data_fields: Dict[str, str] = {
             "language_code": language_code,
             "format": format_mode,
         }
+
+        if preferred_language:
+            data_fields["preferred_language"] = preferred_language
 
         if format_mode == "transcribe" and itn_native_numerals:
             data_fields["itn_native_numerals"] = "true"

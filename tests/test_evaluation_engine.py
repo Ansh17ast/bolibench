@@ -406,3 +406,149 @@ def test_live_paired_evaluation_preserves_null_provider_latency_when_missing():
     assert live_run.client_request_elapsed_ms == 210.0
     assert live_run.provider_processing_time_ms is None
     assert live_run.simulated_latency_ms is None
+
+
+@pytest.mark.asyncio
+async def test_engine_evaluate_live_audio_success(tmp_path, valid_wav_bytes):
+    """Proves engine.evaluate_live_audio completes paired evaluation with format=transcribe."""
+    from unittest.mock import AsyncMock, patch
+    from app.evaluation.engine import EvaluationEngine
+    from app.evaluation.storage import StorageManager
+    from app.services.gnani_client import GnaniPrismaClient
+
+    storage = StorageManager(db_path=tmp_path / "test_engine.db")
+    engine = EvaluationEngine(storage_manager=storage)
+
+    mock_client = AsyncMock(spec=GnaniPrismaClient)
+    mock_client.transcribe.side_effect = [
+        {
+            "success": True,
+            "transcript": "Do packet chahiye",
+            "request_id": "req_a_111",
+            "client_request_elapsed_ms": 120.0,
+            "provider_processing_time_ms": None,
+        },
+        {
+            "success": True,
+            "transcript": "Teen packet chahiye",
+            "request_id": "req_b_222",
+            "client_request_elapsed_ms": 125.0,
+            "provider_processing_time_ms": None,
+        },
+    ]
+
+    result = await engine.evaluate_live_audio(
+        test_case_id="pair_qty_001",
+        audio_a_bytes=valid_wav_bytes,
+        filename_a="utt_a.wav",
+        content_type_a="audio/wav",
+        audio_b_bytes=valid_wav_bytes,
+        filename_b="utt_b.wav",
+        content_type_b="audio/wav",
+        client=mock_client,
+        audio_condition="clean_recorded",
+    )
+
+    assert result.overall_status == "completed"
+    assert result.semantic_distinction_preserved is True
+    assert result.task_success is True
+    assert mock_client.transcribe.call_count == 2
+
+    # Assert contract parameters: format_mode="transcribe" and preferred_language="hi-IN"
+    call_a = mock_client.transcribe.call_args_list[0].kwargs
+    assert call_a["format_mode"] == "transcribe"
+    assert call_a["preferred_language"] == "hi-IN"
+
+    call_b = mock_client.transcribe.call_args_list[1].kwargs
+    assert call_b["format_mode"] == "transcribe"
+    assert call_b["preferred_language"] == "hi-IN"
+
+
+@pytest.mark.asyncio
+async def test_engine_evaluate_live_audio_a_fails(tmp_path, valid_wav_bytes):
+    """Proves engine.evaluate_live_audio saves a failed run and skips Utterance B when A fails."""
+    from unittest.mock import AsyncMock
+    from app.evaluation.engine import EvaluationEngine
+    from app.evaluation.storage import StorageManager
+    from app.services.gnani_client import GnaniPrismaClient, GnaniServerError
+
+    storage = StorageManager(db_path=tmp_path / "test_engine_fail_a.db")
+    engine = EvaluationEngine(storage_manager=storage)
+
+    mock_client = AsyncMock(spec=GnaniPrismaClient)
+    mock_client.transcribe.side_effect = GnaniServerError("Gateway 502 Bad Gateway from Prisma", status_code=502)
+
+    with pytest.raises(GnaniServerError):
+        await engine.evaluate_live_audio(
+            test_case_id="pair_qty_001",
+            audio_a_bytes=valid_wav_bytes,
+            filename_a="utt_a.wav",
+            content_type_a="audio/wav",
+            audio_b_bytes=valid_wav_bytes,
+            filename_b="utt_b.wav",
+            content_type_b="audio/wav",
+            client=mock_client,
+        )
+
+    # Only 1 call was made to provider
+    assert mock_client.transcribe.call_count == 1
+
+    # Persisted failed run verified
+    runs = storage.list_runs()
+    assert len(runs) == 1
+    assert runs[0].overall_status == "failed"
+    assert runs[0].utterance_a.status == "failed"
+    assert runs[0].utterance_b.status == "skipped"
+    assert runs[0].task_success is False
+    assert runs[0].primary_failure_category.value == "provider_error"
+
+
+@pytest.mark.asyncio
+async def test_engine_evaluate_live_audio_b_fails(tmp_path, valid_wav_bytes):
+    """Proves engine.evaluate_live_audio saves an incomplete run with Utterance A completed when B fails."""
+    from unittest.mock import AsyncMock
+    from app.evaluation.engine import EvaluationEngine
+    from app.evaluation.storage import StorageManager
+    from app.services.gnani_client import GnaniPrismaClient, GnaniTimeoutError
+
+    storage = StorageManager(db_path=tmp_path / "test_engine_fail_b.db")
+    engine = EvaluationEngine(storage_manager=storage)
+
+    mock_client = AsyncMock(spec=GnaniPrismaClient)
+    mock_client.transcribe.side_effect = [
+        {
+            "success": True,
+            "transcript": "Do packet chahiye",
+            "request_id": "req_a_success_333",
+            "client_request_elapsed_ms": 112.0,
+            "provider_processing_time_ms": None,
+        },
+        GnaniTimeoutError(timeout_seconds=30.0),
+    ]
+
+    with pytest.raises(GnaniTimeoutError):
+        await engine.evaluate_live_audio(
+            test_case_id="pair_qty_001",
+            audio_a_bytes=valid_wav_bytes,
+            filename_a="utt_a.wav",
+            content_type_a="audio/wav",
+            audio_b_bytes=valid_wav_bytes,
+            filename_b="utt_b.wav",
+            content_type_b="audio/wav",
+            client=mock_client,
+        )
+
+    # Exactly 2 calls made
+    assert mock_client.transcribe.call_count == 2
+
+    # Persisted incomplete run verified
+    runs = storage.list_runs()
+    assert len(runs) == 1
+    assert runs[0].overall_status == "incomplete"
+    assert runs[0].utterance_a.status == "completed"
+    assert runs[0].utterance_a.request_id == "req_a_success_333"
+    assert runs[0].utterance_b.status == "failed"
+    assert runs[0].task_success is False
+    assert runs[0].primary_failure_category.value == "provider_error"
+    assert "Utterance A succeeded" in runs[0].failure_explanation
+    assert "credits may have been consumed" in runs[0].failure_explanation

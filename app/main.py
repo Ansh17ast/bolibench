@@ -162,7 +162,8 @@ async def index_page(request: Request):
 async def transcribe_audio(
     audio_file: UploadFile = File(..., description="Audio file (WAV, MP3, OGG, FLAC, AAC, M4A <= 60s)"),
     language_code: str = Form(..., description="Target language BCP-47 code (e.g. hi-IN, en-IN)"),
-    format_mode: str = Form("verbatim", description="verbatim or transcribe (with ITN)"),
+    preferred_language: Optional[str] = Form(None, description="Preferred/code-mixed language hint (e.g. hi-IN)"),
+    format_mode: str = Form("transcribe", description="transcribe (with ITN) or verbatim"),
     itn_native_numerals: bool = Form(False, description="Native numerals when format=transcribe"),
     enable_substitution: bool = Form(False, description="Enable post-recognition find-and-replace"),
     substitution_map: Optional[str] = Form(None, description="JSON array of substitution rules"),
@@ -217,6 +218,7 @@ async def transcribe_audio(
         filename=audio_file.filename or f"audio{ext}",
         content_type=content_type,
         language_code=language_code,
+        preferred_language=preferred_language,
         format_mode=format_mode,
         itn_native_numerals=itn_native_numerals,
         enable_substitution=enable_substitution,

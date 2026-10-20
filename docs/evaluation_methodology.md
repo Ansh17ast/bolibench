@@ -183,16 +183,22 @@ BoliBench strictly isolates execution semantics, telemetry, and credit protectio
     - Live execution is available only for authorized local development and operator testing when explicitly enabled via `LIVE_EVALUATION_ENABLED=true` in `.env`.
   - **Server-Side Authorization & Credit Guard:**
     - Live execution requires an explicit authorization handshake via `POST /api/eval/authorize-live` before any provider calls are permitted.
-    - The server issues a cryptographically secure, time-limited (5-minute), single-use authorization token mapped to the specific test case.
+    - The server issues a cryptographically random (256-bit `secrets.token_hex`), server-stored, time-limited (300 seconds / 5 minutes), single-use authorization token mapped to the specific test case.
+    - The token is stored statefully in the server memory; it is not a signed JWT.
     - Requests must include the custom anti-CSRF header `X-BoliBench-Confirm-Live: CONFIRM_LIVE_EVALUATION`.
-    - Same-origin headers (`Sec-Fetch-Site`, `Origin`, `Referer`) are strictly validated against trusted local development origins (`localhost:8000`, `127.0.0.1:8000`, `localhost:3000`, `127.0.0.1:3000`, `test`, `testserver`). Untrusted or cross-origin requests are rejected with `403 Forbidden`. Missing origin information is rejected on non-local hosts under a documented development exception.
+    - Same-origin headers (`Sec-Fetch-Site`, `Origin`, `Referer`) are strictly validated against explicit complete local development origins (`http://localhost:8000`, `http://127.0.0.1:8000`, `http://localhost:3000`, `http://127.0.0.1:3000`, `http://test`, `http://testserver`). Untrusted or cross-origin requests are rejected with `403 Forbidden`. Missing origin information is rejected on non-local hosts under a documented development exception.
     - Single-use tokens cannot be replayed or reused for multiple evaluation runs.
-  - **Audio Validation:** Validates both audio uploads in-memory against format, duration (≤ 60s), size (≤ 25MB), and container header signatures.
+  - **Audio Validation:**
+    - Single-audio transcription validates container magic bytes and file size across standard formats (`.wav`, `.mp3`, `.ogg`, `.flac`, `.aac`, `.m4a`).
+    - Paired live evaluation strictly restricts uploads to formats with server-side verifiable duration (`.wav` $\le$ 60s via wave header parsing) before initiating provider requests to safeguard owner credits from unvalidated long audio clips.
   - **Client & Provider Latency Semantics:**
     - Measures genuine client-side round-trip elapsed time ($T_{\text{client}}$) via `time.perf_counter()` around the HTTP request and records it as `client_request_elapsed_ms` (and `client_measured_latency_ms`).
     - The legacy `backend_latency_ms` field is documented as a backwards-compatible alias for `client_request_elapsed_ms`.
     - Inspects the official Gnani response schema for provider-reported processing duration ($T_{\text{provider}}$). Because the official Gnani STT REST v3 API does not report server processing duration in its response payload, `provider_processing_time_ms` remains strictly `null` (displayed as "Not reported" in the UI). Client-side elapsed time is **never** substituted for provider latency.
-  - **Partial Failure Safeguard:** If either provider request fails or times out, the evaluation is aborted immediately. An incomplete pair is never persisted or presented as a successful evaluation.
+  - **Partial Failure Safeguard:**
+    - If Utterance A fails, Utterance B is never called (zero unnecessary provider requests), and a safe failed audit run (`overall_status="failed"`) is persisted with error details and timings.
+    - If Utterance A succeeds but Utterance B fails or times out, a safe incomplete audit record (`overall_status="incomplete"`) is persisted preserving Utterance A's real transcript and provider request ID, documenting that Utterance A consumed credits while Utterance B failed.
+    - Incomplete or failed runs are never presented or aggregated as successful evaluations. No automatic retries are performed.
   - **Credit Protection:** Live evaluation requires an explicit user confirmation checkbox, confirmation dialog, and server authorization token. Automated tests always use deterministic mocked client responses and never consume programme credits.
 
 ---
@@ -208,8 +214,8 @@ BoliBench strictly isolates execution semantics, telemetry, and credit protectio
    - Single-audio telemetry cleanly distinguishing browser end-to-end latency, backend-measured Gnani API request time, and provider-internal processing time ("Not reported").
    - Server-side credit guard, origin validation, and anti-CSRF authorization manager (`app/services/live_guard.py`).
    - Default disabled live evaluation deployment safety guard (`LIVE_EVALUATION_ENABLED=false`).
-   - Live paired audio REST API (`POST /api/eval/run-live/{test_id}`) with strict acoustic condition enum validation.
-   - Comprehensive test suite (84 tests passing with 0 network calls and 0 credits consumed).
+   - Live paired audio REST API (`POST /api/eval/run-live/{test_id}`) with strict acoustic condition enum validation and format restriction to WAV.
+   - Comprehensive test suite (91 tests passing with 0 network calls and 0 credits consumed).
 2. **Pending Acoustic Research (`pending_acoustic`):**
    - Calibrated acoustic noise testing with multi-speaker recordings under measured signal-to-noise ratios (street noise, cafeteria babble, reverberation).
    - Crowdsourced audio dataset recording all 24 seed utterances across diverse regional Indian accents.

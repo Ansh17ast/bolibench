@@ -355,13 +355,16 @@
               </div>
 
               <div class="form-group">
-                <label for="liveAudioInputA">Utterance A Audio (<span id="liveRefPromptA">Do packet chahiye</span>)</label>
-                <input type="file" id="liveAudioInputA" accept=".wav,.mp3,.ogg,.flac,.aac,.m4a" class="form-control">
+                <label for="liveAudioInputA">Utterance A Audio (<span id="liveRefPromptA">Do packet chahiye</span>) — <strong>WAV format only (duration verifiably &le; 60s)</strong></label>
+                <input type="file" id="liveAudioInputA" accept=".wav,audio/wav" class="form-control">
               </div>
 
               <div class="form-group">
-                <label for="liveAudioInputB">Utterance B Audio (<span id="liveRefPromptB">Teen packet chahiye</span>)</label>
-                <input type="file" id="liveAudioInputB" accept=".wav,.mp3,.ogg,.flac,.aac,.m4a" class="form-control">
+                <label for="liveAudioInputB">Utterance B Audio (<span id="liveRefPromptB">Teen packet chahiye</span>) — <strong>WAV format only (duration verifiably &le; 60s)</strong></label>
+                <input type="file" id="liveAudioInputB" accept=".wav,audio/wav" class="form-control">
+                <span class="field-hint" style="color: var(--text-muted); font-size: 0.8rem; display: block; margin-top: 0.35rem;">
+                  <strong>Format Policy:</strong> Live evaluation strictly enforces server-side duration parsing (&le; 60s) before any provider call to protect credits. Only WAV files are accepted for live evaluation.
+                </span>
               </div>
 
               <!-- Acoustic Environment Metadata Selector -->

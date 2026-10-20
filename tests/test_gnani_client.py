@@ -314,3 +314,61 @@ async def test_gnani_client_malformed_response_missing_transcript(mock_settings,
                 language_code="hi-IN",
             )
         assert exc_info.value.error_type == "MALFORMED_RESPONSE"
+
+
+@pytest.mark.asyncio
+async def test_gnani_client_outgoing_multipart_fields_and_auth_header(mock_settings, valid_wav_bytes):
+    """Proves the exact outgoing multipart contract, headers, and parameters sent to Gnani Prisma STT v3."""
+    captured_request = {}
+
+    async def mock_handler(request: httpx.Request) -> httpx.Response:
+        captured_request["url"] = str(request.url)
+        captured_request["method"] = request.method
+        captured_request["headers"] = dict(request.headers)
+        body = request.read()
+        captured_request["body"] = body
+
+        return httpx.Response(
+            status_code=200,
+            json={
+                "success": True,
+                "request_id": "req_contract_verify_001",
+                "timestamp": "20261020_050000.000",
+                "transcript": "Do packet chahiye",
+                "model": "gnani-prisma-v2.5",
+            },
+        )
+
+    transport = httpx.MockTransport(mock_handler)
+    async with httpx.AsyncClient(transport=transport) as http_client:
+        client = GnaniPrismaClient(settings=mock_settings, http_client=http_client)
+        result = await client.transcribe(
+            audio_bytes=valid_wav_bytes,
+            filename="order_clip.wav",
+            content_type="audio/wav",
+            language_code="hi-IN",
+            preferred_language="hi-IN",
+            format_mode="transcribe",
+            itn_native_numerals=True,
+        )
+
+        assert result["success"] is True
+        assert result["transcript"] == "Do packet chahiye"
+
+        # Verify endpoint and method
+        assert captured_request["url"] == "https://api.vachana.ai/stt/v3"
+        assert captured_request["method"] == "POST"
+
+        # Verify authentication header
+        headers = captured_request["headers"]
+        assert headers["x-api-key-id"] == "test_mock_api_key_12345"
+        assert "multipart/form-data" in headers["content-type"]
+
+        # Verify body contains all expected multipart form fields
+        body_text = captured_request["body"].decode("latin1")
+        assert 'name="language_code"\r\n\r\nhi-IN' in body_text
+        assert 'name="preferred_language"\r\n\r\nhi-IN' in body_text
+        assert 'name="format"\r\n\r\ntranscribe' in body_text
+        assert 'name="itn_native_numerals"\r\n\r\ntrue' in body_text
+        assert 'name="audio_file"; filename="order_clip.wav"' in body_text
+        assert 'Content-Type: audio/wav' in body_text

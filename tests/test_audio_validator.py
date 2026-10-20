@@ -111,3 +111,29 @@ def test_audio_validator_valid_m4a():
     ext, content_type = validator.validate("voice_note.m4a", m4a_bytes)
     assert ext == ".m4a"
     assert content_type == "audio/mp4"
+
+
+def test_validate_live_audio_valid_wav_passes(valid_wav_bytes):
+    """Test validate_live_audio permits valid WAV files with verified duration."""
+    validator = AudioValidator()
+    ext, content_type = validator.validate_live_audio("recording.wav", valid_wav_bytes)
+    assert ext == ".wav"
+    assert content_type == "audio/wav"
+
+
+def test_validate_live_audio_non_wav_rejected():
+    """Test validate_live_audio rejects non-WAV formats with UNSUPPORTED_LIVE_FORMAT."""
+    validator = AudioValidator()
+    mp3_bytes = b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff\xfb\x90d" + b"\x00" * 100
+    with pytest.raises(AudioValidationError) as exc_info:
+        validator.validate_live_audio("recording.mp3", mp3_bytes)
+    assert exc_info.value.error_type == "UNSUPPORTED_LIVE_FORMAT"
+    assert "restricts uploads to formats with verified duration" in exc_info.value.message
+
+
+def test_validate_live_audio_duration_exceeded(long_wav_bytes):
+    """Test validate_live_audio strictly enforces the 60s duration ceiling."""
+    validator = AudioValidator()
+    with pytest.raises(AudioValidationError) as exc_info:
+        validator.validate_live_audio("long_sample.wav", long_wav_bytes)
+    assert exc_info.value.error_type == "DURATION_EXCEEDED"

@@ -175,7 +175,7 @@ async def run_live_evaluation(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to read audio file A: {str(exc)}",
         )
-    ext_a, content_type_a = validator.validate(audio_file_a.filename, content_a)
+    ext_a, content_type_a = validator.validate_live_audio(audio_file_a.filename, content_a)
 
     # 4. Read & Validate Audio File B in memory
     try:
@@ -185,7 +185,7 @@ async def run_live_evaluation(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to read audio file B: {str(exc)}",
         )
-    ext_b, content_type_b = validator.validate(audio_file_b.filename, content_b)
+    ext_b, content_type_b = validator.validate_live_audio(audio_file_b.filename, content_b)
 
     # 5. Server-side Gnani client invocation
     client = GnaniPrismaClient(settings=settings)

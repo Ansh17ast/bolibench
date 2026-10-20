@@ -53,10 +53,12 @@ Sent via `multipart/form-data`:
 | Tamil | `ta-IN` | Tamil (தமிழ்) |
 | Telugu | `te-IN` | Telugu (తెలుగు) |
 
-### 2.5 Optional Request Parameters
+### 2.5 Request Parameters (REST v3)
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `format` | String enum | `verbatim` | `verbatim` (raw spoken ASR text) or `transcribe` (Inverse Text Normalization enabled: numbers, currency, dates, phone numbers formatted). |
+| `language_code` | String (BCP-47) | *Required* | Primary target language (e.g. `hi-IN`, `en-IN`, `ta-IN`). |
+| `preferred_language` | String (BCP-47) | `null` | Contextual hint for code-switched/multilingual speech processing (e.g. `hi-IN`). |
+| `format` | String enum | `transcribe` | `transcribe` (Inverse Text Normalization enabled: numbers, currencies, dates) or `verbatim` (raw spoken tokens). |
 | `itn_native_numerals` | Boolean | `false` | When `format=transcribe`, outputs digits in the target language's native script (e.g. `₹५,०००` instead of `₹5,000`). |
 | `enable_substitution`| Boolean | `false` | Enables client-defined find-and-replace rules post-transcription. |
 | `substitution_map`   | String (JSON) | `null` | JSON string of array of rules (up to 10 rules): `[{"patterns": ["rs"], "replacement": "INR"}]`. |
@@ -64,8 +66,10 @@ Sent via `multipart/form-data`:
 | `bias_score`         | Float enum | `0.0` | Boost strength: `0.0`, `0.5`, `1.0`, `1.5`, or `2.0`. |
 
 ### 2.6 Audio Constraints
-- **Containers/Extensions:** `.wav`, `.mp3`, `.ogg`, `.flac`, `.aac`, `.m4a`
-- **Duration:** Maximum 60 seconds (ideal ≤ 30 seconds). Audio exceeding 60 seconds triggers a `400 Bad Request`.
+- **Containers/Extensions:**
+  - **Single-Audio Transcription Lab:** `.wav`, `.mp3`, `.ogg`, `.flac`, `.aac`, `.m4a`.
+  - **Paired Live Contrast Evaluation:** Strictly `.wav` (PCM 16-bit, mono/stereo) to guarantee server-side header duration parsing ($\le$ 60s) before invoking provider APIs and spending credits.
+- **Duration Limit:** Maximum 60 seconds (ideal ≤ 30 seconds). Enforced strictly server-side for live evaluation.
 - **Sample Rate:** 8 kHz to 44.1 kHz accepted (automatically normalized to 16 kHz mono on the server).
 - **Client Size Guardrail:** BoliBench implements a 25 MB safety limit for uploads to prevent memory exhaustion and DoS.
 

@@ -33,6 +33,12 @@ class AudioValidator:
         ".m4a",
     }
 
+    # Live evaluation strictly restricts uploads to formats with verifiable duration
+    # to protect owner credits from unvalidated long-audio consumption.
+    LIVE_SUPPORTED_EXTENSIONS: Set[str] = {
+        ".wav",
+    }
+
     CONTENT_TYPE_MAP: Dict[str, str] = {
         ".wav": "audio/wav",
         ".mp3": "audio/mpeg",
@@ -103,6 +109,36 @@ class AudioValidator:
         content_type = self.CONTENT_TYPE_MAP.get(ext, "application/octet-stream")
         return ext, content_type
 
+    def validate_live_audio(self, filename: Optional[str], content: bytes) -> Tuple[str, str]:
+        """Validates audio strictly for live evaluation where provider credits are at stake.
+
+        Restrictions:
+        - Only formats with verifiable duration (WAV format via wave header parsing)
+          are accepted for live evaluation to guarantee duration limits (<= 60s) before
+          consuming provider credits.
+        - Other containers (.mp3, .ogg, .flac, .aac, .m4a) do not have lightweight
+          standard-library duration parsers and are restricted from the live route
+          to protect owner credits.
+        """
+        ext, content_type = self.validate(filename, content)
+
+        if ext not in self.LIVE_SUPPORTED_EXTENSIONS:
+            raise AudioValidationError(
+                f"Live evaluation currently restricts uploads to formats with verified duration ({', '.join(sorted(self.LIVE_SUPPORTED_EXTENSIONS))}) "
+                f"to guarantee duration limits (<= {self.MAX_DURATION_SECONDS:.0f}s) before spending provider credits. "
+                f"Received '{filename}' ({ext}). Please convert audio to WAV format for live evaluation, or use the single-audio transcription lab.",
+                error_type="UNSUPPORTED_LIVE_FORMAT",
+                details={
+                    "filename": filename,
+                    "extension": ext,
+                    "supported_live_formats": list(self.LIVE_SUPPORTED_EXTENSIONS),
+                },
+            )
+
+        # Enforce strict WAV duration check (fails if wave header is unparseable)
+        self._validate_wav_duration(content, strict=True)
+        return ext, content_type
+
     def _validate_magic_bytes(self, ext: str, content: bytes) -> None:
         """Inspects file signature / magic bytes."""
         if len(content) < 4:
@@ -148,7 +184,7 @@ class AudioValidator:
                     error_type="INVALID_AUDIO_SIGNATURE",
                 )
 
-    def _validate_wav_duration(self, content: bytes) -> None:
+    def _validate_wav_duration(self, content: bytes, strict: bool = False) -> None:
         """Parses WAV duration and enforces the 60s hard limit."""
         try:
             with wave.open(io.BytesIO(content), "rb") as wav_file:
@@ -163,6 +199,11 @@ class AudioValidator:
                             error_type="DURATION_EXCEEDED",
                             details={"duration_seconds": duration, "max_allowed": self.MAX_DURATION_SECONDS},
                         )
-        except wave.Error:
-            # Non-standard WAV or compressed chunk; defer full duration check to API
+        except wave.Error as exc:
+            if strict:
+                raise AudioValidationError(
+                    f"Unable to parse WAV duration from header: {str(exc)}. Audio must be standard PCM WAV.",
+                    error_type="INVALID_WAV_FORMAT",
+                )
+            # Non-standard WAV or compressed chunk; defer full duration check to API in non-strict mode
             pass

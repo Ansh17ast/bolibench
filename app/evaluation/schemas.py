@@ -34,6 +34,7 @@ class FailureCategory(str, Enum):
     INTENT_ERROR = "intent_error"
     EXTRACTION_FAILURE = "extraction_failure"
     HIGH_WER_CORRUPTION = "high_wer_corruption"
+    PROVIDER_ERROR = "provider_error"
     NONE = "none"
 
 
@@ -103,6 +104,8 @@ class UtteranceEvaluationResult(BaseModel):
     detected_intent: str
     intent_match: bool
     task_success: bool
+    status: str = Field("completed", description="Request status: completed, failed, or skipped")
+    error_message: Optional[str] = Field(None, description="Sanitized provider error message if failed")
     latency_ms: Optional[float] = Field(None, description="Actual measured client-side elapsed latency (ms) for live call; null for mock")
     client_request_elapsed_ms: Optional[float] = Field(None, description="Client-side measured HTTP round-trip elapsed time (ms) for this utterance; null in mock mode")
     provider_processing_time_ms: Optional[float] = Field(None, description="Provider-reported backend processing latency (ms); null when not reported by provider")
@@ -119,6 +122,7 @@ class PairEvaluationResult(BaseModel):
     execution_mode: ExecutionMode
     audio_condition: str
     timestamp: str
+    overall_status: str = Field("completed", description="Overall run status: completed, incomplete, or failed")
     utterance_a: UtteranceEvaluationResult
     utterance_b: UtteranceEvaluationResult
     wer_a: float
