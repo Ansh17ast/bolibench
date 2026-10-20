@@ -7,8 +7,16 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from app.config import Settings
+from app.config import Settings, get_settings
 from app.main import app
+
+
+@pytest.fixture(autouse=True)
+def reset_settings_cache():
+    """Ensures get_settings lru_cache is cleared before and after every test."""
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def create_mock_wav(duration_seconds: float = 1.0, sample_rate: int = 16000) -> bytes:

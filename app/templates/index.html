@@ -327,27 +327,63 @@
     <!-- VIEW 2: PAIRED-CONTRAST CRASH LAB                                     -->
     <!-- ===================================================================== -->
     <div class="tab-pane" id="evaluateView" role="tabpanel" aria-labelledby="tabBtnEvaluate" style="display: none;">
-      <!-- Aggregate Benchmark Stats Banner (Maintained for backward-compat) -->
-      <section class="card benchmark-summary-card">
-        <div class="summary-stat-grid">
-          <div class="stat-box">
-            <span class="stat-number" id="statTotalRuns">0</span>
-            <span class="stat-title">Total Evaluations</span>
+      <!-- Mode-Separated Benchmark Summaries (Strict separation: zero unlabelled mixed-mode averages) -->
+      <div class="crash-lab-summaries-wrapper">
+        <!-- Mock Demonstrations Summary -->
+        <section class="card benchmark-summary-card lab-summary-mock">
+          <div class="lab-summary-header">
+            <span class="mode-badge badge-mock">MOCK DEMONSTRATION</span>
+            <span class="lab-summary-title">Deterministic Baseline Performance (0 Credits)</span>
           </div>
-          <div class="stat-box highlight-stat">
-            <span class="stat-number" id="statDistinctionRate">—%</span>
-            <span class="stat-title">Semantic Distinction Preserved</span>
+          <div class="summary-stat-grid">
+            <div class="stat-box">
+              <span class="stat-number" id="labMockCompleted">0</span>
+              <span class="stat-title">Completed Runs</span>
+            </div>
+            <div class="stat-box highlight-stat">
+              <span class="stat-number" id="labMockDistinction">—%</span>
+              <span class="stat-title">Distinction Preserved</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-number" id="labMockTaskSuccess">—%</span>
+              <span class="stat-title">Task Success</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-number" id="labMockWer">—</span>
+              <span class="stat-title">Mean WER</span>
+            </div>
           </div>
-          <div class="stat-box">
-            <span class="stat-number" id="statTaskSuccessRate">—%</span>
-            <span class="stat-title">Downstream Task Success</span>
+        </section>
+
+        <!-- Live Gnani Evaluations Summary -->
+        <section class="card benchmark-summary-card lab-summary-live">
+          <div class="lab-summary-header">
+            <span class="mode-badge badge-live">LIVE GNANI EVALUATION</span>
+            <span class="lab-summary-title">Live Upstream Performance (Prisma STT v3)</span>
           </div>
-          <div class="stat-box">
-            <span class="stat-number" id="statAvgWer">—</span>
-            <span class="stat-title">Mean Word Error Rate (WER)</span>
+          <div class="empty-mode-state" id="labLiveEmptyState" style="padding: 1rem; margin-top: 0.5rem;">
+            <p>No completed live Gnani evaluations recorded yet. (Live calls are disabled by default to protect challenge credits)</p>
           </div>
-        </div>
-      </section>
+          <div class="summary-stat-grid" id="labLiveStatsGrid" style="display: none;">
+            <div class="stat-box">
+              <span class="stat-number" id="labLiveCompleted">0</span>
+              <span class="stat-title">Completed Runs</span>
+            </div>
+            <div class="stat-box highlight-stat">
+              <span class="stat-number" id="labLiveDistinction">—%</span>
+              <span class="stat-title">Distinction Preserved</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-number" id="labLiveTaskSuccess">—%</span>
+              <span class="stat-title">Task Success</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-number" id="labLiveWer">—</span>
+              <span class="stat-title">Mean WER</span>
+            </div>
+          </div>
+        </section>
+      </div>
 
       <!-- Main Evaluation Workspace Grid -->
       <main class="eval-grid">
@@ -906,6 +942,17 @@
           </div>
 
           <form id="transcribeForm" class="lab-form">
+            <!-- Live Transcription Safety Status Banner -->
+            {% if not live_transcription_enabled %}
+            <div class="banner banner-info" id="liveTranscribeDisabledNotice" style="margin-bottom: 1.25rem; border-left: 3px solid #38bdf8;">
+              <div class="banner-icon">🛡️</div>
+              <div class="banner-content">
+                <strong>Live Single-Audio Transcription Disabled by Safety Policy</strong>
+                <p>Outbound live requests to Gnani Prisma STT are blocked by default (<code>LIVE_TRANSCRIPTION_ENABLED=false</code>) to protect challenge credits. Mock Mode is active for offline testing. Set <code>LIVE_TRANSCRIPTION_ENABLED=true</code> in your environment to permit live upstream calls.</p>
+              </div>
+            </div>
+            {% endif %}
+
             <!-- Dropzone -->
             <div class="dropzone" id="dropzone">
               <input type="file" id="audioFileInput" name="audio_file" accept=".wav,.mp3,.ogg,.flac,.aac,.m4a" class="file-input" required>
@@ -962,7 +1009,7 @@
               </label>
 
               <label class="checkbox-label highlight-checkbox">
-                <input type="checkbox" id="mockMode" name="mock_mode" {% if not is_configured %}checked{% endif %}>
+                <input type="checkbox" id="mockMode" name="mock_mode" {% if not is_configured or not live_transcription_enabled %}checked{% endif %}>
                 <span>Mock Mode (Local testing without API key)</span>
               </label>
             </div>
@@ -1044,7 +1091,7 @@
     <footer class="app-footer">
       <div class="footer-content">
         <p>BoliBench &bull; Built for the <strong>Great Indian AI Internship Challenge by Gnani AI</strong></p>
-        <p class="footer-meta">Evaluation Framework: Paired-Contrast Semantic Engine &bull; Upstream: Gnani Prisma STT v3 REST &bull; Mode: <strong>LIVE_EVALUATION_ENABLED={{ live_evaluation_enabled }}</strong></p>
+        <p class="footer-meta">Evaluation Framework: Paired-Contrast Semantic Engine &bull; Upstream: Gnani Prisma STT v3 REST &bull; Mode: <strong>LIVE_EVALUATION_ENABLED={{ live_evaluation_enabled }}</strong> &bull; <strong>LIVE_TRANSCRIPTION_ENABLED={{ live_transcription_enabled }}</strong></p>
       </div>
     </footer>
   </div>

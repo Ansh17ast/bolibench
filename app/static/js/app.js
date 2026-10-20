@@ -129,11 +129,18 @@ document.addEventListener("DOMContentLoaded", () => {
   const mockCatEmptyBox = document.getElementById("mockCatEmptyBox");
   const mockCatTableWrapper = document.getElementById("mockCatTableWrapper");
 
-  // Paired Lab Summary Cards (Backward-compatible)
-  const statTotalRuns = document.getElementById("statTotalRuns");
-  const statDistinctionRate = document.getElementById("statDistinctionRate");
-  const statTaskSuccessRate = document.getElementById("statTaskSuccessRate");
-  const statAvgWer = document.getElementById("statAvgWer");
+  // Crash Lab Mode-Separated Summaries (Strict separation: zero unlabelled mixed-mode presentation)
+  const labMockCompleted = document.getElementById("labMockCompleted");
+  const labMockDistinction = document.getElementById("labMockDistinction");
+  const labMockTaskSuccess = document.getElementById("labMockTaskSuccess");
+  const labMockWer = document.getElementById("labMockWer");
+
+  const labLiveCompleted = document.getElementById("labLiveCompleted");
+  const labLiveDistinction = document.getElementById("labLiveDistinction");
+  const labLiveTaskSuccess = document.getElementById("labLiveTaskSuccess");
+  const labLiveWer = document.getElementById("labLiveWer");
+  const labLiveEmptyState = document.getElementById("labLiveEmptyState");
+  const labLiveStatsGrid = document.getElementById("labLiveStatsGrid");
 
   async function loadBenchmarkMetrics() {
     try {
@@ -149,16 +156,50 @@ document.addEventListener("DOMContentLoaded", () => {
       if (healthLiveAttempts) healthLiveAttempts.textContent = m.live_runs;
       if (healthMockRuns) healthMockRuns.textContent = m.mock_runs;
 
-      // Backward-compatible Lab stats
-      if (statTotalRuns) statTotalRuns.textContent = m.total_runs;
-      if (statDistinctionRate) {
-        statDistinctionRate.textContent = m.distinction_preservation_rate != null ? `${m.distinction_preservation_rate.toFixed(1)}%` : "—%";
+      // Crash Lab: Mode-Separated Performance Summaries (No mixed-mode presentation)
+      if (m.mock) {
+        if (labMockCompleted) labMockCompleted.textContent = m.mock.completed_runs;
+        if (labMockDistinction) {
+          labMockDistinction.textContent = m.mock.distinction_preservation_rate != null
+            ? `${m.mock.distinction_preservation_rate.toFixed(1)}%`
+            : "—%";
+        }
+        if (labMockTaskSuccess) {
+          labMockTaskSuccess.textContent = m.mock.task_success_rate != null
+            ? `${m.mock.task_success_rate.toFixed(1)}%`
+            : "—%";
+        }
+        if (labMockWer) {
+          labMockWer.textContent = m.mock.average_wer != null
+            ? `${(m.mock.average_wer * 100).toFixed(1)}%`
+            : "—";
+        }
       }
-      if (statTaskSuccessRate) {
-        statTaskSuccessRate.textContent = m.task_success_rate != null ? `${m.task_success_rate.toFixed(1)}%` : "—%";
-      }
-      if (statAvgWer) {
-        statAvgWer.textContent = m.average_wer != null ? `${(m.average_wer * 100).toFixed(1)}%` : "—";
+
+      if (m.live) {
+        if (m.live.completed_runs > 0) {
+          if (labLiveEmptyState) labLiveEmptyState.style.display = "none";
+          if (labLiveStatsGrid) labLiveStatsGrid.style.display = "grid";
+          if (labLiveCompleted) labLiveCompleted.textContent = m.live.completed_runs;
+          if (labLiveDistinction) {
+            labLiveDistinction.textContent = m.live.distinction_preservation_rate != null
+              ? `${m.live.distinction_preservation_rate.toFixed(1)}%`
+              : "—%";
+          }
+          if (labLiveTaskSuccess) {
+            labLiveTaskSuccess.textContent = m.live.task_success_rate != null
+              ? `${m.live.task_success_rate.toFixed(1)}%`
+              : "—%";
+          }
+          if (labLiveWer) {
+            labLiveWer.textContent = m.live.average_wer != null
+              ? `${(m.live.average_wer * 100).toFixed(1)}%`
+              : "—";
+          }
+        } else {
+          if (labLiveEmptyState) labLiveEmptyState.style.display = "block";
+          if (labLiveStatsGrid) labLiveStatsGrid.style.display = "none";
+        }
       }
 
       // 1. LIVE GNANI EVALUATION METRICS
@@ -1268,6 +1309,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
           if (response.status === 401 || errType === "AUTHENTICATION_ERROR") {
             remediation = "<strong>Remediation:</strong> Check that <code>GNANI_API_KEY</code> is correctly set in your <code>.env</code> file. Alternatively, enable <strong>Mock Mode</strong> to test locally without an API key.";
+          } else if (response.status === 403) {
+            remediation = "<strong>Remediation:</strong> Live single-audio transcription is disabled by default to protect challenge credits. Check <strong>Mock Mode</strong> for offline testing, or set <code>LIVE_TRANSCRIPTION_ENABLED=true</code> in your <code>.env</code> file.";
           } else if (response.status === 429) {
             remediation = "<strong>Remediation:</strong> Upstream rate limit reached. Please wait a few seconds before submitting another audio clip.";
           }

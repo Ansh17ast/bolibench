@@ -134,6 +134,7 @@ async def health_check():
         status="ok",
         gnani_api_configured=settings.is_api_configured,
         live_evaluation_enabled=settings.live_evaluation_enabled,
+        live_transcription_enabled=settings.live_transcription_enabled,
         app_environment=settings.app_env,
         supported_languages=[lang.value for lang in LanguageCode],
         supported_formats=[fmt.value for fmt in TranscriptFormat],
@@ -151,6 +152,7 @@ async def index_page(request: Request):
         context={
             "is_configured": settings.is_api_configured,
             "live_evaluation_enabled": settings.live_evaluation_enabled,
+            "live_transcription_enabled": settings.live_transcription_enabled,
             "languages": LANGUAGE_META,
             "max_mb": settings.max_audio_size_bytes // (1024 * 1024),
             "test_cases": load_seed_dataset(),
@@ -211,7 +213,17 @@ async def transcribe_audio(
             is_mocked=True,
         )
 
-    # 4. Execute Real Gnani Prisma Client Request
+    # 4. Enforce Live Transcription Safety Gate (Strictly blocks outbound network calls)
+    if not settings.live_transcription_enabled:
+        logger.warning("Rejected unmocked transcription: LIVE_TRANSCRIPTION_ENABLED is false")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Live transcription is disabled by default to protect programme credits. "
+                   "Set LIVE_TRANSCRIPTION_ENABLED=true in your environment to permit live provider calls, "
+                   "or enable Mock Mode to test offline.",
+        )
+
+    # 5. Execute Real Gnani Prisma Client Request
     client = GnaniPrismaClient(settings=settings)
     result = await client.transcribe(
         audio_bytes=content,

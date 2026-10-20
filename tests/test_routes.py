@@ -1,6 +1,7 @@
 """Route tests for FastAPI application endpoints."""
 
 import io
+from unittest.mock import patch
 import pytest
 
 
@@ -19,6 +20,8 @@ async def test_health_check(async_client):
     assert "en-IN" in data["supported_languages"]
     assert "verbatim" in data["supported_formats"]
     assert "transcribe" in data["supported_formats"]
+    assert data["live_transcription_enabled"] is False
+    assert data["live_evaluation_enabled"] is False
 
 
 @pytest.mark.asyncio
@@ -106,8 +109,9 @@ async def test_transcribe_empty_file(async_client):
 
 @pytest.mark.asyncio
 async def test_transcribe_missing_credentials_unmocked(async_client, valid_wav_bytes, monkeypatch):
-    """Test unmocked request without GNANI_API_KEY returns 401 with remediation instructions."""
+    """Test unmocked request without GNANI_API_KEY returns 401 with remediation instructions when live transcription is enabled."""
     monkeypatch.delenv("GNANI_API_KEY", raising=False)
+    monkeypatch.setenv("LIVE_TRANSCRIPTION_ENABLED", "true")
     from app.config import get_settings
     get_settings.cache_clear()
 
@@ -126,6 +130,53 @@ async def test_transcribe_missing_credentials_unmocked(async_client, valid_wav_b
     assert result["error_type"] == "MISSING_CREDENTIALS"
     assert "remediation" in result
     assert "GNANI_API_KEY" in result["remediation"]
+
+
+@pytest.mark.asyncio
+async def test_transcribe_live_disabled_by_default_rejects_with_403(async_client, valid_wav_bytes, monkeypatch):
+    """Proves unmocked requests to /api/transcribe are rejected with 403 Forbidden when LIVE_TRANSCRIPTION_ENABLED=false."""
+    monkeypatch.delenv("LIVE_TRANSCRIPTION_ENABLED", raising=False)
+    from app.config import get_settings
+    get_settings.cache_clear()
+
+    files = {
+        "audio_file": ("sample.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+    data = {
+        "language_code": "hi-IN",
+        "format_mode": "verbatim",
+        "mock_mode": "false",
+    }
+
+    with patch("app.services.gnani_client.GnaniPrismaClient.transcribe") as mock_transcribe:
+        response = await async_client.post("/api/transcribe", files=files, data=data)
+        assert response.status_code == 403
+        assert "disabled by default to protect programme credits" in response.json()["detail"].lower()
+        mock_transcribe.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_transcribe_live_disabled_with_mock_credentials_makes_zero_calls(async_client, valid_wav_bytes, monkeypatch):
+    """Proves live transcription safety gate blocks requests even if GNANI_API_KEY is configured in test settings."""
+    monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_12345")
+    monkeypatch.setenv("LIVE_TRANSCRIPTION_ENABLED", "false")
+    from app.config import get_settings
+    get_settings.cache_clear()
+
+    files = {
+        "audio_file": ("sample.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+    data = {
+        "language_code": "hi-IN",
+        "format_mode": "verbatim",
+        "mock_mode": "false",
+    }
+
+    with patch("app.services.gnani_client.GnaniPrismaClient.transcribe") as mock_transcribe:
+        response = await async_client.post("/api/transcribe", files=files, data=data)
+        assert response.status_code == 403
+        assert "disabled by default to protect programme credits" in response.json()["detail"].lower()
+        mock_transcribe.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -174,3 +225,17 @@ async def test_health_check_live_evaluation_disabled_by_default(async_client, mo
     assert resp.status_code == 200
     data = resp.json()
     assert data["live_evaluation_enabled"] is False
+    assert data["live_transcription_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_health_check_live_transcription_disabled_by_default(async_client, monkeypatch):
+    """Proves /health endpoint reflects that live transcription is disabled by default."""
+    monkeypatch.delenv("LIVE_TRANSCRIPTION_ENABLED", raising=False)
+    from app.config import get_settings
+    get_settings.cache_clear()
+
+    resp = await async_client.get("/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["live_transcription_enabled"] is False

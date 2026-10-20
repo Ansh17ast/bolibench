@@ -44,6 +44,7 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     gnani_api_configured: bool
     live_evaluation_enabled: bool = False
+    live_transcription_enabled: bool = False
     app_environment: str
     supported_languages: List[str]
     supported_formats: List[str]

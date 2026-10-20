@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # Live Evaluation Safety Guard (Disabled by default to protect owner credits on public deployments)
     live_evaluation_enabled: bool = False
 
+    # Live Transcription Safety Guard (Disabled by default to protect owner credits on single-audio uploads)
+    live_transcription_enabled: bool = False
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -42,7 +45,10 @@ class Settings(BaseSettings):
 
     def __repr__(self) -> str:
         """Safe string representation preventing credential leaks."""
-        return f"<Settings app_env={self.app_env} gnani_api_configured={self.is_api_configured} live_eval_enabled={self.live_evaluation_enabled}>"
+        return (
+            f"<Settings app_env={self.app_env} gnani_api_configured={self.is_api_configured} "
+            f"live_eval_enabled={self.live_evaluation_enabled} live_transcription_enabled={self.live_transcription_enabled}>"
+        )
 
 
 @lru_cache()

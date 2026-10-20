@@ -56,6 +56,19 @@ async def test_frontend_page_structure_and_branding(async_client):
     assert 'id="healthLiveAttempts"' in html
     assert "Live Evaluation Attempts" in html
 
+    # 4b. Mode-Separated Crash Lab Summaries (Zero unlabelled mixed-mode presentation)
+    assert 'id="labMockCompleted"' in html
+    assert 'id="labMockDistinction"' in html
+    assert 'id="labLiveCompleted"' in html
+    assert 'id="labLiveDistinction"' in html
+    assert 'id="labLiveEmptyState"' in html
+    assert 'id="statTotalRuns"' not in html
+    assert 'id="statDistinctionRate"' not in html
+
+    # 4c. Single-Audio Lab Safety Gate Notice
+    assert 'id="liveTranscribeDisabledNotice"' in html
+    assert "Live Single-Audio Transcription Disabled by Safety Policy" in html
+
     # 5. Audio Upload Previews and Format Notice in Paired Lab
     assert 'id="liveAudioPreviewA"' in html
     assert 'id="liveAudioPreviewB"' in html
@@ -537,6 +550,108 @@ async def test_category_breakdown_mode_separation_and_null_metrics(async_client,
         assert live_cats["negation"]["completed"] == 1
         assert live_cats["negation"]["distinction_rate"] == 100.0
         assert live_cats["negation"]["average_wer"] == 0.0
+
+    finally:
+        engine.storage = orig_storage
+
+
+@pytest.mark.asyncio
+async def test_crash_lab_mode_separated_summaries_and_no_mixed_metrics(async_client, tmp_path):
+    """Proves Crash Lab separates mock and live summaries with no unlabelled mixed metrics."""
+    test_storage = StorageManager(db_path=tmp_path / "test_lab_summaries.db")
+    orig_storage = engine.storage
+    engine.storage = test_storage
+
+    try:
+        seed_cases = load_seed_dataset()
+        pair_qty = next(p for p in seed_cases if p.category.value == "quantities_and_numbers")
+
+        # 1. Add completed mock run
+        mock_run = score_pair(
+            run_id="run_lab_mock_1",
+            test_case=pair_qty,
+            transcript_a="Do packet chahiye",
+            transcript_b="Teen packet chahiye",
+            execution_mode="mock",
+        )
+        test_storage.save_run(mock_run)
+
+        # 2. Add failed live run (e.g. timeout)
+        failed_live = PairEvaluationResult(
+            run_id="run_lab_live_fail",
+            test_case_id=pair_qty.id,
+            category=pair_qty.category.value,
+            language_code=pair_qty.language_code,
+            execution_mode=ExecutionMode.LIVE,
+            audio_condition="clean_recorded",
+            timestamp="2026-10-20T05:00:00Z",
+            overall_status="failed",
+            utterance_a=UtteranceEvaluationResult(
+                utterance_id="A",
+                reference_transcript=pair_qty.utterance_a.reference_transcript,
+                actual_transcript="",
+                wer=1.0,
+                substitutions=0,
+                deletions=3,
+                insertions=0,
+                reference_length=3,
+                critical_fields_match=False,
+                detected_intent="UNKNOWN",
+                intent_match=False,
+                task_success=False,
+                status="failed",
+                error_message="Gateway Timeout 504",
+            ),
+            utterance_b=UtteranceEvaluationResult(
+                utterance_id="B",
+                reference_transcript=pair_qty.utterance_b.reference_transcript,
+                actual_transcript="",
+                wer=1.0,
+                substitutions=0,
+                deletions=3,
+                insertions=0,
+                reference_length=3,
+                critical_fields_match=False,
+                detected_intent="UNKNOWN",
+                intent_match=False,
+                task_success=False,
+                status="skipped",
+            ),
+            wer_a=1.0,
+            wer_b=1.0,
+            average_wer=1.0,
+            critical_field_accuracy=0.0,
+            semantic_distinction_preserved=False,
+            task_success=False,
+            primary_failure_category=FailureCategory.PROVIDER_ERROR,
+            failure_explanation="Timeout on Utterance A",
+        )
+        test_storage.save_run(failed_live)
+
+        resp = await async_client.get("/api/eval/metrics")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        # Mock: 1 completed run, 100% distinction
+        assert data["mock"]["completed_runs"] == 1
+        assert data["mock"]["distinction_preservation_rate"] == 100.0
+        assert data["mock"]["average_wer"] == 0.0
+
+        # Live: 1 attempt, 0 completed, 1 failed
+        assert data["live"]["total_attempts"] == 1
+        assert data["live"]["completed_runs"] == 0
+        assert data["live"]["failed_runs"] == 1
+        # Crucial: Live performance metrics MUST be None (empty state), NOT contaminated by mock or failed run
+        assert data["live"]["distinction_preservation_rate"] is None
+        assert data["live"]["average_wer"] is None
+
+        # Confirm HTML page does not contain legacy combined stat IDs
+        resp_html = await async_client.get("/")
+        assert resp_html.status_code == 200
+        assert 'id="statTotalRuns"' not in resp_html.text
+        assert 'id="statDistinctionRate"' not in resp_html.text
+        assert 'id="labMockCompleted"' in resp_html.text
+        assert 'id="labLiveCompleted"' in resp_html.text
 
     finally:
         engine.storage = orig_storage
