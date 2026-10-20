@@ -810,7 +810,7 @@ document.addEventListener("DOMContentLoaded", () => {
         <td><span class="spec-badge badge-a">Utterance A</span></td>
         <td><code>${escapeHtml(res.utterance_a.reference_transcript)}</code></td>
         <td><strong>${escapeHtml(res.utterance_a.actual_transcript || '—')}</strong></td>
-        <td>${res.utterance_a.status === 'completed' ? `${(res.utterance_a.wer * 100).toFixed(1)}% (S:${res.utterance_a.substitutions}/D:${res.utterance_a.deletions}/I:${res.utterance_a.insertions})` : `<span class="val-unavailable">${res.utterance_a.status}</span>`}</td>
+        <td>${res.utterance_a.status === 'completed' ? `${(res.utterance_a.wer * 100).toFixed(1)}% (Raw: S:${res.utterance_a.substitutions}/D:${res.utterance_a.deletions}/I:${res.utterance_a.insertions})${res.utterance_a.normalized_wer != null ? `<br><small style="color: #60a5fa; font-weight: 500;">Normalized WER: ${(res.utterance_a.normalized_wer * 100).toFixed(1)}%</small>` : ''}` : `<span class="val-unavailable">${res.utterance_a.status}</span>`}</td>
         <td><code>${escapeHtml(JSON.stringify(res.utterance_a.extracted_fields))}</code></td>
         <td>${res.utterance_a.status === 'completed' ? (res.utterance_a.task_success ? '🟢 Correct' : '🔴 Wrong Action') : `<span class="val-unavailable">${res.utterance_a.status}</span>`}</td>
       </tr>
@@ -818,7 +818,7 @@ document.addEventListener("DOMContentLoaded", () => {
         <td><span class="spec-badge badge-b">Utterance B</span></td>
         <td><code>${escapeHtml(res.utterance_b.reference_transcript)}</code></td>
         <td><strong>${escapeHtml(res.utterance_b.actual_transcript || '—')}</strong></td>
-        <td>${res.utterance_b.status === 'completed' ? `${(res.utterance_b.wer * 100).toFixed(1)}% (S:${res.utterance_b.substitutions}/D:${res.utterance_b.deletions}/I:${res.utterance_b.insertions})` : `<span class="val-unavailable">${res.utterance_b.status}</span>`}</td>
+        <td>${res.utterance_b.status === 'completed' ? `${(res.utterance_b.wer * 100).toFixed(1)}% (Raw: S:${res.utterance_b.substitutions}/D:${res.utterance_b.deletions}/I:${res.utterance_b.insertions})${res.utterance_b.normalized_wer != null ? `<br><small style="color: #60a5fa; font-weight: 500;">Normalized WER: ${(res.utterance_b.normalized_wer * 100).toFixed(1)}%</small>` : ''}` : `<span class="val-unavailable">${res.utterance_b.status}</span>`}</td>
         <td><code>${escapeHtml(JSON.stringify(res.utterance_b.extracted_fields))}</code></td>
         <td>${res.utterance_b.status === 'completed' ? (res.utterance_b.task_success ? '🟢 Correct' : '🔴 Wrong Action') : `<span class="val-unavailable">${res.utterance_b.status}</span>`}</td>
       </tr>
@@ -841,7 +841,8 @@ document.addEventListener("DOMContentLoaded", () => {
       <span class="code-pill">Category: ${res.category}</span>
       <span class="code-pill">Audio Condition: ${res.audio_condition}</span>
       <span class="code-pill">Status: ${res.overall_status.toUpperCase()}</span>
-      ${res.overall_status === 'completed' ? `<span class="code-pill">Mean WER: ${(res.average_wer * 100).toFixed(1)}%</span>` : ''}
+      ${res.overall_status === 'completed' ? `<span class="code-pill">Mean Raw WER: ${(res.average_wer * 100).toFixed(1)}%</span>` : ''}
+      ${res.average_normalized_wer != null ? `<span class="code-pill" style="color: #60a5fa;">Cross-Script WER: ${(res.average_normalized_wer * 100).toFixed(1)}%</span>` : ''}
     `;
 
     // Latency & Telemetry Separation

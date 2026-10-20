@@ -47,6 +47,9 @@ class StorageManager:
                     wer_a REAL NOT NULL,
                     wer_b REAL NOT NULL,
                     average_wer REAL NOT NULL,
+                    normalized_wer_a REAL,
+                    normalized_wer_b REAL,
+                    average_normalized_wer REAL,
                     critical_field_accuracy REAL NOT NULL,
                     distinction_preserved INTEGER NOT NULL,
                     task_success INTEGER NOT NULL,
@@ -84,6 +87,20 @@ class StorageManager:
             except sqlite3.OperationalError:
                 pass
 
+            # Backward-compatible schema migration for cross-script-normalized WER metrics
+            try:
+                cursor.execute("ALTER TABLE evaluation_runs ADD COLUMN normalized_wer_a REAL")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                cursor.execute("ALTER TABLE evaluation_runs ADD COLUMN normalized_wer_b REAL")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                cursor.execute("ALTER TABLE evaluation_runs ADD COLUMN average_normalized_wer REAL")
+            except sqlite3.OperationalError:
+                pass
+
             cursor.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_eval_runs_overall_status
@@ -117,11 +134,12 @@ class StorageManager:
                 """
                 INSERT OR REPLACE INTO evaluation_runs (
                     run_id, test_case_id, category, language_code, execution_mode,
-                    audio_condition, overall_status, wer_a, wer_b, average_wer, critical_field_accuracy,
-                    distinction_preserved, task_success, primary_failure_category,
-                    failure_explanation, client_latency_ms, provider_latency_ms,
-                    simulated_latency_ms, created_at, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    audio_condition, overall_status, wer_a, wer_b, average_wer,
+                    normalized_wer_a, normalized_wer_b, average_normalized_wer,
+                    critical_field_accuracy, distinction_preserved, task_success,
+                    primary_failure_category, failure_explanation, client_latency_ms,
+                    provider_latency_ms, simulated_latency_ms, created_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     result.run_id,
@@ -134,6 +152,9 @@ class StorageManager:
                     result.wer_a,
                     result.wer_b,
                     result.average_wer,
+                    result.normalized_wer_a,
+                    result.normalized_wer_b,
+                    result.average_normalized_wer,
                     result.critical_field_accuracy,
                     1 if result.semantic_distinction_preserved else 0,
                     1 if result.task_success else 0,
@@ -210,6 +231,7 @@ class StorageManager:
                     AVG(CASE WHEN overall_status = 'completed' THEN distinction_preserved ELSE NULL END) as avg_distinction_preserved,
                     AVG(CASE WHEN overall_status = 'completed' THEN task_success ELSE NULL END) as avg_task_success,
                     AVG(CASE WHEN overall_status = 'completed' THEN average_wer ELSE NULL END) as avg_wer,
+                    AVG(CASE WHEN overall_status = 'completed' THEN average_normalized_wer ELSE NULL END) as avg_norm_wer,
                     AVG(CASE WHEN overall_status = 'completed' THEN critical_field_accuracy ELSE NULL END) as avg_field_acc
                 FROM evaluation_runs
                 """
@@ -229,6 +251,7 @@ class StorageManager:
             dist_rate = round(float(summary["avg_distinction_preserved"]) * 100.0, 2) if summary["avg_distinction_preserved"] is not None else None
             task_rate = round(float(summary["avg_task_success"]) * 100.0, 2) if summary["avg_task_success"] is not None else None
             avg_wer = round(float(summary["avg_wer"]), 4) if summary["avg_wer"] is not None else None
+            avg_norm_wer = round(float(summary["avg_norm_wer"]), 4) if summary["avg_norm_wer"] is not None else None
             avg_acc = round(float(summary["avg_field_acc"]) * 100.0, 2) if summary["avg_field_acc"] is not None else None
 
             # Mode-specific performance metrics (completed runs only)
@@ -243,6 +266,7 @@ class StorageManager:
                     AVG(CASE WHEN overall_status = 'completed' THEN distinction_preserved ELSE NULL END) as avg_distinction_preserved,
                     AVG(CASE WHEN overall_status = 'completed' THEN task_success ELSE NULL END) as avg_task_success,
                     AVG(CASE WHEN overall_status = 'completed' THEN average_wer ELSE NULL END) as avg_wer,
+                    AVG(CASE WHEN overall_status = 'completed' THEN average_normalized_wer ELSE NULL END) as avg_norm_wer,
                     AVG(CASE WHEN overall_status = 'completed' THEN critical_field_accuracy ELSE NULL END) as avg_field_acc
                 FROM evaluation_runs
                 GROUP BY execution_mode
@@ -292,6 +316,7 @@ class StorageManager:
                 d_rate = round(float(data["avg_distinction_preserved"]) * 100.0, 2) if data.get("avg_distinction_preserved") is not None else None
                 t_rate = round(float(data["avg_task_success"]) * 100.0, 2) if data.get("avg_task_success") is not None else None
                 a_wer = round(float(data["avg_wer"]), 4) if data.get("avg_wer") is not None else None
+                a_norm_wer = round(float(data["avg_norm_wer"]), 4) if data.get("avg_norm_wer") is not None else None
                 a_acc = round(float(data["avg_field_acc"]) * 100.0, 2) if data.get("avg_field_acc") is not None else None
                 return ModePerformanceMetrics(
                     total_attempts=t_att,
@@ -301,6 +326,7 @@ class StorageManager:
                     distinction_preservation_rate=d_rate,
                     task_success_rate=t_rate,
                     average_wer=a_wer,
+                    average_normalized_wer=a_norm_wer,
                     average_critical_field_accuracy=a_acc,
                     category_breakdown=mode_cat_stats.get(mode_key, {}),
                 )
@@ -358,6 +384,7 @@ class StorageManager:
                 distinction_preservation_rate=dist_rate,
                 task_success_rate=task_rate,
                 average_wer=avg_wer,
+                average_normalized_wer=avg_norm_wer,
                 average_critical_field_accuracy=avg_acc,
                 category_breakdown=cat_breakdown,
                 failure_category_breakdown=failure_breakdown,
@@ -375,6 +402,7 @@ class StorageManager:
         fieldnames = [
             "run_id", "test_case_id", "category", "language_code", "execution_mode",
             "audio_condition", "overall_status", "timestamp", "wer_a", "wer_b", "average_wer",
+            "normalized_wer_a", "normalized_wer_b", "average_normalized_wer",
             "critical_field_accuracy", "distinction_preserved", "task_success",
             "primary_failure_category", "failure_explanation",
             "client_request_elapsed_ms", "client_measured_latency_ms", "provider_processing_time_ms", "simulated_latency_ms",
@@ -396,6 +424,9 @@ class StorageManager:
                 "wer_a": r.wer_a,
                 "wer_b": r.wer_b,
                 "average_wer": r.average_wer,
+                "normalized_wer_a": r.normalized_wer_a,
+                "normalized_wer_b": r.normalized_wer_b,
+                "average_normalized_wer": r.average_normalized_wer,
                 "critical_field_accuracy": r.critical_field_accuracy,
                 "distinction_preserved": r.semantic_distinction_preserved,
                 "task_success": r.task_success,

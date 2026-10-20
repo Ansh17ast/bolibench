@@ -15,7 +15,9 @@ import pytest
 
 from app.evaluation.dataset import load_seed_dataset
 from app.evaluation.metrics import (
+    calculate_cross_script_normalized_wer,
     calculate_wer,
+    canonicalize_cross_script_text,
     classify_failure,
     extract_all_critical_fields,
     extract_command_intent,
@@ -197,11 +199,22 @@ def test_extract_entities_and_products():
 
 
 def test_extract_command_intent():
-    """Classifies high-risk banking and command intents."""
+    """Classifies high-risk banking and command intents in Romanized Hindi and Devanagari."""
     assert extract_command_intent("Mera account balance check karo") == "CHECK_BALANCE"
     assert extract_command_intent("Mera account band kar do") == "CLOSE_ACCOUNT"
     assert extract_command_intent("Pay five hundred rupees") == "TRANSFER_FUNDS"
     assert extract_command_intent("Request five hundred rupees") == "REQUEST_FUNDS"
+    # Devanagari Hindi regression cases
+    assert extract_command_intent("2 पैकेट चाहिए") == "ORDER_PRODUCT"
+    assert extract_command_intent("3 पैकेट चाहिए") == "ORDER_PRODUCT"
+    # Romanized Hindi cases
+    assert extract_command_intent("Do packet chahiye") == "ORDER_PRODUCT"
+    assert extract_command_intent("Teen packet chahiye") == "ORDER_PRODUCT"
+    # Negation and cancellation distinctions preserved
+    assert extract_command_intent("cancel mat karo") == "KEEP_BOOKING"
+    assert extract_command_intent("booking cancel kar do") == "CANCEL_BOOKING"
+    assert extract_command_intent("cart khali kar do") == "EMPTY_CART"
+    assert extract_command_intent("order confirm karo") == "CONFIRM_ORDER"
 
 
 # -----------------------------------------------------------------------------
@@ -1021,3 +1034,165 @@ def test_mock_and_live_metric_separation_and_empty_nulls(tmp_path: Path):
     assert m3.live.task_success_rate == 0.0
     assert m3.live.average_wer == round(live_comp.average_wer, 4)
     assert m3.live.average_critical_field_accuracy == 50.0
+
+
+def test_cross_script_normalization_preserves_semantic_distinctions():
+    """Validates cross-script canonicalization and supplementary normalized WER.
+
+    Guarantees:
+    - Never collapses different numbers (quantity 2 and quantity 3 remain distinct tokens).
+    - Preserves semantic contrasts such as negation ('nahi' vs 'haan').
+    - Successfully resolves script representations across Latin/Devanagari numerals and vocabulary.
+    - Preserves raw WER as standard metric while providing normalized WER.
+    """
+    # 1. Distinct quantity tokens preserved across representations
+    canon_do = canonicalize_cross_script_text("Do")
+    canon_do_dev = canonicalize_cross_script_text("दो")
+    canon_2 = canonicalize_cross_script_text("2")
+    canon_teen = canonicalize_cross_script_text("Teen")
+    canon_teen_dev = canonicalize_cross_script_text("तीन")
+    canon_3 = canonicalize_cross_script_text("3")
+
+    assert canon_do == "2"
+    assert canon_do_dev == "2"
+    assert canon_2 == "2"
+    assert canon_teen == "3"
+    assert canon_teen_dev == "3"
+    assert canon_3 == "3"
+    # Quantity 2 and 3 must NEVER collapse to the same token
+    assert canon_do != canon_teen
+    assert canon_2 != canon_3
+
+    # 2. Vocabulary equivalences
+    assert canonicalize_cross_script_text("packet") == "packet"
+    assert canonicalize_cross_script_text("पैकेट") == "packet"
+    assert canonicalize_cross_script_text("chahiye") == "chahiye"
+    assert canonicalize_cross_script_text("चाहिए") == "chahiye"
+    assert canonicalize_cross_script_text("चाहिये") == "chahiye"
+
+    # 3. Negation contrasts preserved
+    assert canonicalize_cross_script_text("nahi") == "nahi"
+    assert canonicalize_cross_script_text("नहीं") == "nahi"
+    assert canonicalize_cross_script_text("haan") == "haan"
+    assert canonicalize_cross_script_text("हाँ") == "haan"
+    assert canonicalize_cross_script_text("nahi") != canonicalize_cross_script_text("haan")
+
+    # 4. Raw WER vs Cross-Script Normalized WER on the live pair
+    ref_a = "Do packet chahiye"
+    hyp_a = "2 पैकेट चाहिए"
+    raw_wer_a, s_a, d_a, i_a, r_len_a = calculate_wer(ref_a, hyp_a)
+    norm_wer_a, ns_a, nd_a, ni_a, nr_len_a = calculate_cross_script_normalized_wer(ref_a, hyp_a)
+
+    assert raw_wer_a == 1.0  # Script mismatch preserves raw WER = 1.0
+    assert s_a == 3
+    assert norm_wer_a == 0.0  # Cross-script normalized WER resolves to 0.0
+    assert ns_a == 0 and nd_a == 0 and ni_a == 0
+
+    ref_b = "Teen packet chahiye"
+    hyp_b = "3 पैकेट चाहिए"
+    raw_wer_b, s_b, d_b, i_b, r_len_b = calculate_wer(ref_b, hyp_b)
+    norm_wer_b, ns_b, nd_b, ni_b, nr_len_b = calculate_cross_script_normalized_wer(ref_b, hyp_b)
+
+    assert raw_wer_b == 1.0
+    assert s_b == 3
+    assert norm_wer_b == 0.0
+    assert ns_b == 0 and nd_b == 0 and ni_b == 0
+
+
+def test_score_pair_with_live_transcripts_offline_rescore():
+    """Offline rescoring test using the exact provider transcripts from eval_live_758277ca81d8.
+
+    Proves:
+    - Utterance A (2 पैकेट चाहिए) intent is recognized as ORDER_PRODUCT.
+    - Utterance B (3 पैकेट चाहिए) intent is recognized as ORDER_PRODUCT.
+    - Both critical quantities (2 and 3) match and the paired distinction is preserved.
+    - Raw WER remains 1.0 (substitutions: 3), preserving historical integrity.
+    - Supplementary cross-script-normalized WER is 0.0.
+    - Deterministic scorer marks task_success as True with failure category NONE.
+    """
+    seed_cases = load_seed_dataset()
+    pair_qty = next(tc for tc in seed_cases if tc.id == "pair_qty_001")
+
+    # Exact transcripts returned by provider HTTP 200 responses in eval_live_758277ca81d8
+    transcript_a = "2 पैकेट चाहिए"
+    transcript_b = "3 पैकेट चाहिए"
+
+    res = score_pair(
+        run_id="eval_rescore_offline_758277ca81d8",
+        test_case=pair_qty,
+        transcript_a=transcript_a,
+        transcript_b=transcript_b,
+        execution_mode="live",
+        audio_condition="clean_recorded",
+        client_request_elapsed_ms=2027.77,
+        latency_a_ms=1157.92,
+        latency_b_ms=869.85,
+        request_id_a="01a15b46-a360-7cff-9e6d-8fcb69c7da6b",
+        request_id_b="01a15b46-a6b5-78bf-baf9-10d531921fe0",
+    )
+
+    # 1. Critical quantity extraction & distinction
+    assert res.utterance_a.extracted_fields.get("quantity") == 2
+    assert res.utterance_b.extracted_fields.get("quantity") == 3
+    assert res.semantic_distinction_preserved is True
+    assert res.critical_field_accuracy == 1.0
+
+    # 2. Devanagari Hindi intent recognition
+    assert res.utterance_a.detected_intent == "ORDER_PRODUCT"
+    assert res.utterance_a.intent_match is True
+    assert res.utterance_b.detected_intent == "ORDER_PRODUCT"
+    assert res.utterance_b.intent_match is True
+
+    # 3. Downstream task success
+    assert res.utterance_a.task_success is True
+    assert res.utterance_b.task_success is True
+    assert res.task_success is True
+    assert res.primary_failure_category == FailureCategory.NONE
+
+    # 4. Metric transparency: Raw WER remains 1.0; Normalized WER is 0.0
+    assert res.wer_a == 1.0
+    assert res.wer_b == 1.0
+    assert res.average_wer == 1.0
+    assert res.normalized_wer_a == 0.0
+    assert res.normalized_wer_b == 0.0
+    assert res.average_normalized_wer == 0.0
+
+    # 5. Provider request IDs and latencies preserved
+    assert res.utterance_a.request_id == "01a15b46-a360-7cff-9e6d-8fcb69c7da6b"
+    assert res.utterance_b.request_id == "01a15b46-a6b5-78bf-baf9-10d531921fe0"
+    assert res.client_measured_latency_ms == 2027.77
+
+
+def test_storage_persists_and_exports_cross_script_wer(tmp_path: Path):
+    """StorageManager persists normalized WER fields, aggregates them, and includes them in exports."""
+    db_file = tmp_path / "test_cross_script.db"
+    storage = StorageManager(db_file)
+
+    seed_cases = load_seed_dataset()
+    pair_qty = next(tc for tc in seed_cases if tc.id == "pair_qty_001")
+
+    res = score_pair(
+        run_id="run_storage_norm_test",
+        test_case=pair_qty,
+        transcript_a="2 पैकेट चाहिए",
+        transcript_b="3 पैकेट चाहिए",
+        execution_mode="mock",
+    )
+    storage.save_run(res)
+
+    loaded = storage.get_run("run_storage_norm_test")
+    assert loaded is not None
+    assert loaded.wer_a == 1.0
+    assert loaded.normalized_wer_a == 0.0
+    assert loaded.normalized_wer_b == 0.0
+    assert loaded.average_normalized_wer == 0.0
+
+    metrics = storage.get_aggregate_metrics()
+    assert metrics.average_wer == 1.0
+    assert metrics.average_normalized_wer == 0.0
+    assert metrics.mock.average_normalized_wer == 0.0
+
+    csv_out = storage.export_csv()
+    assert "normalized_wer_a" in csv_out
+    assert "average_normalized_wer" in csv_out
+    assert "run_storage_norm_test" in csv_out

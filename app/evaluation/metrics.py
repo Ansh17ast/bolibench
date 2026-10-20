@@ -53,34 +53,105 @@ def normalize_text(text: Optional[str], language_code: str = "hi-IN") -> str:
 # -----------------------------------------------------------------------------
 # 2. Word Error Rate (WER) Calculation
 # -----------------------------------------------------------------------------
+# 2. Word Error Rate (WER) & Cross-Script Normalized WER Calculations
+# -----------------------------------------------------------------------------
 
-def calculate_wer(
-    reference: str,
-    hypothesis: str,
-    language_code: str = "hi-IN",
-) -> Tuple[float, int, int, int, int]:
-    """Calculates Word Error Rate using standard dynamic programming Levenshtein distance on words.
+# Vocabulary equivalence mapping across Devanagari, Romanized Hindi, and numerals
+CROSS_SCRIPT_MAP: Dict[str, str] = {
+    # Quantities & Numbers: Map to canonical digit strings (never conflating different numbers)
+    "ek": "1", "एक": "1", "1": "1", "१": "1", "one": "1",
+    "do": "2", "दो": "2", "2": "2", "२": "2", "two": "2",
+    "teen": "3", "tin": "3", "तीन": "3", "3": "3", "३": "3", "three": "3",
+    "char": "4", "chaar": "4", "चार": "4", "4": "4", "४": "4", "four": "4",
+    "paanch": "5", "panch": "5", "पाँच": "5", "पांच": "5", "5": "5", "५": "5", "five": "5",
+    "chhah": "6", "che": "6", "chhe": "6", "छह": "6", "6": "6", "६": "6", "six": "6",
+    "saat": "7", "सात": "7", "7": "7", "७": "7", "seven": "7",
+    "aath": "8", "ath": "8", "आठ": "8", "8": "8", "८": "8", "eight": "8",
+    "nau": "9", "नौ": "9", "9": "9", "९": "9", "nine": "9",
+    "das": "10", "दस": "10", "10": "10", "१०": "10", "ten": "10",
+    "gyarah": "11", "ग्यारह": "11", "11": "11",
+    "barah": "12", "बारह": "12", "12": "12",
+    "terah": "13", "तेरह": "13", "13": "13",
+    "chaudah": "14", "चौदह": "14", "14": "14",
+    "pandrah": "15", "पंद्रह": "15", "15": "15",
+    "solah": "16", "सोलह": "16", "16": "16",
+    "satrah": "17", "सत्रह": "17", "17": "17",
+    "atharah": "18", "अठारह": "18", "18": "18",
+    "unnis": "19", "उन्नीस": "19", "19": "19",
+    "bees": "20", "बीस": "20", "20": "20",
+    "pachees": "25", "पच्चीस": "25", "25": "25",
+    "tees": "30", "तीस": "30", "30": "30",
+    "chaalis": "40", "चालीस": "40", "40": "40",
+    "pachaas": "50", "pachas": "50", "पचास": "50", "50": "50",
+    "saath": "60", "साठ": "60", "60": "60",
+    "sattar": "70", "सत्तर": "70", "70": "70",
+    "assi": "80", "अस्सी": "80", "80": "80",
+    "nabbe": "90", "नब्बे": "90", "90": "90",
+    "sau": "100", "सौ": "100", "100": "100",
+    "hazaar": "1000", "hazar": "1000", "हज़ार": "1000", "हजार": "1000", "1000": "1000",
+    "lakh": "100000", "lac": "100000", "लाख": "100000", "100000": "100000",
+    "crore": "10000000", "करोड़": "10000000", "10000000": "10000000",
 
-    Returns:
-        Tuple of (wer, substitutions, deletions, insertions, reference_word_count)
+    # Common vocabulary in seed evaluations
+    "packet": "packet", "packets": "packet", "पैकेट": "packet", "पेकेट": "packet",
+    "chahiye": "chahiye", "चाहिए": "chahiye", "चाहिये": "chahiye",
+    "rupaye": "rupaye", "rupees": "rupaye", "रुपये": "rupaye", "रुपए": "rupaye", "rs": "rupaye",
+    "bhejo": "bhejo", "भेजो": "bhejo",
+    "transfer": "transfer", "ट्रांसफर": "transfer",
+    "nahi": "nahi", "nahin": "nahi", "नहीं": "nahi", "ना": "nahi",
+    "mat": "mat", "मत": "mat",
+    "haan": "haan", "हाँ": "haan", "हां": "haan",
+    "cancel": "cancel", "कैंसिल": "cancel", "रद्द": "cancel",
+    "booking": "booking", "बुकिंग": "booking",
+    "balance": "balance", "बैलेंस": "balance",
+    "account": "account", "अकाउंट": "account", "खाता": "account",
+    "band": "band", "बंद": "band",
+    "cart": "cart", "कार्ट": "cart",
+    "khali": "khali", "खाली": "khali",
+    "confirm": "confirm", "कन्फर्म": "confirm", "पुष्टि": "confirm",
+    "order": "order", "ऑर्डर": "order",
+    "plate": "plate", "प्लेट": "plate",
+    "biryani": "biryani", "बिरयानी": "biryani",
+    "pizza": "pizza", "पिज़्ज़ा": "pizza", "पिज्जा": "pizza",
+    "mumbai": "mumbai", "मुंबई": "mumbai",
+    "delhi": "delhi", "दिल्ली": "delhi",
+    "flight": "flight", "फ्लाइट": "flight",
+}
+
+
+def canonicalize_cross_script_text(text: Optional[str], language_code: str = "hi-IN") -> str:
+    """Normalizes script and numeric representations across Hindi and Romanized Hindi.
+
+    Guarantees:
+    - Never collapses different numbers (e.g. '2' and '3' remain distinct tokens).
+    - Preserves semantic contrasts such as negation ('nahi' vs 'haan') and verbs.
+    - Resolves cross-script equivalents such as 'Do' / 'दो' / '2' and 'packet' / 'पैकेट'.
     """
-    norm_ref = normalize_text(reference, language_code)
-    norm_hyp = normalize_text(hypothesis, language_code)
+    if not text:
+        return ""
 
+    norm = normalize_text(text, language_code)
+    words = norm.split()
+    canonical_tokens = [CROSS_SCRIPT_MAP.get(w, w) for w in words]
+    return " ".join(canonical_tokens)
+
+
+def _levenshtein_distance_words(
+    norm_ref: str,
+    norm_hyp: str,
+) -> Tuple[float, int, int, int, int]:
+    """Internal dynamic programming Levenshtein distance calculator over word tokens."""
     ref_words = norm_ref.split() if norm_ref else []
     hyp_words = norm_hyp.split() if norm_hyp else []
 
     r_len = len(ref_words)
     h_len = len(hyp_words)
 
-    # Edge cases
     if r_len == 0 and h_len == 0:
         return 0.0, 0, 0, 0, 0
     if r_len == 0:
-        # All words in hypothesis are insertions
         return 1.0, 0, 0, h_len, 0
     if h_len == 0:
-        # All words in reference are deleted
         return 1.0, 0, r_len, 0, r_len
 
     # Distance matrix (r_len + 1) x (h_len + 1)
@@ -121,12 +192,46 @@ def calculate_wer(
             insertions += 1
             j -= 1
         else:
-            # Fallback diagonal step
             i = max(0, i - 1)
             j = max(0, j - 1)
 
     wer = round(float(substitutions + deletions + insertions) / float(r_len), 4)
     return wer, substitutions, deletions, insertions, r_len
+
+
+def calculate_wer(
+    reference: str,
+    hypothesis: str,
+    language_code: str = "hi-IN",
+) -> Tuple[float, int, int, int, int]:
+    """Calculates standard raw Word Error Rate using Levenshtein distance on words.
+
+    Preserves exact script and character distinctions without cross-script transliteration.
+
+    Returns:
+        Tuple of (wer, substitutions, deletions, insertions, reference_word_count)
+    """
+    norm_ref = normalize_text(reference, language_code)
+    norm_hyp = normalize_text(hypothesis, language_code)
+    return _levenshtein_distance_words(norm_ref, norm_hyp)
+
+
+def calculate_cross_script_normalized_wer(
+    reference: str,
+    hypothesis: str,
+    language_code: str = "hi-IN",
+) -> Tuple[float, int, int, int, int]:
+    """Calculates supplementary cross-script-normalized Word Error Rate (WER).
+
+    Resolves Hindi / Romanized-Hindi and numeral representations to canonical tokens
+    while strictly preserving semantic distinctions (e.g. distinct numbers, negation).
+
+    Returns:
+        Tuple of (normalized_wer, substitutions, deletions, insertions, reference_word_count)
+    """
+    canon_ref = canonicalize_cross_script_text(reference, language_code)
+    canon_hyp = canonicalize_cross_script_text(hypothesis, language_code)
+    return _levenshtein_distance_words(canon_ref, canon_hyp)
 
 
 # -----------------------------------------------------------------------------
@@ -343,27 +448,30 @@ def extract_entities(text: str) -> Dict[str, Any]:
 
 
 def extract_command_intent(text: str) -> str:
-    """Classifies spoken utterance command intent."""
+    """Classifies spoken utterance command intent supporting Latin, Romanized Hindi, and Devanagari."""
     norm = normalize_text(text)
     words = norm.split()
 
-    if "balance" in norm:
+    # Negation tokens for intent checks
+    negation_set = {"mat", "nahi", "nahin", "no", "not", "मत", "नहीं", "ना"}
+
+    if "balance" in norm or "बैलेंस" in norm:
         return "CHECK_BALANCE"
-    if "band" in norm or "close" in norm or "terminate" in norm:
+    if "band" in norm or "बंद" in norm or "close" in norm or "terminate" in norm:
         return "CLOSE_ACCOUNT"
-    if "cancel" in norm and any(n in words for n in ["mat", "nahi", "no", "not"]):
+    if ("cancel" in norm or "कैंसिल" in norm or "रद्द" in norm) and any(n in words for n in negation_set):
         return "KEEP_BOOKING"
-    if "cancel" in norm:
+    if "cancel" in norm or "कैंसिल" in norm or "रद्द" in norm:
         return "CANCEL_BOOKING"
-    if "empty" in norm or "khali" in norm:
+    if "empty" in norm or "khali" in norm or "खाली" in norm:
         return "EMPTY_CART"
-    if "confirm" in norm or "checkout" in norm:
+    if "confirm" in norm or "checkout" in norm or "कन्फर्म" in norm or "पुष्टि" in norm:
         return "CONFIRM_ORDER"
-    if "pay" in norm or "bhejo" in norm or "transfer" in norm:
+    if "pay" in norm or "bhejo" in norm or "भेजो" in norm or "transfer" in norm or "ट्रांसफर" in norm:
         return "TRANSFER_FUNDS"
-    if "request" in norm or "maang" in norm:
+    if "request" in norm or "maang" in norm or "मांग" in norm or "माँग" in norm:
         return "REQUEST_FUNDS"
-    if "order" in norm or "chahiye" in norm or "plate" in norm:
+    if "order" in norm or "ऑर्डर" in norm or "chahiye" in norm or "चाहिए" in norm or "चाहिये" in norm or "plate" in norm or "प्लेट" in norm:
         return "ORDER_PRODUCT"
 
     return "UNKNOWN_INTENT"
@@ -413,6 +521,11 @@ def evaluate_utterance(
 ) -> UtteranceEvaluationResult:
     """Evaluates a single utterance transcript against its ground truth specification."""
     wer, s, d, i, r_len = calculate_wer(
+        reference=utterance_spec.reference_transcript,
+        hypothesis=actual_transcript,
+        language_code=language_code,
+    )
+    norm_wer, _, _, _, _ = calculate_cross_script_normalized_wer(
         reference=utterance_spec.reference_transcript,
         hypothesis=actual_transcript,
         language_code=language_code,
@@ -467,6 +580,7 @@ def evaluate_utterance(
         provider_processing_time_ms=provider_processing_time_ms,
         simulated_latency_ms=simulated_latency_ms,
         request_id=request_id,
+        normalized_wer=norm_wer,
     )
 
 
@@ -663,6 +777,9 @@ def score_pair(
     )
 
     avg_wer = round((res_a.wer + res_b.wer) / 2.0, 4)
+    avg_norm_wer = None
+    if res_a.normalized_wer is not None and res_b.normalized_wer is not None:
+        avg_norm_wer = round((res_a.normalized_wer + res_b.normalized_wer) / 2.0, 4)
 
     return PairEvaluationResult(
         run_id=run_id,
@@ -677,6 +794,9 @@ def score_pair(
         wer_a=res_a.wer,
         wer_b=res_b.wer,
         average_wer=avg_wer,
+        normalized_wer_a=res_a.normalized_wer,
+        normalized_wer_b=res_b.normalized_wer,
+        average_normalized_wer=avg_norm_wer,
         critical_field_accuracy=critical_field_accuracy,
         semantic_distinction_preserved=distinction_preserved,
         task_success=task_success,

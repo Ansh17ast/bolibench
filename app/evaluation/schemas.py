@@ -111,6 +111,7 @@ class UtteranceEvaluationResult(BaseModel):
     provider_processing_time_ms: Optional[float] = Field(None, description="Provider-reported backend processing latency (ms); null when not reported by provider")
     simulated_latency_ms: Optional[float] = Field(None, description="Simulated latency (ms) for demonstration; null if not simulated")
     request_id: Optional[str] = Field(None, description="Provider request ID for live call; null for mock")
+    normalized_wer: Optional[float] = Field(None, description="Supplementary cross-script-normalized Word Error Rate")
 
 
 class PairEvaluationResult(BaseModel):
@@ -128,6 +129,9 @@ class PairEvaluationResult(BaseModel):
     wer_a: float
     wer_b: float
     average_wer: float
+    normalized_wer_a: Optional[float] = Field(None, description="Supplementary cross-script-normalized WER for Utterance A")
+    normalized_wer_b: Optional[float] = Field(None, description="Supplementary cross-script-normalized WER for Utterance B")
+    average_normalized_wer: Optional[float] = Field(None, description="Supplementary average cross-script-normalized WER across the pair")
     critical_field_accuracy: float = Field(..., description="Percentage of critical fields correctly extracted across pair (0.0 to 1.0)")
     semantic_distinction_preserved: bool = Field(..., description="True if the critical distinction between A and B was preserved")
     task_success: bool = Field(..., description="True if downstream actions for both utterances would be correct")
@@ -148,6 +152,7 @@ class ModePerformanceMetrics(BaseModel):
     distinction_preservation_rate: Optional[float] = Field(None, description="Semantic distinction preservation rate (0.0-100.0%) across completed runs in this mode; None if no completed runs")
     task_success_rate: Optional[float] = Field(None, description="Downstream task success rate (0.0-100.0%) across completed runs in this mode; None if no completed runs")
     average_wer: Optional[float] = Field(None, description="Average Word Error Rate across completed runs in this mode; None if no completed runs")
+    average_normalized_wer: Optional[float] = Field(None, description="Average cross-script-normalized Word Error Rate across completed runs in this mode; None if no completed runs")
     average_critical_field_accuracy: Optional[float] = Field(None, description="Average critical field accuracy (0.0-100.0%) across completed runs in this mode; None if no completed runs")
     category_breakdown: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="Performance metrics by category for this mode over completed runs")
 
@@ -169,6 +174,7 @@ class AggregateMetrics(BaseModel):
     distinction_preservation_rate: Optional[float] = Field(None, description="Distinction preservation rate (0.0-100.0%) across completed runs; None if no completed runs exist")
     task_success_rate: Optional[float] = Field(None, description="Task success rate (0.0-100.0%) across completed runs; None if no completed runs exist")
     average_wer: Optional[float] = Field(None, description="Average Word Error Rate across completed runs; None if no completed runs exist")
+    average_normalized_wer: Optional[float] = Field(None, description="Average cross-script-normalized Word Error Rate across completed runs; None if no completed runs exist")
     average_critical_field_accuracy: Optional[float] = Field(None, description="Average critical field accuracy (0.0-100.0%) across completed runs; None if no completed runs exist")
     category_breakdown: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="Performance metrics by category computed over completed runs only")
     failure_category_breakdown: Dict[str, int] = Field(default_factory=dict, description="Taxonomy breakdown of all recorded failure categories")
