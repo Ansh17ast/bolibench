@@ -27,6 +27,35 @@ def isolate_test_environment(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def isolate_evaluation_storage(tmp_path, monkeypatch):
+    """Guarantees each test runs with a unique, isolated SQLite database in a temp directory.
+
+    Prevents automated tests from polluting the application's root SQLite database
+    (bolibench_evaluation.db) with synthetic mock-provider evaluations or test fixtures.
+    Preserves and restores original engine storage in a finally block.
+    """
+    import app.evaluation.storage
+    from app.evaluation.storage import StorageManager
+    from app.routers.evaluation import engine
+
+    test_db_path = tmp_path / "test_isolated_evaluation.db"
+
+    # Isolate any default StorageManager() instantiations
+    monkeypatch.setattr(app.evaluation.storage, "DEFAULT_DB_PATH", test_db_path)
+
+    # Swap shared router engine storage to test-isolated storage
+    orig_storage = engine.storage
+    test_storage = StorageManager(db_path=test_db_path)
+    engine.storage = test_storage
+
+    try:
+        yield test_storage
+    finally:
+        engine.storage = orig_storage
+
+
+
+@pytest.fixture(autouse=True)
 def block_outbound_network_calls():
     """Safety guard: prevents any unmocked outbound HTTP transport calls in tests.
 

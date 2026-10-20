@@ -1352,3 +1352,187 @@ async def test_failed_and_incomplete_runs_remain_accessible_in_history(async_cli
 
     finally:
         engine.storage = orig_storage
+
+
+# -----------------------------------------------------------------------------
+# Phase 6.9: SQLite Storage Isolation and Regression Proofs
+# -----------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_mocked_live_run_persists_only_in_temporary_storage(
+    async_client, valid_wav_bytes, monkeypatch
+):
+    """Proves a mocked successful /api/eval/run-live/{test_id} persists synthetic records
+    only in temporary test storage, and does not touch the production SQLite database.
+    """
+    import sqlite3
+    from pathlib import Path
+    from app.routers.evaluation import engine
+
+    prod_db_path = Path(__file__).resolve().parent.parent / "bolibench_evaluation.db"
+    if not prod_db_path.exists():
+        pytest.skip("Production database does not exist locally.")
+
+    # Record row count of production database prior to test
+    with sqlite3.connect(str(prod_db_path)) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM evaluation_runs")
+        prod_count_before = cursor.fetchone()[0]
+
+    monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_isolation")
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
+    get_settings.cache_clear()
+
+    mock_resp_a = {
+        "success": True,
+        "transcript": "Do packet chahiye",
+        "request_id": "req_iso_proof_a_999",
+        "model": "gnani-prisma-v2.5",
+        "client_request_elapsed_ms": 100.0,
+        "server_timestamp": "20261020_040000.000",
+        "language_code": "hi-IN",
+        "format": "transcribe",
+        "is_mocked": False,
+    }
+    mock_resp_b = {
+        "success": True,
+        "transcript": "Teen packet chahiye",
+        "request_id": "req_iso_proof_b_999",
+        "model": "gnani-prisma-v2.5",
+        "client_request_elapsed_ms": 105.0,
+        "server_timestamp": "20261020_040001.000",
+        "language_code": "hi-IN",
+        "format": "transcribe",
+        "is_mocked": False,
+    }
+
+    headers, data = await _get_live_auth(async_client, "pair_qty_001")
+    data["audio_condition"] = "clean_recorded"
+    files = {
+        "audio_file_a": ("utterance_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        "audio_file_b": ("utterance_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+
+    with patch("app.services.gnani_client.GnaniPrismaClient.transcribe", side_effect=[mock_resp_a, mock_resp_b]):
+        response = await async_client.post("/api/eval/run-live/pair_qty_001", files=files, data=data, headers=headers)
+        assert response.status_code == 200
+        res_data = response.json()
+        live_run_id = res_data["run_id"]
+
+        # 1. Assert record exists in isolated test storage
+        test_run = engine.get_run(live_run_id)
+        assert test_run is not None
+        assert test_run.run_id == live_run_id
+        assert test_run.utterance_a.request_id == "req_iso_proof_a_999"
+        assert test_run.utterance_b.request_id == "req_iso_proof_b_999"
+
+        # 2. Assert record is NOT present in production database
+        with sqlite3.connect(str(prod_db_path)) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM evaluation_runs WHERE run_id = ?", (live_run_id,))
+            match_count = cursor.fetchone()[0]
+            assert match_count == 0, f"Synthetic test run {live_run_id} leaked into production database!"
+
+            cursor.execute("SELECT COUNT(*) FROM evaluation_runs")
+            prod_count_after = cursor.fetchone()[0]
+            assert prod_count_after == prod_count_before, "Production database row count changed during test!"
+
+
+@pytest.mark.asyncio
+async def test_production_database_untouched_during_eval_test(async_client):
+    """Proves the production database is neither selected nor modified during eval runs."""
+    import sqlite3
+    from pathlib import Path
+    from app.routers.evaluation import engine
+
+    prod_db_path = Path(__file__).resolve().parent.parent / "bolibench_evaluation.db"
+    if not prod_db_path.exists():
+        pytest.skip("Production database does not exist locally.")
+
+    # Check that engine storage points to a temporary location, not prod
+    assert Path(engine.storage.db_path).resolve() != prod_db_path.resolve()
+    assert "tmp" in str(engine.storage.db_path).lower() or "temp" in str(engine.storage.db_path).lower() or "pytest" in str(engine.storage.db_path).lower()
+
+    with sqlite3.connect(str(prod_db_path)) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM evaluation_runs")
+        count_before = cursor.fetchone()[0]
+
+    # Run mock evaluation
+    resp = await async_client.post("/api/eval/run-mock/pair_qty_001?scenario=ideal_preserved")
+    assert resp.status_code == 200
+    mock_run_id = resp.json()["run_id"]
+
+    # Verify mock run is in engine storage
+    assert engine.get_run(mock_run_id) is not None
+
+    # Verify production database was untouched
+    with sqlite3.connect(str(prod_db_path)) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM evaluation_runs")
+        count_after = cursor.fetchone()[0]
+        assert count_after == count_before
+
+        cursor.execute("SELECT COUNT(*) FROM evaluation_runs WHERE run_id = ?", (mock_run_id,))
+        assert cursor.fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_history_isolation_between_tests_step1(async_client):
+    """Proves that a test creates runs only in its own isolated test storage."""
+    from app.routers.evaluation import engine
+
+    # Storage should start clean for this test
+    runs_before = engine.list_runs()
+    assert len(runs_before) == 0
+
+    resp = await async_client.post("/api/eval/run-mock/pair_qty_001?scenario=ideal_preserved")
+    assert resp.status_code == 200
+    run_id = resp.json()["run_id"]
+
+    runs_after = engine.list_runs()
+    assert len(runs_after) == 1
+    assert runs_after[0].run_id == run_id
+
+
+@pytest.mark.asyncio
+async def test_history_isolation_between_tests_step2(async_client):
+    """Proves that a subsequent test does not see runs created by previous tests."""
+    from app.routers.evaluation import engine
+
+    # Even though step1 created a run, this test receives a fresh isolated storage
+    runs = engine.list_runs()
+    assert len(runs) == 0
+
+
+@pytest.mark.asyncio
+async def test_existing_tests_overriding_engine_storage_still_behave_correctly(tmp_path):
+    """Proves that tests which manually swap engine.storage can do so and restore cleanly."""
+    from app.evaluation.storage import StorageManager
+    from app.routers.evaluation import engine
+
+    fixture_storage = engine.storage
+    fixture_db_path = fixture_storage.db_path
+
+    custom_storage = StorageManager(db_path=tmp_path / "custom_inner_override.db")
+    orig_storage = engine.storage
+    engine.storage = custom_storage
+
+    try:
+        assert engine.storage == custom_storage
+        assert engine.storage.db_path == str(tmp_path / "custom_inner_override.db")
+    finally:
+        engine.storage = orig_storage
+
+    assert engine.storage == fixture_storage
+    assert engine.storage.db_path == fixture_db_path
+
+
+@pytest.mark.asyncio
+async def test_network_blocking_fixture_prevents_unmocked_outbound_httpx():
+    """Proves the block_outbound_network_calls fixture intercepts unmocked outbound HTTPX calls."""
+    import httpx
+
+    with pytest.raises(RuntimeError, match="Outbound network request blocked in test suite"):
+        async with httpx.AsyncClient() as client:
+            await client.get("https://api.vachana.ai/stt/v3/health")
