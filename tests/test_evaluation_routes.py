@@ -317,67 +317,71 @@ async def test_run_live_audio_validates_both_uploads(async_client, valid_wav_byt
     monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
 
-    # 1. Reject invalid file extension on Utterance A
-    headers, data = await _get_live_auth(async_client, "pair_qty_001")
-    files_bad_a = {
-        "audio_file_a": ("bad_a.py", io.BytesIO(b"print('invalid')"), "text/x-python"),
-        "audio_file_b": ("good_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
-    }
-    resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files_bad_a, data=data, headers=headers)
-    assert resp.status_code == 400
-    assert resp.json()["error_type"] == "UNSUPPORTED_EXTENSION"
+    with patch("app.services.gnani_client.GnaniPrismaClient.transcribe") as mock_transcribe:
+        # 1. Reject invalid file extension on Utterance A
+        headers, data = await _get_live_auth(async_client, "pair_qty_001")
+        files_bad_a = {
+            "audio_file_a": ("bad_a.py", io.BytesIO(b"print('invalid')"), "text/x-python"),
+            "audio_file_b": ("good_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        }
+        resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files_bad_a, data=data, headers=headers)
+        assert resp.status_code == 400
+        assert resp.json()["error_type"] == "UNSUPPORTED_EXTENSION"
 
-    # 2. Reject empty file on Utterance A
-    headers, data = await _get_live_auth(async_client, "pair_qty_001")
-    files_empty_a = {
-        "audio_file_a": ("empty_a.wav", io.BytesIO(b""), "audio/wav"),
-        "audio_file_b": ("good_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
-    }
-    resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files_empty_a, data=data, headers=headers)
-    assert resp.status_code == 400
-    assert resp.json()["error_type"] == "EMPTY_FILE"
+        # 2. Reject empty file on Utterance A
+        headers, data = await _get_live_auth(async_client, "pair_qty_001")
+        files_empty_a = {
+            "audio_file_a": ("empty_a.wav", io.BytesIO(b""), "audio/wav"),
+            "audio_file_b": ("good_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        }
+        resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files_empty_a, data=data, headers=headers)
+        assert resp.status_code == 400
+        assert resp.json()["error_type"] == "EMPTY_FILE"
 
-    # 3. Reject invalid file extension on Utterance B
-    headers, data = await _get_live_auth(async_client, "pair_qty_001")
-    files_bad_b = {
-        "audio_file_a": ("good_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
-        "audio_file_b": ("bad_b.txt", io.BytesIO(b"not an audio"), "text/plain"),
-    }
-    resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files_bad_b, data=data, headers=headers)
-    assert resp.status_code == 400
-    assert resp.json()["error_type"] == "UNSUPPORTED_EXTENSION"
+        # 3. Reject invalid file extension on Utterance B
+        headers, data = await _get_live_auth(async_client, "pair_qty_001")
+        files_bad_b = {
+            "audio_file_a": ("good_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+            "audio_file_b": ("bad_b.txt", io.BytesIO(b"not an audio"), "text/plain"),
+        }
+        resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files_bad_b, data=data, headers=headers)
+        assert resp.status_code == 400
+        assert resp.json()["error_type"] == "UNSUPPORTED_EXTENSION"
 
-    # 4. Reject empty file on Utterance B
-    headers, data = await _get_live_auth(async_client, "pair_qty_001")
-    files_empty_b = {
-        "audio_file_a": ("good_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
-        "audio_file_b": ("empty_b.wav", io.BytesIO(b""), "audio/wav"),
-    }
-    resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files_empty_b, data=data, headers=headers)
-    assert resp.status_code == 400
-    assert resp.json()["error_type"] == "EMPTY_FILE"
+        # 4. Reject empty file on Utterance B
+        headers, data = await _get_live_auth(async_client, "pair_qty_001")
+        files_empty_b = {
+            "audio_file_a": ("good_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+            "audio_file_b": ("empty_b.wav", io.BytesIO(b""), "audio/wav"),
+        }
+        resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files_empty_b, data=data, headers=headers)
+        assert resp.status_code == 400
+        assert resp.json()["error_type"] == "EMPTY_FILE"
 
-    # 5. Reject duration > 60s on Utterance B
-    headers, data = await _get_live_auth(async_client, "pair_qty_001")
-    files_long_b = {
-        "audio_file_a": ("good_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
-        "audio_file_b": ("long_b.wav", io.BytesIO(long_wav_bytes), "audio/wav"),
-    }
-    resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files_long_b, data=data, headers=headers)
-    assert resp.status_code == 400
-    assert resp.json()["error_type"] == "DURATION_EXCEEDED"
+        # 5. Reject duration > 60s on Utterance B
+        headers, data = await _get_live_auth(async_client, "pair_qty_001")
+        files_long_b = {
+            "audio_file_a": ("good_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+            "audio_file_b": ("long_b.wav", io.BytesIO(long_wav_bytes), "audio/wav"),
+        }
+        resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files_long_b, data=data, headers=headers)
+        assert resp.status_code == 400
+        assert resp.json()["error_type"] == "DURATION_EXCEEDED"
 
-    # 6. Reject non-WAV container (e.g. MP3) on live route because duration cannot be verified
-    headers, data = await _get_live_auth(async_client, "pair_qty_001")
-    mp3_bytes = b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff\xfb\x90d" + b"\x00" * 100
-    files_mp3 = {
-        "audio_file_a": ("speech_a.mp3", io.BytesIO(mp3_bytes), "audio/mpeg"),
-        "audio_file_b": ("good_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
-    }
-    resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files_mp3, data=data, headers=headers)
-    assert resp.status_code == 400
-    assert resp.json()["error_type"] == "UNSUPPORTED_LIVE_FORMAT"
-    assert "formats with verified duration" in resp.json()["message"]
+        # 6. Reject non-WAV container (e.g. MP3) on live route because duration cannot be verified
+        headers, data = await _get_live_auth(async_client, "pair_qty_001")
+        mp3_bytes = b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff\xfb\x90d" + b"\x00" * 100
+        files_mp3 = {
+            "audio_file_a": ("speech_a.mp3", io.BytesIO(mp3_bytes), "audio/mpeg"),
+            "audio_file_b": ("good_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        }
+        resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files_mp3, data=data, headers=headers)
+        assert resp.status_code == 400
+        assert resp.json()["error_type"] == "UNSUPPORTED_LIVE_FORMAT"
+        assert "formats with verified duration" in resp.json()["message"]
+
+        mock_transcribe.assert_not_called()
+
 
 
 @pytest.mark.asyncio
@@ -396,7 +400,7 @@ async def test_run_live_invalid_test_id(async_client, valid_wav_bytes, monkeypat
 @pytest.mark.asyncio
 async def test_run_live_missing_credentials(async_client, valid_wav_bytes, monkeypatch):
     """Proves POST /api/eval/run-live/{test_id} returns 401 when API credentials are unset."""
-    monkeypatch.delenv("GNANI_API_KEY", raising=False)
+    monkeypatch.setenv("GNANI_API_KEY", "")
     monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
     get_settings.cache_clear()
 
@@ -405,9 +409,45 @@ async def test_run_live_missing_credentials(async_client, valid_wav_bytes, monke
         "audio_file_a": ("clip_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
         "audio_file_b": ("clip_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
     }
-    resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files, data=data, headers=headers)
-    assert resp.status_code == 401
-    assert "not configured" in resp.json()["detail"].lower()
+    with patch("app.services.gnani_client.GnaniPrismaClient.transcribe") as mock_transcribe:
+        resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files, data=data, headers=headers)
+        assert resp.status_code == 401
+        assert "not configured" in resp.json()["detail"].lower()
+        mock_transcribe.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_live_missing_credentials_safe_when_env_file_supplies_key(async_client, valid_wav_bytes, monkeypatch, tmp_path):
+    """Regression test: Proves paired live evaluation remains safe with 401 response and ZERO
+    provider calls, even when an underlying .env file supplies a real non-empty API key.
+    """
+    simulated_env = tmp_path / "simulated_user_eval.env"
+    simulated_env.write_text(
+        "GNANI_API_KEY=simulated_real_customer_key_abcdef123456\n"
+        "LIVE_EVALUATION_ENABLED=true\n",
+        encoding="utf-8",
+    )
+
+    from app.config import get_settings
+    with patch("app.config.Settings.model_config", {"env_file": str(simulated_env), "env_file_encoding": "utf-8", "extra": "ignore"}):
+        monkeypatch.setenv("GNANI_API_KEY", "")
+        monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
+        get_settings.cache_clear()
+
+        safe_settings = get_settings()
+        assert safe_settings.is_api_configured is False
+        assert safe_settings.gnani_api_key == ""
+
+        headers, data = await _get_live_auth(async_client, "pair_qty_001")
+        files = {
+            "audio_file_a": ("clip_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+            "audio_file_b": ("clip_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        }
+        with patch("app.services.gnani_client.GnaniPrismaClient.transcribe") as mock_transcribe:
+            resp = await async_client.post("/api/eval/run-live/pair_qty_001", files=files, data=data, headers=headers)
+            assert resp.status_code == 401
+            assert "not configured" in resp.json()["detail"].lower()
+            mock_transcribe.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -935,30 +975,34 @@ async def test_programme_credits_protected_against_unauthorized_network(async_cl
 @pytest.mark.asyncio
 async def test_live_evaluation_disabled_by_default(async_client, valid_wav_bytes, monkeypatch):
     """Proves live evaluation is disabled by default and rejects requests before any provider calls."""
-    monkeypatch.delenv("LIVE_EVALUATION_ENABLED", raising=False)
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "false")
+    monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
     get_settings.cache_clear()
     settings = get_settings()
     assert settings.live_evaluation_enabled is False
 
-    # 1. Authorize endpoint rejected with 403
-    resp_auth = await async_client.post("/api/eval/authorize-live", json={"test_id": "pair_qty_001"})
-    assert resp_auth.status_code == 403
-    assert "disabled by default" in resp_auth.json()["detail"].lower()
+    with patch("app.services.gnani_client.GnaniPrismaClient.transcribe") as mock_transcribe:
+        # 1. Authorize endpoint rejected with 403
+        resp_auth = await async_client.post("/api/eval/authorize-live", json={"test_id": "pair_qty_001"})
+        assert resp_auth.status_code == 403
+        assert "disabled by default" in resp_auth.json()["detail"].lower()
 
-    # 2. Run-live endpoint rejected with 403 before file parsing or provider calls
-    files = {
-        "audio_file_a": ("clip_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
-        "audio_file_b": ("clip_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
-    }
-    resp_run = await async_client.post("/api/eval/run-live/pair_qty_001", files=files)
-    assert resp_run.status_code == 403
-    assert "disabled by default" in resp_run.json()["detail"].lower()
+        # 2. Run-live endpoint rejected with 403 before file parsing or provider calls
+        files = {
+            "audio_file_a": ("clip_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+            "audio_file_b": ("clip_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        }
+        resp_run = await async_client.post("/api/eval/run-live/pair_qty_001", files=files)
+        assert resp_run.status_code == 403
+        assert "disabled by default" in resp_run.json()["detail"].lower()
+        mock_transcribe.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_disabled_live_execution_makes_zero_provider_calls(async_client, valid_wav_bytes, monkeypatch):
     """Proves disabled live mode makes zero provider calls and consumes 0 credits."""
-    monkeypatch.delenv("LIVE_EVALUATION_ENABLED", raising=False)
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "false")
+    monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
     get_settings.cache_clear()
 
     files = {

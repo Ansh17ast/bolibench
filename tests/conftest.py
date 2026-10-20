@@ -7,16 +7,41 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from unittest.mock import patch
+
 from app.config import Settings, get_settings
 from app.main import app
 
 
 @pytest.fixture(autouse=True)
-def reset_settings_cache():
-    """Ensures get_settings lru_cache is cleared before and after every test."""
+def isolate_test_environment(monkeypatch):
+    """Guarantees tests run isolated from developer's local .env live flags.
+
+    Defaults live flags to false and ensures Settings cache is cleared before and after each test.
+    """
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "false")
+    monkeypatch.setenv("LIVE_TRANSCRIPTION_ENABLED", "false")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def block_outbound_network_calls():
+    """Safety guard: prevents any unmocked outbound HTTP transport calls in tests.
+
+    If any test accidentally attempts an unmocked outbound HTTP request to Gnani or any external API,
+    this fixture intercepts it at the transport layer, immediately failing the test and preventing
+    credit consumption.
+    """
+    with patch(
+        "httpx.AsyncHTTPTransport.handle_async_request",
+        side_effect=RuntimeError(
+            "Outbound network request blocked in test suite to protect programme credits! "
+            "All provider interactions must be mocked in tests."
+        ),
+    ):
+        yield
 
 
 def create_mock_wav(duration_seconds: float = 1.0, sample_rate: int = 16000) -> bytes:

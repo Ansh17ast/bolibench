@@ -110,7 +110,7 @@ async def test_transcribe_empty_file(async_client):
 @pytest.mark.asyncio
 async def test_transcribe_missing_credentials_unmocked(async_client, valid_wav_bytes, monkeypatch):
     """Test unmocked request without GNANI_API_KEY returns 401 with remediation instructions when live transcription is enabled."""
-    monkeypatch.delenv("GNANI_API_KEY", raising=False)
+    monkeypatch.setenv("GNANI_API_KEY", "")
     monkeypatch.setenv("LIVE_TRANSCRIPTION_ENABLED", "true")
     from app.config import get_settings
     get_settings.cache_clear()
@@ -124,18 +124,21 @@ async def test_transcribe_missing_credentials_unmocked(async_client, valid_wav_b
         "mock_mode": "false",  # Request real API without credentials
     }
 
-    response = await async_client.post("/api/transcribe", files=files, data=data)
-    assert response.status_code == 401
-    result = response.json()
-    assert result["error_type"] == "MISSING_CREDENTIALS"
-    assert "remediation" in result
-    assert "GNANI_API_KEY" in result["remediation"]
+    with patch("httpx.AsyncHTTPTransport.handle_async_request") as mock_transport:
+        response = await async_client.post("/api/transcribe", files=files, data=data)
+        assert response.status_code == 401
+        result = response.json()
+        assert result["error_type"] == "MISSING_CREDENTIALS"
+        assert "remediation" in result
+        assert "GNANI_API_KEY" in result["remediation"]
+        mock_transport.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_transcribe_live_disabled_by_default_rejects_with_403(async_client, valid_wav_bytes, monkeypatch):
     """Proves unmocked requests to /api/transcribe are rejected with 403 Forbidden when LIVE_TRANSCRIPTION_ENABLED=false."""
-    monkeypatch.delenv("LIVE_TRANSCRIPTION_ENABLED", raising=False)
+    monkeypatch.setenv("LIVE_TRANSCRIPTION_ENABLED", "false")
+    monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_12345")
     from app.config import get_settings
     get_settings.cache_clear()
 
@@ -148,11 +151,13 @@ async def test_transcribe_live_disabled_by_default_rejects_with_403(async_client
         "mock_mode": "false",
     }
 
-    with patch("app.services.gnani_client.GnaniPrismaClient.transcribe") as mock_transcribe:
+    with patch("app.services.gnani_client.GnaniPrismaClient.transcribe") as mock_transcribe, \
+         patch("httpx.AsyncHTTPTransport.handle_async_request") as mock_transport:
         response = await async_client.post("/api/transcribe", files=files, data=data)
         assert response.status_code == 403
         assert "disabled by default to protect programme credits" in response.json()["detail"].lower()
         mock_transcribe.assert_not_called()
+        mock_transport.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -217,7 +222,8 @@ async def test_single_audio_latency_labels_and_semantics(async_client, valid_wav
 @pytest.mark.asyncio
 async def test_health_check_live_evaluation_disabled_by_default(async_client, monkeypatch):
     """Proves /health endpoint reflects that live evaluation is disabled by default."""
-    monkeypatch.delenv("LIVE_EVALUATION_ENABLED", raising=False)
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "false")
+    monkeypatch.setenv("LIVE_TRANSCRIPTION_ENABLED", "false")
     from app.config import get_settings
     get_settings.cache_clear()
 
@@ -231,7 +237,7 @@ async def test_health_check_live_evaluation_disabled_by_default(async_client, mo
 @pytest.mark.asyncio
 async def test_health_check_live_transcription_disabled_by_default(async_client, monkeypatch):
     """Proves /health endpoint reflects that live transcription is disabled by default."""
-    monkeypatch.delenv("LIVE_TRANSCRIPTION_ENABLED", raising=False)
+    monkeypatch.setenv("LIVE_TRANSCRIPTION_ENABLED", "false")
     from app.config import get_settings
     get_settings.cache_clear()
 
@@ -239,3 +245,47 @@ async def test_health_check_live_transcription_disabled_by_default(async_client,
     assert resp.status_code == 200
     data = resp.json()
     assert data["live_transcription_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_transcribe_missing_credentials_safe_when_env_file_supplies_key(async_client, valid_wav_bytes, monkeypatch, tmp_path):
+    """Regression test: Proves missing-credentials request remains safe with 401 response and ZERO
+    outbound provider requests, even when an underlying .env file supplies a real non-empty API key.
+    """
+    # 1. Create an isolated simulated .env file containing a non-empty credentials definition
+    simulated_env = tmp_path / "simulated_user.env"
+    simulated_env.write_text(
+        "GNANI_API_KEY=simulated_real_customer_key_abcdef123456\n"
+        "LIVE_TRANSCRIPTION_ENABLED=true\n",
+        encoding="utf-8",
+    )
+
+    from app.config import get_settings
+    # Patch Settings model_config to load this simulated file
+    with patch("app.config.Settings.model_config", {"env_file": str(simulated_env), "env_file_encoding": "utf-8", "extra": "ignore"}):
+        # Explicit empty override prevents leaking the key from the .env file
+        monkeypatch.setenv("GNANI_API_KEY", "")
+        monkeypatch.setenv("LIVE_TRANSCRIPTION_ENABLED", "true")
+        get_settings.cache_clear()
+
+        safe_settings = get_settings()
+        assert safe_settings.is_api_configured is False
+        assert safe_settings.gnani_api_key == ""
+
+        files = {
+            "audio_file": ("sample.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        }
+        data = {
+            "language_code": "hi-IN",
+            "format_mode": "verbatim",
+            "mock_mode": "false",
+        }
+
+        # Verify the unmocked transcribe request returns 401 without any network request
+        with patch("httpx.AsyncHTTPTransport.handle_async_request") as mock_transport:
+            response = await async_client.post("/api/transcribe", files=files, data=data)
+            assert response.status_code == 401
+            result = response.json()
+            assert result["error_type"] == "MISSING_CREDENTIALS"
+            assert "GNANI_API_KEY" in result["remediation"]
+            mock_transport.assert_not_called()
