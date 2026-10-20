@@ -99,16 +99,153 @@ async def test_evaluate_custom_transcripts(async_client):
 
 @pytest.mark.asyncio
 async def test_get_metrics(async_client):
-    """Test /api/eval/metrics returns aggregate evaluation metrics."""
+    """Test /api/eval/metrics returns aggregate evaluation metrics with separated mock and live performance groups."""
     response = await async_client.get("/api/eval/metrics")
     assert response.status_code == 200
 
     data = response.json()
     assert "total_runs" in data
+    assert "completed_runs" in data
+    assert "failed_runs" in data
+    assert "incomplete_runs" in data
+    assert "mock_runs" in data
+    assert "live_runs" in data
     assert "distinction_preservation_rate" in data
     assert "task_success_rate" in data
     assert "average_wer" in data
     assert "category_breakdown" in data
+
+    # Verify separated mode metrics
+    assert "mock" in data
+    assert "live" in data
+    for mode in ["mock", "live"]:
+        assert "total_attempts" in data[mode]
+        assert "completed_runs" in data[mode]
+        assert "failed_runs" in data[mode]
+        assert "incomplete_runs" in data[mode]
+        assert "distinction_preservation_rate" in data[mode]
+        assert "task_success_rate" in data[mode]
+        assert "average_wer" in data[mode]
+        assert "average_critical_field_accuracy" in data[mode]
+        assert "category_breakdown" in data[mode]
+
+
+@pytest.mark.asyncio
+async def test_metrics_endpoint_isolates_mock_and_live_data(async_client, tmp_path):
+    """Proves /api/eval/metrics correctly exposes isolated mock and live performance groups across completed runs."""
+    from app.evaluation.storage import StorageManager
+    from app.evaluation.metrics import score_pair
+    from app.evaluation.dataset import load_seed_dataset
+    from app.evaluation.schemas import PairEvaluationResult, ExecutionMode, FailureCategory, UtteranceEvaluationResult
+    from app.routers.evaluation import engine
+
+    test_storage = StorageManager(db_path=tmp_path / "test_api_metric_iso.db")
+    orig_storage = engine.storage
+    engine.storage = test_storage
+
+    try:
+        pair = load_seed_dataset()[0]
+
+        # 1. Initial empty state via API
+        resp = await async_client.get("/api/eval/metrics")
+        assert resp.status_code == 200
+        d_empty = resp.json()
+        assert d_empty["total_runs"] == 0
+        assert d_empty["mock"]["completed_runs"] == 0
+        assert d_empty["mock"]["average_wer"] is None
+        assert d_empty["mock"]["distinction_preservation_rate"] is None
+        assert d_empty["live"]["completed_runs"] == 0
+        assert d_empty["live"]["average_wer"] is None
+        assert d_empty["live"]["distinction_preservation_rate"] is None
+
+        # 2. Add Completed Mock Run
+        mock_run = score_pair(
+            run_id="run_api_m1",
+            test_case=pair,
+            transcript_a="Do packet chahiye",
+            transcript_b="Teen packet chahiye",
+            execution_mode="mock",
+        )
+        test_storage.save_run(mock_run)
+
+        # 3. Add Incomplete Live Run (Utterance A succeeded, B failed)
+        incomplete_live = PairEvaluationResult(
+            run_id="run_api_incomp",
+            test_case_id=pair.id,
+            category=pair.category.value,
+            language_code=pair.language_code,
+            execution_mode=ExecutionMode.LIVE,
+            audio_condition="clean_recorded",
+            timestamp="2026-10-20T05:00:00Z",
+            overall_status="incomplete",
+            utterance_a=UtteranceEvaluationResult(
+                utterance_id="A",
+                reference_transcript=pair.utterance_a.reference_transcript,
+                actual_transcript="Do packet chahiye",
+                wer=0.0,
+                substitutions=0,
+                deletions=0,
+                insertions=0,
+                reference_length=3,
+                critical_fields_match=True,
+                detected_intent="ORDER_PRODUCT",
+                intent_match=True,
+                task_success=True,
+                status="completed",
+                request_id="req_live_api_1",
+            ),
+            utterance_b=UtteranceEvaluationResult(
+                utterance_id="B",
+                reference_transcript=pair.utterance_b.reference_transcript,
+                actual_transcript="",
+                wer=1.0,
+                substitutions=0,
+                deletions=3,
+                insertions=0,
+                reference_length=3,
+                critical_fields_match=False,
+                detected_intent="UNKNOWN",
+                intent_match=False,
+                task_success=False,
+                status="failed",
+                error_message="HTTP 502 Bad Gateway",
+            ),
+            wer_a=0.0,
+            wer_b=1.0,
+            average_wer=0.5,
+            critical_field_accuracy=0.5,
+            semantic_distinction_preserved=False,
+            task_success=False,
+            primary_failure_category=FailureCategory.PROVIDER_ERROR,
+            failure_explanation="Incomplete live evaluation",
+        )
+        test_storage.save_run(incomplete_live)
+
+        resp2 = await async_client.get("/api/eval/metrics")
+        assert resp2.status_code == 200
+        d2 = resp2.json()
+        assert d2["total_runs"] == 2
+        assert d2["completed_runs"] == 1
+        assert d2["incomplete_runs"] == 1
+        assert d2["mock_runs"] == 1
+        assert d2["live_runs"] == 1
+
+        # Mock has 1 completed run with 100% distinction
+        assert d2["mock"]["completed_runs"] == 1
+        assert d2["mock"]["distinction_preservation_rate"] == 100.0
+        assert d2["mock"]["average_wer"] == 0.0
+
+        # Live has 0 completed runs -> performance averages remain null
+        assert d2["live"]["total_attempts"] == 1
+        assert d2["live"]["completed_runs"] == 0
+        assert d2["live"]["incomplete_runs"] == 1
+        assert d2["live"]["distinction_preservation_rate"] is None
+        assert d2["live"]["task_success_rate"] is None
+        assert d2["live"]["average_wer"] is None
+
+    finally:
+        engine.storage = orig_storage
+
 
 
 @pytest.mark.asyncio

@@ -866,3 +866,158 @@ def test_sqlite_backward_compatible_migration_preserves_legacy_records_as_comple
     assert metrics.incomplete_runs == 0
     assert metrics.average_wer == 0.0
     assert metrics.distinction_preservation_rate == 100.0
+
+
+def test_mock_and_live_metric_separation_and_empty_nulls(tmp_path: Path):
+    """Proves mock demonstration metrics and live provider metrics are strictly separated and empty groups return null."""
+    db_file = tmp_path / "test_separation.db"
+    storage = StorageManager(db_path=db_file)
+    pair = load_seed_dataset()[0]
+
+    # 1. Empty database verification: all rates are None (JSON null)
+    m_empty = storage.get_aggregate_metrics()
+    assert m_empty.total_runs == 0
+    assert m_empty.mock_runs == 0
+    assert m_empty.live_runs == 0
+    assert m_empty.mock.total_attempts == 0
+    assert m_empty.mock.completed_runs == 0
+    assert m_empty.mock.distinction_preservation_rate is None
+    assert m_empty.mock.task_success_rate is None
+    assert m_empty.mock.average_wer is None
+    assert m_empty.mock.average_critical_field_accuracy is None
+    assert m_empty.live.total_attempts == 0
+    assert m_empty.live.completed_runs == 0
+    assert m_empty.live.distinction_preservation_rate is None
+    assert m_empty.live.task_success_rate is None
+    assert m_empty.live.average_wer is None
+    assert m_empty.live.average_critical_field_accuracy is None
+
+    # 2. Add 1 Completed Mock Run (WER=0.0, distinction preserved=True, task success=True)
+    mock_comp = score_pair(
+        run_id="run_mock_sep_01",
+        test_case=pair,
+        transcript_a="Do packet chahiye",
+        transcript_b="Teen packet chahiye",
+        execution_mode="mock",
+    )
+    storage.save_run(mock_comp)
+
+    m1 = storage.get_aggregate_metrics()
+    assert m1.mock_runs == 1
+    assert m1.live_runs == 0
+    assert m1.mock.completed_runs == 1
+    assert m1.mock.distinction_preservation_rate == 100.0
+    assert m1.mock.task_success_rate == 100.0
+    assert m1.mock.average_wer == 0.0
+    assert m1.mock.average_critical_field_accuracy == 100.0
+    # Live must remain untouched with null rates, NOT fabricated 0.0
+    assert m1.live.completed_runs == 0
+    assert m1.live.total_attempts == 0
+    assert m1.live.distinction_preservation_rate is None
+    assert m1.live.task_success_rate is None
+    assert m1.live.average_wer is None
+    assert m1.live.average_critical_field_accuracy is None
+
+    # 3. Add Live Failed Run and Live Incomplete Run (operational errors)
+    live_failed = PairEvaluationResult(
+        run_id="run_live_fail_sep",
+        test_case_id=pair.id,
+        category=pair.category.value,
+        language_code=pair.language_code,
+        execution_mode=ExecutionMode.LIVE,
+        audio_condition="clean_recorded",
+        timestamp="2026-10-20T05:00:00Z",
+        overall_status="failed",
+        utterance_a=UtteranceEvaluationResult(
+            utterance_id="A",
+            reference_transcript=pair.utterance_a.reference_transcript,
+            actual_transcript="",
+            wer=1.0,
+            substitutions=0,
+            deletions=3,
+            insertions=0,
+            reference_length=3,
+            critical_fields_match=False,
+            detected_intent="UNKNOWN",
+            intent_match=False,
+            task_success=False,
+            status="failed",
+            error_message="HTTP 504 Gateway Timeout",
+        ),
+        utterance_b=UtteranceEvaluationResult(
+            utterance_id="B",
+            reference_transcript=pair.utterance_b.reference_transcript,
+            actual_transcript="",
+            wer=1.0,
+            substitutions=0,
+            deletions=3,
+            insertions=0,
+            reference_length=3,
+            critical_fields_match=False,
+            detected_intent="UNKNOWN",
+            intent_match=False,
+            task_success=False,
+            status="skipped",
+        ),
+        wer_a=1.0,
+        wer_b=1.0,
+        average_wer=1.0,
+        critical_field_accuracy=0.0,
+        semantic_distinction_preserved=False,
+        task_success=False,
+        primary_failure_category=FailureCategory.PROVIDER_ERROR,
+        failure_explanation="Provider 504 on Utterance A",
+    )
+    storage.save_run(live_failed)
+
+    m2 = storage.get_aggregate_metrics()
+    assert m2.total_runs == 2
+    assert m2.mock_runs == 1
+    assert m2.live_runs == 1
+    assert m2.live.total_attempts == 1
+    assert m2.live.completed_runs == 0
+    assert m2.live.failed_runs == 1
+    # Live still has 0 completed runs -> performance metrics remain None
+    assert m2.live.distinction_preservation_rate is None
+    assert m2.live.task_success_rate is None
+    assert m2.live.average_wer is None
+    # Mock performance is completely unaffected by live failed run
+    assert m2.mock.completed_runs == 1
+    assert m2.mock.distinction_preservation_rate == 100.0
+    assert m2.mock.average_wer == 0.0
+
+    # 4. Add 1 Completed Live Run (WER=0.25, distinction collapsed=False, task success=False)
+    live_comp = score_pair(
+        run_id="run_live_comp_sep",
+        test_case=pair,
+        transcript_a="Do packet chahiye",
+        transcript_b="Do packet chahiye",
+        execution_mode="live",
+        client_request_elapsed_ms=310.0,
+    )
+    storage.save_run(live_comp)
+
+    m3 = storage.get_aggregate_metrics()
+    assert m3.total_runs == 3
+    assert m3.completed_runs == 2
+    assert m3.failed_runs == 1
+    assert m3.mock_runs == 1
+    assert m3.live_runs == 2
+
+    # Verify Mock metrics (100% distinction, WER 0.0)
+    assert m3.mock.total_attempts == 1
+    assert m3.mock.completed_runs == 1
+    assert m3.mock.failed_runs == 0
+    assert m3.mock.distinction_preservation_rate == 100.0
+    assert m3.mock.task_success_rate == 100.0
+    assert m3.mock.average_wer == 0.0
+    assert m3.mock.average_critical_field_accuracy == 100.0
+
+    # Verify Live metrics (0% distinction, WER 0.1667)
+    assert m3.live.total_attempts == 2
+    assert m3.live.completed_runs == 1
+    assert m3.live.failed_runs == 1
+    assert m3.live.distinction_preservation_rate == 0.0
+    assert m3.live.task_success_rate == 0.0
+    assert m3.live.average_wer == round(live_comp.average_wer, 4)
+    assert m3.live.average_critical_field_accuracy == 50.0

@@ -11,6 +11,7 @@ from app.evaluation.schemas import (
     AggregateMetrics,
     ExecutionMode,
     FailureCategory,
+    ModePerformanceMetrics,
     PairEvaluationResult,
 )
 
@@ -194,7 +195,7 @@ class StorageManager:
         return results
 
     def get_aggregate_metrics(self) -> AggregateMetrics:
-        """Calculates aggregate metrics across all runs, restricting performance averages to completed runs."""
+        """Calculates aggregate metrics across all runs, separating mock vs live mode performance."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -230,6 +231,83 @@ class StorageManager:
             avg_wer = round(float(summary["avg_wer"]), 4) if summary["avg_wer"] is not None else None
             avg_acc = round(float(summary["avg_field_acc"]) * 100.0, 2) if summary["avg_field_acc"] is not None else None
 
+            # Mode-specific performance metrics (completed runs only)
+            cursor.execute(
+                """
+                SELECT
+                    execution_mode,
+                    COUNT(*) as total_attempts,
+                    SUM(CASE WHEN overall_status = 'completed' THEN 1 ELSE 0 END) as completed_runs,
+                    SUM(CASE WHEN overall_status = 'failed' THEN 1 ELSE 0 END) as failed_runs,
+                    SUM(CASE WHEN overall_status = 'incomplete' THEN 1 ELSE 0 END) as incomplete_runs,
+                    AVG(CASE WHEN overall_status = 'completed' THEN distinction_preserved ELSE NULL END) as avg_distinction_preserved,
+                    AVG(CASE WHEN overall_status = 'completed' THEN task_success ELSE NULL END) as avg_task_success,
+                    AVG(CASE WHEN overall_status = 'completed' THEN average_wer ELSE NULL END) as avg_wer,
+                    AVG(CASE WHEN overall_status = 'completed' THEN critical_field_accuracy ELSE NULL END) as avg_field_acc
+                FROM evaluation_runs
+                GROUP BY execution_mode
+                """
+            )
+            mode_stats: Dict[str, Dict[str, Any]] = {}
+            for row in cursor.fetchall():
+                mode_stats[row["execution_mode"]] = dict(row)
+
+            # Category breakdown per mode (completed runs only)
+            cursor.execute(
+                """
+                SELECT
+                    execution_mode,
+                    category,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN overall_status = 'completed' THEN 1 ELSE 0 END) as completed,
+                    SUM(CASE WHEN overall_status = 'failed' THEN 1 ELSE 0 END) as failed,
+                    SUM(CASE WHEN overall_status = 'incomplete' THEN 1 ELSE 0 END) as incomplete,
+                    AVG(CASE WHEN overall_status = 'completed' THEN distinction_preserved ELSE NULL END) as dist_rate,
+                    AVG(CASE WHEN overall_status = 'completed' THEN task_success ELSE NULL END) as task_rate,
+                    AVG(CASE WHEN overall_status = 'completed' THEN average_wer ELSE NULL END) as avg_wer
+                FROM evaluation_runs
+                GROUP BY execution_mode, category
+                """
+            )
+            mode_cat_stats: Dict[str, Dict[str, Dict[str, Any]]] = {"mock": {}, "live": {}}
+            for row in cursor.fetchall():
+                m_mode = row["execution_mode"]
+                if m_mode in mode_cat_stats:
+                    mode_cat_stats[m_mode][row["category"]] = {
+                        "total": row["total"],
+                        "completed": row["completed"],
+                        "failed": row["failed"],
+                        "incomplete": row["incomplete"],
+                        "distinction_rate": round(float(row["dist_rate"]) * 100.0, 2) if row["dist_rate"] is not None else None,
+                        "task_success_rate": round(float(row["task_rate"]) * 100.0, 2) if row["task_rate"] is not None else None,
+                        "average_wer": round(float(row["avg_wer"]), 4) if row["avg_wer"] is not None else None,
+                    }
+
+            def _build_mode_metrics(mode_key: str) -> ModePerformanceMetrics:
+                data = mode_stats.get(mode_key, {})
+                t_att = data.get("total_attempts", 0)
+                comp = data.get("completed_runs", 0)
+                fail = data.get("failed_runs", 0)
+                incomp = data.get("incomplete_runs", 0)
+                d_rate = round(float(data["avg_distinction_preserved"]) * 100.0, 2) if data.get("avg_distinction_preserved") is not None else None
+                t_rate = round(float(data["avg_task_success"]) * 100.0, 2) if data.get("avg_task_success") is not None else None
+                a_wer = round(float(data["avg_wer"]), 4) if data.get("avg_wer") is not None else None
+                a_acc = round(float(data["avg_field_acc"]) * 100.0, 2) if data.get("avg_field_acc") is not None else None
+                return ModePerformanceMetrics(
+                    total_attempts=t_att,
+                    completed_runs=comp,
+                    failed_runs=fail,
+                    incomplete_runs=incomp,
+                    distinction_preservation_rate=d_rate,
+                    task_success_rate=t_rate,
+                    average_wer=a_wer,
+                    average_critical_field_accuracy=a_acc,
+                    category_breakdown=mode_cat_stats.get(mode_key, {}),
+                )
+
+            mock_metrics = _build_mode_metrics("mock")
+            live_metrics = _build_mode_metrics("live")
+
             # Failure category breakdown across all attempts (including provider operational errors)
             cursor.execute(
                 """
@@ -240,7 +318,7 @@ class StorageManager:
             )
             failure_breakdown = {row["primary_failure_category"]: row["count"] for row in cursor.fetchall()}
 
-            # Category breakdown: counts all attempts, but computes performance averages over completed runs only
+            # Overall Category breakdown: counts all attempts, but computes performance averages over completed runs only
             cursor.execute(
                 """
                 SELECT
@@ -275,6 +353,8 @@ class StorageManager:
                 incomplete_runs=incomplete_runs,
                 mock_runs=mock_runs,
                 live_runs=live_runs,
+                mock=mock_metrics,
+                live=live_metrics,
                 distinction_preservation_rate=dist_rate,
                 task_success_rate=task_rate,
                 average_wer=avg_wer,

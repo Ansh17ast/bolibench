@@ -7,14 +7,14 @@
   <link rel="stylesheet" href="/static/css/style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 </head>
 <body>
   <div class="app-container">
     <!-- Header -->
     <header class="app-header">
       <div class="brand">
-        <div class="logo-mark">⚡</div>
+        <div class="logo-mark" aria-hidden="true">⚡</div>
         <div class="brand-text">
           <h1>BoliBench</h1>
           <p class="tagline">Indian Voice AI Crash-Test Lab</p>
@@ -32,6 +32,16 @@
             {% endif %}
           </span>
         </div>
+        <div class="status-pill status-guard" id="safetyGuardPill" title="Live evaluation safety state">
+          <span class="status-dot dot-guard"></span>
+          <span class="status-text">
+            {% if live_evaluation_enabled %}
+              Live Mode: Enabled (Operator Mode)
+            {% else %}
+              Live Guard: Protected (Mock Mode Only)
+            {% endif %}
+          </span>
+        </div>
       </div>
     </header>
 
@@ -41,23 +51,807 @@
       <div class="banner-icon">⚠️</div>
       <div class="banner-content">
         <strong>GNANI_API_KEY is not configured in your environment.</strong>
-        <p>To run live calls to Gnani Prisma, copy <code>.env.example</code> to <code>.env</code> and add your key from <a href="https://app.gnani.ai/voice" target="_blank" rel="noopener">app.gnani.ai/voice</a>. You can test both the single-clip transcription and the full paired-contrast evaluation suite immediately using <strong>Mock Mode</strong> (0 credits consumed).</p>
+        <p>To run live calls to Gnani Prisma, set <code>GNANI_API_KEY</code> in your local <code>.env</code> file. You can test the full benchmark suite immediately using <strong>Deterministic Mock Scenarios</strong> (0 credits consumed, zero external network calls).</p>
       </div>
     </div>
     {% endif %}
 
-    <!-- Top Navigation Tabs -->
-    <nav class="lab-tabs" role="tablist">
-      <button class="lab-tab-btn active" id="tabBtnTranscribe" data-tab="transcribeView" role="tab" aria-selected="true">
-        <span class="tab-icon">🎙️</span> Speech Recognition Lab
+    <!-- Top Navigation Tabs (6 Judge-Ready Views) -->
+    <nav class="lab-tabs" role="tablist" aria-label="BoliBench Navigation">
+      <button class="lab-tab-btn active" id="tabBtnOverview" data-tab="overviewView" role="tab" aria-selected="true" aria-controls="overviewView">
+        <span class="tab-icon">📊</span> Overview Dashboard
       </button>
-      <button class="lab-tab-btn" id="tabBtnEvaluate" data-tab="evaluateView" role="tab" aria-selected="false">
+      <button class="lab-tab-btn" id="tabBtnEvaluate" data-tab="evaluateView" role="tab" aria-selected="false" aria-controls="evaluateView">
         <span class="tab-icon">⚡</span> Paired-Contrast Crash Lab
+      </button>
+      <button class="lab-tab-btn" id="tabBtnCatalogue" data-tab="catalogueView" role="tab" aria-selected="false" aria-controls="catalogueView">
+        <span class="tab-icon">📚</span> Benchmark Catalogue
+      </button>
+      <button class="lab-tab-btn" id="tabBtnHistory" data-tab="historyView" role="tab" aria-selected="false" aria-controls="historyView">
+        <span class="tab-icon">🕒</span> Run History & Status
+      </button>
+      <button class="lab-tab-btn" id="tabBtnMethodology" data-tab="methodologyView" role="tab" aria-selected="false" aria-controls="methodologyView">
+        <span class="tab-icon">📖</span> Methodology & Limitations
+      </button>
+      <button class="lab-tab-btn" id="tabBtnTranscribe" data-tab="transcribeView" role="tab" aria-selected="false" aria-controls="transcribeView">
+        <span class="tab-icon">🎙️</span> Speech Recognition Lab
       </button>
     </nav>
 
-    <!-- Tab 1: Single Audio Transcription Lab (Existing Working Functionality) -->
-    <div class="tab-pane active" id="transcribeView">
+    <!-- ===================================================================== -->
+    <!-- VIEW 1: OVERVIEW DASHBOARD (Strict Metric Separation)                 -->
+    <!-- ===================================================================== -->
+    <div class="tab-pane active" id="overviewView" role="tabpanel" aria-labelledby="tabBtnOverview">
+      <div class="dashboard-container">
+        <!-- Dashboard Top Hero -->
+        <section class="card dashboard-hero-card">
+          <div class="hero-header-row">
+            <div>
+              <span class="eyebrow-badge">EVALUATION METRICS & RUN INTEGRITY</span>
+              <h2>Voice Agent Crash-Test Overview</h2>
+              <p class="hero-desc">BoliBench measures how small transcription errors on Indian languages collapse downstream voice agent business actions. Metrics are strictly separated between deterministic mock simulations and live Gnani Prisma STT v3 evaluations.</p>
+            </div>
+            <div class="hero-actions">
+              <button type="button" class="btn-refresh" id="btnRefreshMetrics" title="Refresh metrics from backend">
+                <span>🔄 Refresh Metrics</span>
+              </button>
+              <a href="/api/eval/export?format=csv" class="btn-export-sm" download="bolibench_evaluation_results.csv">
+                <span>📥 Export CSV</span>
+              </a>
+              <a href="/api/eval/export?format=json" class="btn-export-sm" download="bolibench_evaluation_results.json">
+                <span>📥 Export JSON</span>
+              </a>
+            </div>
+          </div>
+
+          <!-- Overall Reliability & Health Banner -->
+          <div class="health-ribbon">
+            <div class="health-item">
+              <span class="health-label">Total Run Attempts</span>
+              <span class="health-value" id="healthTotalRuns">0</span>
+            </div>
+            <div class="health-divider"></div>
+            <div class="health-item">
+              <span class="health-label">Completed Evaluations</span>
+              <span class="health-value status-success-text" id="healthCompletedRuns">0</span>
+            </div>
+            <div class="health-divider"></div>
+            <div class="health-item">
+              <span class="health-label">Partial Failures (Incomplete)</span>
+              <span class="health-value status-warning-text" id="healthIncompleteRuns">0</span>
+            </div>
+            <div class="health-divider"></div>
+            <div class="health-item">
+              <span class="health-label">Operational Errors (Failed)</span>
+              <span class="health-value status-danger-text" id="healthFailedRuns">0</span>
+            </div>
+            <div class="health-divider"></div>
+            <div class="health-item">
+              <span class="health-label">Live API Calls</span>
+              <span class="health-value" id="healthLiveCalls">0</span>
+            </div>
+            <div class="health-divider"></div>
+            <div class="health-item">
+              <span class="health-label">Mock Simulations</span>
+              <span class="health-value" id="healthMockRuns">0</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Mode-Separated Metrics Grid -->
+        <div class="mode-metrics-grid">
+          <!-- LIVE GNANI EVALUATION RESULTS CARD -->
+          <section class="card mode-card mode-live-card">
+            <div class="card-header">
+              <div class="mode-header-title">
+                <span class="mode-badge badge-live">LIVE GNANI EVALUATION</span>
+                <h3>Gnani Prisma STT v3 Benchmarks</h3>
+              </div>
+              <span class="mode-meta-pill" id="liveAttemptsPill">0 Attempts</span>
+            </div>
+            <div class="card-body">
+              <p class="mode-explainer">Performance evaluated against live Gnani Prisma STT v3 REST API. Computed strictly over completed runs. Failed and incomplete provider calls do not contaminate performance averages.</p>
+
+              <!-- Live Empty State Placeholder -->
+              <div class="empty-mode-state" id="liveEmptyStateBox">
+                <div class="empty-icon">📡</div>
+                <h4>No Completed Live Evaluations Yet</h4>
+                <p>Run a live paired evaluation in the <strong>Crash Lab</strong> with authorized credentials to populate real provider metrics. Live evaluation remains strictly gated behind manual confirmation and anti-CSRF token verification.</p>
+              </div>
+
+              <!-- Live Metrics Row (Hidden when 0 completed runs) -->
+              <div class="mode-stats-grid" id="liveStatsGrid" style="display: none;">
+                <div class="stat-box highlight-stat">
+                  <span class="stat-number" id="liveStatDistinctionRate">—%</span>
+                  <span class="stat-title">Semantic Distinction Preserved</span>
+                  <span class="stat-sub">Downstream pair contrast rate</span>
+                </div>
+                <div class="stat-box">
+                  <span class="stat-number" id="liveStatTaskSuccessRate">—%</span>
+                  <span class="stat-title">Task Success Rate</span>
+                  <span class="stat-sub">Valid downstream agent actions</span>
+                </div>
+                <div class="stat-box">
+                  <span class="stat-number" id="liveStatAvgWer">—</span>
+                  <span class="stat-title">Average Word Error Rate (WER)</span>
+                  <span class="stat-sub">Levenshtein token distance</span>
+                </div>
+                <div class="stat-box">
+                  <span class="stat-number" id="liveStatFieldAcc">—%</span>
+                  <span class="stat-title">Critical Field Accuracy</span>
+                  <span class="stat-sub">Slots (qty, negation, entities)</span>
+                </div>
+              </div>
+
+              <!-- Live Execution Counts Summary -->
+              <div class="mode-counts-row">
+                <div class="count-tag"><span class="count-num" id="liveStatCompleted">0</span> completed</div>
+                <div class="count-tag count-warning"><span class="count-num" id="liveStatIncomplete">0</span> incomplete</div>
+                <div class="count-tag count-danger"><span class="count-num" id="liveStatFailed">0</span> failed</div>
+              </div>
+            </div>
+          </section>
+
+          <!-- DETERMINISTIC MOCK DEMONSTRATION RESULTS CARD -->
+          <section class="card mode-card mode-mock-card">
+            <div class="card-header">
+              <div class="mode-header-title">
+                <span class="mode-badge badge-mock">MOCK DEMONSTRATION</span>
+                <h3>Deterministic Scenario Suite</h3>
+              </div>
+              <span class="mode-meta-pill" id="mockAttemptsPill">0 Attempts</span>
+            </div>
+            <div class="card-body">
+              <p class="mode-explainer">Deterministic, hand-authored speech-contrast test cases for regression testing and CI/CD validation. Consumes 0 Gnani credits and executes without external network dependencies.</p>
+
+              <!-- Mock Empty State Placeholder -->
+              <div class="empty-mode-state" id="mockEmptyStateBox">
+                <div class="empty-icon">🧪</div>
+                <h4>No Completed Mock Evaluations Yet</h4>
+                <p>Run a mock evaluation in the <strong>Crash Lab</strong> using "Run Preserved Distinction" or "Simulate Acoustic Crash" to populate deterministic baseline metrics.</p>
+              </div>
+
+              <!-- Mock Metrics Row -->
+              <div class="mode-stats-grid" id="mockStatsGrid" style="display: none;">
+                <div class="stat-box highlight-stat">
+                  <span class="stat-number" id="mockStatDistinctionRate">—%</span>
+                  <span class="stat-title">Semantic Distinction Preserved</span>
+                  <span class="stat-sub">Deterministic benchmark score</span>
+                </div>
+                <div class="stat-box">
+                  <span class="stat-number" id="mockStatTaskSuccessRate">—%</span>
+                  <span class="stat-title">Task Success Rate</span>
+                  <span class="stat-sub">Downstream agent decisions</span>
+                </div>
+                <div class="stat-box">
+                  <span class="stat-number" id="mockStatAvgWer">—</span>
+                  <span class="stat-title">Average Word Error Rate (WER)</span>
+                  <span class="stat-sub">Simulated transcript WER</span>
+                </div>
+                <div class="stat-box">
+                  <span class="stat-number" id="mockStatFieldAcc">—%</span>
+                  <span class="stat-title">Critical Field Accuracy</span>
+                  <span class="stat-sub">Slot extraction accuracy</span>
+                </div>
+              </div>
+
+              <!-- Mock Execution Counts Summary -->
+              <div class="mode-counts-row">
+                <div class="count-tag"><span class="count-num" id="mockStatCompleted">0</span> completed</div>
+                <div class="count-tag count-danger"><span class="count-num" id="mockStatFailed">0</span> failed</div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- Linguistic Category Performance Breakdown Table -->
+        <section class="card category-breakdown-card">
+          <div class="card-header">
+            <h2>Linguistic Category Performance Breakdown</h2>
+            <span class="badge">Completed Evaluations Only</span>
+          </div>
+          <div class="card-body">
+            <p class="section-desc">Performance breakdown by linguistic error type. Note how small speech errors in critical fields (quantities, negations, currency) produce disproportionate agent crashes compared to acoustic code-switching.</p>
+            <div class="table-responsive">
+              <table class="data-table" id="categoryBreakdownTable">
+                <thead>
+                  <tr>
+                    <th>Linguistic Category</th>
+                    <th>Mode</th>
+                    <th>Attempts</th>
+                    <th>Completed</th>
+                    <th>Failed / Incomp.</th>
+                    <th>Distinction Preserved</th>
+                    <th>Task Success</th>
+                    <th>Mean WER</th>
+                  </tr>
+                </thead>
+                <tbody id="categoryBreakdownBody">
+                  <tr>
+                    <td colspan="8" class="table-empty-cell">Loading category aggregates...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 2: PAIRED-CONTRAST CRASH LAB                                     -->
+    <!-- ===================================================================== -->
+    <div class="tab-pane" id="evaluateView" role="tabpanel" aria-labelledby="tabBtnEvaluate" style="display: none;">
+      <!-- Aggregate Benchmark Stats Banner (Maintained for backward-compat) -->
+      <section class="card benchmark-summary-card">
+        <div class="summary-stat-grid">
+          <div class="stat-box">
+            <span class="stat-number" id="statTotalRuns">0</span>
+            <span class="stat-title">Total Evaluations</span>
+          </div>
+          <div class="stat-box highlight-stat">
+            <span class="stat-number" id="statDistinctionRate">—%</span>
+            <span class="stat-title">Semantic Distinction Preserved</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-number" id="statTaskSuccessRate">—%</span>
+            <span class="stat-title">Downstream Task Success</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-number" id="statAvgWer">—</span>
+            <span class="stat-title">Mean Word Error Rate (WER)</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Main Evaluation Workspace Grid -->
+      <main class="eval-grid">
+        <!-- Left Column: Test Case Selection & Specifications -->
+        <section class="card eval-spec-card">
+          <div class="card-header">
+            <h2>1. Select Contrast Test Case</h2>
+            <span class="badge" id="testCategoryBadge">quantities_and_numbers</span>
+          </div>
+
+          <div class="eval-form-body">
+            <!-- Category Filter & Selector -->
+            <div class="form-group">
+              <label for="evalTestCaseSelect">Curated Test Pair</label>
+              <select id="evalTestCaseSelect" class="form-control">
+                {% for tc in test_cases %}
+                <option value="{{ tc.id }}" data-category="{{ tc.category.value }}" data-lang="{{ tc.language_code }}">
+                  [{{ tc.category.value }}] {{ tc.id }}: {{ tc.description }}
+                </option>
+                {% endfor %}
+              </select>
+              <span class="field-hint" id="testDescriptionText">Select an Indian voice AI edge case to inspect</span>
+            </div>
+
+            <!-- Paired Utterance Specifications -->
+            <div class="pair-specs-container">
+              <!-- Utterance A Card -->
+              <div class="utterance-spec-card" id="specCardA">
+                <div class="spec-card-header">
+                  <span class="spec-badge badge-a">Utterance A</span>
+                  <span class="lang-pill" id="specLangA">hi-IN</span>
+                </div>
+                <div class="spec-content">
+                  <div class="spec-row">
+                    <span class="spec-label">Spoken Reference:</span>
+                    <strong class="spec-text" id="specRefA">"Do packet chahiye."</strong>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Expected Intent:</span>
+                    <code id="specIntentA">ORDER_PRODUCT</code>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Expected Fields:</span>
+                    <code class="code-pill" id="specFieldsA">quantity: 2</code>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Agent Action:</span>
+                    <span class="action-tag" id="specActionA">order_items_qty_2</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Contrast Divider -->
+              <div class="contrast-divider">
+                <span class="vs-badge">VS</span>
+                <span class="contrast-label" id="specDistinctionField">Critical Distinction: quantity</span>
+              </div>
+
+              <!-- Utterance B Card -->
+              <div class="utterance-spec-card" id="specCardB">
+                <div class="spec-card-header">
+                  <span class="spec-badge badge-b">Utterance B (Contrast)</span>
+                  <span class="lang-pill" id="specLangB">hi-IN</span>
+                </div>
+                <div class="spec-content">
+                  <div class="spec-row">
+                    <span class="spec-label">Spoken Reference:</span>
+                    <strong class="spec-text" id="specRefB">"Teen packet chahiye."</strong>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Expected Intent:</span>
+                    <code id="specIntentB">ORDER_PRODUCT</code>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Expected Fields:</span>
+                    <code class="code-pill" id="specFieldsB">quantity: 3</code>
+                  </div>
+                  <div class="spec-row">
+                    <span class="spec-label">Agent Action:</span>
+                    <span class="action-tag" id="specActionB">order_items_qty_3</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Expected Distinction Card -->
+            <div class="distinction-summary-box">
+              <span class="dist-icon">🎯</span>
+              <div class="dist-content">
+                <strong>Evaluation Hypothesis:</strong>
+                <p id="specExpectedDistinctionText">Utterance A orders quantity 2 whereas Utterance B orders quantity 3.</p>
+              </div>
+            </div>
+
+            <!-- Run Action Buttons -->
+            <div class="eval-actions-group">
+              <button type="button" class="btn-success" id="btnRunMockIdeal" title="Runs deterministic simulation where distinction is preserved">
+                <span>Run Preserved Distinction (Mock)</span>
+              </button>
+              <button type="button" class="btn-danger" id="btnRunMockCrashed" title="Simulates a speech recognition collapse (e.g. teen -> do)">
+                <span>Simulate Transcript Crash (Error)</span>
+              </button>
+              <button type="button" class="btn-secondary" id="btnToggleCustomInputs">
+                <span>Custom Transcript Test</span>
+              </button>
+              <button type="button" class="btn-warning-action" id="btnToggleLiveEval">
+                <span>🎙️ Live Audio Pair (WAV &bull; Consumes Credits)</span>
+              </button>
+            </div>
+
+            <!-- Live Audio Pair Evaluation Drawer (Credit Protected) -->
+            <div class="live-eval-drawer" id="liveEvalDrawer" style="display: none;">
+              {% if not live_evaluation_enabled %}
+              <div class="banner banner-warning" id="liveDisabledWarning" style="margin-bottom: 1rem; border-color: rgba(239, 68, 68, 0.5); background: rgba(239, 68, 68, 0.1);">
+                <div class="banner-icon">🔒</div>
+                <div class="banner-content">
+                  <strong>Live Evaluation Disabled by Safety Policy</strong>
+                  <p>To protect programme credits on public deployments, live provider calls are disabled by default (<code>LIVE_EVALUATION_ENABLED=false</code>). For authorized local operator testing, set <code>LIVE_EVALUATION_ENABLED=true</code> in your local <code>.env</code> file.</p>
+                </div>
+              </div>
+              {% endif %}
+
+              <div class="credit-warning-box">
+                <span class="credit-warning-icon">⚠️</span>
+                <div class="credit-warning-text">
+                  <strong>Credit Protection Notice:</strong>
+                  <p>Evaluating this pair makes <strong>2 real requests</strong> to Gnani Prisma STT v3 and consumes account credits. Automated tests never consume credits. Live paired evaluation strictly accepts <strong>WAV format only</strong> with verifiable duration &le; 60 seconds.</p>
+                </div>
+              </div>
+
+              <!-- Utterance A Audio Upload with In-Browser Playback Preview -->
+              <div class="form-group audio-upload-group">
+                <label for="liveAudioInputA">
+                  Utterance A Audio (<span id="liveRefPromptA">Do packet chahiye</span>)
+                  <span class="badge-wav-only">WAV Only &bull; &le; 60s</span>
+                </label>
+                <input type="file" id="liveAudioInputA" accept=".wav,audio/wav" class="form-control file-input-ctrl">
+                <div class="audio-preview-container" id="previewContainerA" style="display: none;">
+                  <div class="audio-file-meta">
+                    <span class="file-name" id="fileNameA">audio_a.wav</span>
+                    <span class="file-size" id="fileSizeA">0 KB</span>
+                  </div>
+                  <audio id="liveAudioPreviewA" controls class="audio-player-mini" preload="none"></audio>
+                </div>
+              </div>
+
+              <!-- Utterance B Audio Upload with In-Browser Playback Preview -->
+              <div class="form-group audio-upload-group">
+                <label for="liveAudioInputB">
+                  Utterance B Audio (<span id="liveRefPromptB">Teen packet chahiye</span>)
+                  <span class="badge-wav-only">WAV Only &bull; &le; 60s</span>
+                </label>
+                <input type="file" id="liveAudioInputB" accept=".wav,audio/wav" class="form-control file-input-ctrl">
+                <div class="audio-preview-container" id="previewContainerB" style="display: none;">
+                  <div class="audio-file-meta">
+                    <span class="file-name" id="fileNameB">audio_b.wav</span>
+                    <span class="file-size" id="fileSizeB">0 KB</span>
+                  </div>
+                  <audio id="liveAudioPreviewB" controls class="audio-player-mini" preload="none"></audio>
+                </div>
+                <span class="field-hint">
+                  <strong>Format Policy:</strong> Live paired evaluation strictly validates duration (&le; 60s) via server-side PCM header inspection before sending to Gnani. Non-WAV audio is rejected.
+                </span>
+              </div>
+
+              <!-- Acoustic Environment Metadata Selector -->
+              <div class="form-group">
+                <label for="liveAudioCondition">Acoustic Condition (User-Declared Metadata)</label>
+                <select id="liveAudioCondition" class="form-control">
+                  <option value="clean_recorded" selected>clean_recorded (User-declared clean speech)</option>
+                  <option value="noisy_recorded">noisy_recorded (User-declared ambient noise)</option>
+                  <option value="clean_synthetic">clean_synthetic (Synthetic/TTS audio)</option>
+                  <option value="noisy_synthetic">noisy_synthetic (Synthetic audio with mixed noise)</option>
+                  <option value="pending_acoustic">pending_acoustic (Unverified acoustic condition)</option>
+                </select>
+                <span class="field-hint">
+                  <strong>Notice:</strong> Condition is user-declared metadata for benchmark cataloguing, not automatic acoustic verification or SNR measurement.
+                </span>
+              </div>
+
+              <div class="form-group">
+                <label class="checkbox-label highlight-checkbox">
+                  <input type="checkbox" id="confirmLiveCreditUsage">
+                  <span>I authorize 2 live API requests to Gnani Prisma and credit deduction</span>
+                </label>
+              </div>
+
+              <button type="button" class="btn-primary" id="btnExecuteLiveEval" disabled>
+                <span id="btnLiveEvalText">Execute Paired Live Evaluation</span>
+                <span class="btn-spinner" id="btnLiveSpinner" style="display: none;"></span>
+              </button>
+            </div>
+
+            <!-- Custom Transcript Input Drawer (Collapsible) -->
+            <div class="custom-transcript-drawer" id="customTranscriptDrawer" style="display: none;">
+              <h3>Custom Spoken Transcript Scoring</h3>
+              <p class="drawer-hint">Enter your own transcripts to test how BoliBench evaluates them against the ground truth specification:</p>
+              <div class="form-group">
+                <label for="customTranscriptA">Utterance A Actual Transcript</label>
+                <input type="text" id="customTranscriptA" class="form-control" placeholder="Enter transcript for Utterance A">
+              </div>
+              <div class="form-group">
+                <label for="customTranscriptB">Utterance B Actual Transcript</label>
+                <input type="text" id="customTranscriptB" class="form-control" placeholder="Enter transcript for Utterance B">
+              </div>
+              <button type="button" class="btn-primary" id="btnScoreCustomTranscripts">
+                <span>Score Custom Transcripts</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Right Column: Evaluation Scorecard & Crash Diagnostics -->
+        <section class="card eval-results-card">
+          <div class="card-header">
+            <h2>2. Evaluation Scorecard & Crash Analysis</h2>
+            <span class="status-badge status-idle" id="evalStatusBadge">Awaiting Execution</span>
+          </div>
+
+          <div class="eval-results-body" id="evalResultsPlaceholder">
+            <div class="empty-state">
+              <div class="empty-icon">📊</div>
+              <h3>No Evaluation Executed Yet</h3>
+              <p>Choose a test case on the left and click <strong>"Run Preserved Distinction"</strong> or <strong>"Simulate Transcript Crash"</strong> to see paired-contrast scoring, Word Error Rate, field extraction, and downstream agent impact.</p>
+            </div>
+          </div>
+
+          <div class="eval-results-body" id="evalResultsContainer" style="display: none;">
+            <!-- Primary Outcome Banner -->
+            <div class="outcome-banner" id="evalOutcomeBanner">
+              <div class="outcome-icon" id="evalOutcomeIcon">⚡</div>
+              <div class="outcome-details">
+                <div class="outcome-title-row">
+                  <h3 id="evalOutcomeTitle">Semantic Distinction Status</h3>
+                  <span class="exec-mode-pill" id="evalExecModePill">MOCK EVALUATION</span>
+                </div>
+                <p id="evalOutcomeExplanation"></p>
+              </div>
+            </div>
+
+            <!-- Key Metric Metrics Cards -->
+            <div class="scorecard-metric-row">
+              <div class="scorecard-metric-card">
+                <span class="metric-label">Semantic Distinction</span>
+                <span class="metric-val" id="metricDistinctionDisplay">—</span>
+              </div>
+              <div class="scorecard-metric-card">
+                <span class="metric-label">Downstream Task Success</span>
+                <span class="metric-val" id="metricTaskSuccessDisplay">—</span>
+              </div>
+              <div class="scorecard-metric-card">
+                <span class="metric-label">Mean WER</span>
+                <span class="metric-val" id="metricMeanWerDisplay">—</span>
+              </div>
+              <div class="scorecard-metric-card">
+                <span class="metric-label">Critical Field Acc.</span>
+                <span class="metric-val" id="metricFieldAccDisplay">—</span>
+              </div>
+            </div>
+
+            <!-- Detailed Utterance Comparison Table -->
+            <div class="comparison-table-wrapper">
+              <table class="contrast-table">
+                <thead>
+                  <tr>
+                    <th>Utterance</th>
+                    <th>Expected Reference</th>
+                    <th>Actual Transcript (Raw)</th>
+                    <th>WER</th>
+                    <th>Extracted Critical Fields</th>
+                    <th>Task Action</th>
+                  </tr>
+                </thead>
+                <tbody id="evalComparisonTableBody">
+                  <!-- Populated via JS -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Transliteration & Script Notice -->
+            <div class="transliteration-note" id="transliterationNote" style="display: none;">
+              <span class="note-icon">ℹ️</span>
+              <div class="note-content">
+                <strong>Script & Transliteration Caveat:</strong> Raw transcripts are displayed exactly as output without silent rewriting. When transcripts are rendered in Latin transliteration rather than native script (or vice versa), string WER is elevated even when semantic intent is fully preserved.
+              </div>
+            </div>
+
+            <!-- Voice Agent Crash Impact Analysis Card -->
+            <div class="crash-impact-card" id="crashImpactCard">
+              <div class="crash-card-header">
+                <span class="crash-icon">🚨</span>
+                <h4>Downstream Voice Agent Crash Analysis</h4>
+              </div>
+              <p id="crashImpactDescription" class="crash-impact-text"></p>
+              <div class="crash-field-tags" id="crashFieldTags"></div>
+            </div>
+
+            <!-- Run Metadata & Latency -->
+            <div class="run-telemetry-footer">
+              <span id="runIdDisplay">Run ID: —</span>
+              <span id="runLatencyDisplay">Latency: —</span>
+              <span id="runTimestampDisplay">Timestamp: —</span>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- Bottom History and Export Table (in Lab) -->
+      <section class="card eval-history-card">
+        <div class="card-header">
+          <h2>Recent Evaluation Runs</h2>
+          <div class="export-actions">
+            <a href="/api/eval/export?format=csv" class="btn-export" download="bolibench_evaluation_results.csv">
+              <span>📥 Export CSV</span>
+            </a>
+            <a href="/api/eval/export?format=json" class="btn-export" download="bolibench_evaluation_results.json">
+              <span>📥 Export JSON</span>
+            </a>
+          </div>
+        </div>
+
+        <div class="history-table-wrapper">
+          <table class="history-table">
+            <thead>
+              <tr>
+                <th>Run ID</th>
+                <th>Test Case ID</th>
+                <th>Status</th>
+                <th>Category</th>
+                <th>Language</th>
+                <th>Distinction Preserved</th>
+                <th>Task Success</th>
+                <th>Mean WER</th>
+                <th>Failure Category</th>
+                <th>Mode</th>
+                <th>Timestamp</th>
+              </tr>
+            </thead>
+            <tbody id="historyTableBody">
+              <!-- Populated via JS -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 3: BENCHMARK CATALOGUE                                           -->
+    <!-- ===================================================================== -->
+    <div class="tab-pane" id="catalogueView" role="tabpanel" aria-labelledby="tabBtnCatalogue" style="display: none;">
+      <section class="card catalogue-card">
+        <div class="card-header">
+          <div>
+            <span class="eyebrow-badge">SEED BENCHMARK DATASET</span>
+            <h2>Curated Contrast Test Cases</h2>
+            <p class="section-desc">Browse the 12 paired-contrast test cases (24 contrast utterances) covering core Indian voice AI crash vectors. Each test case isolates a minimal acoustic contrast where an ASR error triggers an irreversible business mistake.</p>
+          </div>
+          <span class="badge" id="catalogueCountBadge">12 Test Pairs</span>
+        </div>
+
+        <!-- Catalogue Filter Bar -->
+        <div class="catalogue-toolbar">
+          <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="catalogueSearchInput" class="form-control" placeholder="Search test cases by ID, description, or reference text...">
+          </div>
+          <div class="category-filter-group">
+            <label for="catalogueCategoryFilter">Category:</label>
+            <select id="catalogueCategoryFilter" class="form-control">
+              <option value="all" selected>All Categories (12)</option>
+              <option value="quantities_and_numbers">Quantities & Numbers</option>
+              <option value="negation">Negation</option>
+              <option value="corrections_and_mind_changes">Corrections & Mind Changes</option>
+              <option value="product_names">Product Names</option>
+              <option value="named_entities">Named Entities</option>
+              <option value="command_intent">Command Intent</option>
+              <option value="hindi_english_code_switching">Hindi-English Code-Switching</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Catalogue Cards Grid -->
+        <div class="catalogue-grid" id="catalogueGrid">
+          <!-- Populated via JS -->
+        </div>
+      </section>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 4: EVALUATION HISTORY & OPERATIONAL STATUS                       -->
+    <!-- ===================================================================== -->
+    <div class="tab-pane" id="historyView" role="tabpanel" aria-labelledby="tabBtnHistory" style="display: none;">
+      <section class="card history-full-card">
+        <div class="card-header">
+          <div>
+            <span class="eyebrow-badge">AUDIT TRAIL & SYSTEM RELIABILITY</span>
+            <h2>Evaluation Run History & Operational Status</h2>
+            <p class="section-desc">Inspect all recorded evaluation attempts from SQLite storage. Operational provider errors and incomplete runs are audited separately from semantic evaluation scores.</p>
+          </div>
+          <div class="export-actions">
+            <a href="/api/eval/export?format=csv" class="btn-export" download="bolibench_evaluation_results.csv">
+              <span>📥 Export CSV</span>
+            </a>
+            <a href="/api/eval/export?format=json" class="btn-export" download="bolibench_evaluation_results.json">
+              <span>📥 Export JSON</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- History Filter Buttons -->
+        <div class="history-filter-toolbar">
+          <div class="status-filter-pills" role="group" aria-label="Status filters">
+            <button type="button" class="status-filter-btn active" data-status="all">All Runs (<span id="countFilterAll">0</span>)</button>
+            <button type="button" class="status-filter-btn" data-status="completed">Completed (<span id="countFilterCompleted">0</span>)</button>
+            <button type="button" class="status-filter-btn" data-status="failed">Failed (<span id="countFilterFailed">0</span>)</button>
+            <button type="button" class="status-filter-btn" data-status="incomplete">Incomplete (<span id="countFilterIncomplete">0</span>)</button>
+          </div>
+          <span class="history-tip">Failed runs display operational errors without corrupting benchmark WER</span>
+        </div>
+
+        <!-- Full History Table -->
+        <div class="table-responsive">
+          <table class="data-table history-full-table">
+            <thead>
+              <tr>
+                <th>Run ID</th>
+                <th>Test Case</th>
+                <th>Overall Status</th>
+                <th>Execution Mode</th>
+                <th>Semantic Distinction</th>
+                <th>Task Success</th>
+                <th>Mean WER</th>
+                <th>Failure Taxonomy</th>
+                <th>Operational Details</th>
+                <th>Timestamp</th>
+              </tr>
+            </thead>
+            <tbody id="historyFullTableBody">
+              <tr>
+                <td colspan="10" class="table-empty-cell">Loading evaluation history...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 5: METHODOLOGY & LIMITATIONS (Educational / Judge Guide)          -->
+    <!-- ===================================================================== -->
+    <div class="tab-pane" id="methodologyView" role="tabpanel" aria-labelledby="tabBtnMethodology" style="display: none;">
+      <div class="methodology-container">
+        <!-- Section 1: Executive Summary -->
+        <section class="card methodology-card">
+          <div class="card-header">
+            <span class="eyebrow-badge">CORE RESEARCH THESIS</span>
+            <h2>The Indian Voice AI Evaluation Paradox</h2>
+          </div>
+          <div class="methodology-body">
+            <p class="lead-text">Standard speech recognition benchmarks evaluate models using aggregate Word Error Rate (WER). An ASR engine achieving an 8% WER on an Indian conversational benchmark is typically considered state-of-the-art. Yet in a voice agent deployment, <strong>that single 8% error is often catastrophic</strong>.</p>
+            <div class="comparison-callout-grid">
+              <div class="callout-card callout-bad">
+                <span class="callout-icon">❌</span>
+                <h4>Aggregate WER Blindspot</h4>
+                <p>If an ASR model confuses <em>"teen packet"</em> (three packets) with <em>"do packet"</em> (two packets), it achieves 33% WER on the phrase. But downstream in the warehouse management system, this causes an incorrect physical dispatch, financial reconciliation failure, and customer refund dispute.</p>
+              </div>
+              <div class="callout-card callout-good">
+                <span class="callout-icon">⚡</span>
+                <h4>BoliBench Paired-Contrast Testing</h4>
+                <p>BoliBench tests voice AI agents against minimal semantic contrast pairs. By testing how the speech engine handles minimal token shifts in critical slots (quantities, negations, financial amounts), BoliBench isolates whether the downstream voice agent's decision collapses.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Section 2: Methodology Architecture -->
+        <section class="card methodology-card">
+          <div class="card-header">
+            <h2>Evaluation Methodology & Taxonomy</h2>
+          </div>
+          <div class="methodology-body">
+            <div class="methodology-grid">
+              <div class="method-col">
+                <h3>1. Paired-Contrast Design</h3>
+                <p>Each benchmark item consists of Utterance A and Utterance B differing by a single high-impact variable:</p>
+                <ul class="method-list">
+                  <li><strong>Quantities & Numbers:</strong> Minimal numeral contrasts (e.g. <em>"Do packet"</em> vs <em>"Teen packet"</em>, <em>"Pachees"</em> vs <em>"Pachaas"</em>).</li>
+                  <li><strong>Negation & Reversal:</strong> Subtle affirmation vs cancellation (e.g. <em>"Haan confirm kardo"</em> vs <em>"Nahi cancel kardo"</em>).</li>
+                  <li><strong>Code-Switching (Hinglish/Tanglish):</strong> Alternational and insertional language mixing.</li>
+                  <li><strong>Currency & Denominations:</strong> Units and multipliers (e.g. <em>"Pachas hazar"</em> vs <em>"Pachas sau"</em>).</li>
+                  <li><strong>Discourse Particles:</strong> Particles like <em>"toh"</em>, <em>"hi"</em>, <em>"na"</em> that flip conversational intent.</li>
+                  <li><strong>Cross-Lingual Homophones:</strong> Words phonetically similar across English and Indian languages.</li>
+                </ul>
+              </div>
+
+              <div class="method-col">
+                <h3>2. Deterministic Scoring</h3>
+                <p>Unlike slow, non-deterministic LLM judges, BoliBench utilizes a deterministic evaluation pipeline:</p>
+                <ul class="method-list">
+                  <li><strong>Normalizer:</strong> Normalizes whitespace and common Indian script variations while preserving critical distinction tokens.</li>
+                  <li><strong>Slot Extractor:</strong> Extracts critical entity slots (quantities, negation states, amounts, products).</li>
+                  <li><strong>Action Comparator:</strong> Maps extracted slots to agent action signatures. If both contrast utterances produce identical actions, a <strong>Semantic Distinction Collapse</strong> is recorded.</li>
+                  <li><strong>Failure Taxonomy:</strong> Classifies failure modes into <code>quantity_error</code>, <code>missed_negation</code>, <code>entity_substitution</code>, <code>command_intent_error</code>, or <code>provider_error</code>.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Section 3: Limitations & Indian Speech Reality -->
+        <section class="card methodology-card">
+          <div class="card-header">
+            <h2>Linguistic Realities & Limitations</h2>
+          </div>
+          <div class="methodology-body">
+            <div class="limitation-items">
+              <div class="limitation-card">
+                <span class="limitation-num">01</span>
+                <div>
+                  <h4>Transliteration & Cross-Script WER Elevation</h4>
+                  <p>In Indian speech-to-text, providers frequently output either Latin script (e.g. <em>"Do packet chahiye"</em>) or native Devanagari (e.g. <em>"दो पैकेट चाहिए"</em>). Standard WER algorithms compute string edit distance between Latin references and Devanagari hypotheses, creating an artificial 100% WER score even when the transcript is acoustically perfect. BoliBench clearly displays the raw transcript without silent rewriting and evaluates semantic field extraction independently of script representation.</p>
+                </div>
+              </div>
+
+              <div class="limitation-card">
+                <span class="limitation-num">02</span>
+                <div>
+                  <h4>Deterministic Mocks vs Real Acoustic Recordings</h4>
+                  <p>Text simulations provide reproducible, zero-cost CI/CD regression testing. However, synthetic text contrasts do not simulate acoustic channel noise, microphone clipping, regional accents, or conversational speech overlap. BoliBench enforces strict separation: synthetic simulations are never labeled as observed provider errors.</p>
+                </div>
+              </div>
+
+              <div class="limitation-card">
+                <span class="limitation-num">03</span>
+                <div>
+                  <h4>Live Provider Duration & Safety Enforcement</h4>
+                  <p>To protect competition programme credits, live paired evaluations strictly require WAV audio under 60 seconds with server-side duration parsing, single-use 5-minute cryptographic authorization tokens, and same-origin CSRF verification. When the upstream provider encounters an operational outage (HTTP 502/504), BoliBench audits the failure neutrally without labeling it as a semantic model failure.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 6: SPEECH RECOGNITION LAB (Single Clip)                          -->
+    <!-- ===================================================================== -->
+    <div class="tab-pane" id="transcribeView" role="tabpanel" aria-labelledby="tabBtnTranscribe" style="display: none;">
       <main class="lab-grid">
         <!-- Input Card -->
         <section class="card input-card">
@@ -201,347 +995,12 @@
       </main>
     </div>
 
-    <!-- Tab 2: Paired-Contrast Crash Lab (Differentiating Evaluation Engine) -->
-    <div class="tab-pane" id="evaluateView" style="display: none;">
-      <!-- Aggregate Benchmark Stats Banner -->
-      <section class="card benchmark-summary-card">
-        <div class="summary-stat-grid">
-          <div class="stat-box">
-            <span class="stat-number" id="statTotalRuns">0</span>
-            <span class="stat-title">Total Evaluations</span>
-          </div>
-          <div class="stat-box highlight-stat">
-            <span class="stat-number" id="statDistinctionRate">—%</span>
-            <span class="stat-title">Semantic Distinction Preserved</span>
-          </div>
-          <div class="stat-box">
-            <span class="stat-number" id="statTaskSuccessRate">—%</span>
-            <span class="stat-title">Downstream Task Success</span>
-          </div>
-          <div class="stat-box">
-            <span class="stat-number" id="statAvgWer">—</span>
-            <span class="stat-title">Mean Word Error Rate (WER)</span>
-          </div>
-        </div>
-      </section>
-
-      <!-- Main Evaluation Workspace Grid -->
-      <main class="eval-grid">
-        <!-- Left Column: Test Case Selection & Specifications -->
-        <section class="card eval-spec-card">
-          <div class="card-header">
-            <h2>1. Select Contrast Test Case</h2>
-            <span class="badge" id="testCategoryBadge">quantities_and_numbers</span>
-          </div>
-
-          <div class="eval-form-body">
-            <!-- Category Filter & Selector -->
-            <div class="form-group">
-              <label for="evalTestCaseSelect">Curated Test Pair</label>
-              <select id="evalTestCaseSelect" class="form-control">
-                {% for tc in test_cases %}
-                <option value="{{ tc.id }}" data-category="{{ tc.category.value }}" data-lang="{{ tc.language_code }}">
-                  [{{ tc.category.value }}] {{ tc.id }}: {{ tc.description }}
-                </option>
-                {% endfor %}
-              </select>
-              <span class="field-hint" id="testDescriptionText">Select an Indian voice AI edge case to inspect</span>
-            </div>
-
-            <!-- Paired Utterance Specifications -->
-            <div class="pair-specs-container">
-              <!-- Utterance A Card -->
-              <div class="utterance-spec-card" id="specCardA">
-                <div class="spec-card-header">
-                  <span class="spec-badge badge-a">Utterance A</span>
-                  <span class="lang-pill" id="specLangA">hi-IN</span>
-                </div>
-                <div class="spec-content">
-                  <div class="spec-row">
-                    <span class="spec-label">Spoken Reference:</span>
-                    <strong class="spec-text" id="specRefA">"Do packet chahiye."</strong>
-                  </div>
-                  <div class="spec-row">
-                    <span class="spec-label">Expected Intent:</span>
-                    <code id="specIntentA">ORDER_PRODUCT</code>
-                  </div>
-                  <div class="spec-row">
-                    <span class="spec-label">Expected Fields:</span>
-                    <code class="code-pill" id="specFieldsA">quantity: 2</code>
-                  </div>
-                  <div class="spec-row">
-                    <span class="spec-label">Agent Action:</span>
-                    <span class="action-tag" id="specActionA">order_items_qty_2</span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Contrast Divider -->
-              <div class="contrast-divider">
-                <span class="vs-badge">VS</span>
-                <span class="contrast-label" id="specDistinctionField">Critical Distinction: quantity</span>
-              </div>
-
-              <!-- Utterance B Card -->
-              <div class="utterance-spec-card" id="specCardB">
-                <div class="spec-card-header">
-                  <span class="spec-badge badge-b">Utterance B (Contrast)</span>
-                  <span class="lang-pill" id="specLangB">hi-IN</span>
-                </div>
-                <div class="spec-content">
-                  <div class="spec-row">
-                    <span class="spec-label">Spoken Reference:</span>
-                    <strong class="spec-text" id="specRefB">"Teen packet chahiye."</strong>
-                  </div>
-                  <div class="spec-row">
-                    <span class="spec-label">Expected Intent:</span>
-                    <code id="specIntentB">ORDER_PRODUCT</code>
-                  </div>
-                  <div class="spec-row">
-                    <span class="spec-label">Expected Fields:</span>
-                    <code class="code-pill" id="specFieldsB">quantity: 3</code>
-                  </div>
-                  <div class="spec-row">
-                    <span class="spec-label">Agent Action:</span>
-                    <span class="action-tag" id="specActionB">order_items_qty_3</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Expected Distinction Card -->
-            <div class="distinction-summary-box">
-              <span class="dist-icon">🎯</span>
-              <div class="dist-content">
-                <strong>Evaluation Hypothesis:</strong>
-                <p id="specExpectedDistinctionText">Utterance A orders quantity 2 whereas Utterance B orders quantity 3.</p>
-              </div>
-            </div>
-
-            <!-- Run Action Buttons -->
-            <div class="eval-actions-group">
-              <button type="button" class="btn-success" id="btnRunMockIdeal">
-                <span>Run Preserved Distinction (Mock)</span>
-              </button>
-              <button type="button" class="btn-danger" id="btnRunMockCrashed">
-                <span>Simulate Transcript Crash (Error)</span>
-              </button>
-              <button type="button" class="btn-secondary" id="btnToggleCustomInputs">
-                <span>Custom Transcript Test</span>
-              </button>
-              <button type="button" class="btn-warning-action" id="btnToggleLiveEval">
-                <span>🎙️ Live Audio Pair (Consumes Credits)</span>
-              </button>
-            </div>
-
-            <!-- Live Audio Pair Evaluation Drawer (Credit Protected) -->
-            <div class="live-eval-drawer" id="liveEvalDrawer" style="display: none;">
-              {% if not live_evaluation_enabled %}
-              <div class="banner banner-warning" id="liveDisabledWarning" style="margin-bottom: 1rem; border-color: rgba(239, 68, 68, 0.5); background: rgba(239, 68, 68, 0.1);">
-                <div class="banner-icon">🔒</div>
-                <div class="banner-content">
-                  <strong>Live Evaluation Disabled by Safety Policy</strong>
-                  <p>To protect programme credits on public deployments, live provider calls are disabled by default (<code>LIVE_EVALUATION_ENABLED=false</code>). For authorized local operator testing, set <code>LIVE_EVALUATION_ENABLED=true</code> in your local <code>.env</code> file.</p>
-                </div>
-              </div>
-              {% endif %}
-
-              <div class="credit-warning-box">
-                <span class="credit-warning-icon">⚠️</span>
-                <div class="credit-warning-text">
-                  <strong>Credit Protection Notice:</strong>
-                  <p>Evaluating this pair makes <strong>2 real requests</strong> to Gnani Prisma STT v3 and consumes account credits. Official documentation does not specify per-request cost; do not assume an undocumented credit rate. Automated tests never consume credits.</p>
-                </div>
-              </div>
-
-              <div class="form-group">
-                <label for="liveAudioInputA">Utterance A Audio (<span id="liveRefPromptA">Do packet chahiye</span>) — <strong>WAV format only (duration verifiably &le; 60s)</strong></label>
-                <input type="file" id="liveAudioInputA" accept=".wav,audio/wav" class="form-control">
-              </div>
-
-              <div class="form-group">
-                <label for="liveAudioInputB">Utterance B Audio (<span id="liveRefPromptB">Teen packet chahiye</span>) — <strong>WAV format only (duration verifiably &le; 60s)</strong></label>
-                <input type="file" id="liveAudioInputB" accept=".wav,audio/wav" class="form-control">
-                <span class="field-hint" style="color: var(--text-muted); font-size: 0.8rem; display: block; margin-top: 0.35rem;">
-                  <strong>Format Policy:</strong> Live evaluation strictly enforces server-side duration parsing (&le; 60s) before any provider call to protect credits. Only WAV files are accepted for live evaluation.
-                </span>
-              </div>
-
-              <!-- Acoustic Environment Metadata Selector -->
-              <div class="form-group">
-                <label for="liveAudioCondition">Acoustic Condition (User-Declared Metadata)</label>
-                <select id="liveAudioCondition" class="form-control">
-                  <option value="clean_recorded" selected>clean_recorded (User-declared clean speech)</option>
-                  <option value="noisy_recorded">noisy_recorded (User-declared ambient noise)</option>
-                  <option value="clean_synthetic">clean_synthetic (Synthetic/TTS audio)</option>
-                  <option value="noisy_synthetic">noisy_synthetic (Synthetic audio with mixed noise)</option>
-                  <option value="pending_acoustic">pending_acoustic (Unverified acoustic condition)</option>
-                </select>
-                <span class="field-hint" style="color: var(--text-muted); font-size: 0.8rem; display: block; margin-top: 0.35rem;">
-                  <strong>Notice:</strong> This condition is user-declared metadata for benchmark cataloguing, not automatic acoustic verification or SNR measurement.
-                </span>
-              </div>
-
-              <div class="form-group">
-                <label class="checkbox-label highlight-checkbox">
-                  <input type="checkbox" id="confirmLiveCreditUsage">
-                  <span>I authorize 2 live API requests to Gnani Prisma and credit deduction</span>
-                </label>
-              </div>
-
-              <button type="button" class="btn-primary" id="btnExecuteLiveEval" disabled>
-                <span id="btnLiveEvalText">Execute Paired Live Evaluation</span>
-                <span class="btn-spinner" id="btnLiveSpinner" style="display: none;"></span>
-              </button>
-            </div>
-
-            <!-- Custom Transcript Input Drawer (Collapsible) -->
-            <div class="custom-transcript-drawer" id="customTranscriptDrawer" style="display: none;">
-              <h3>Custom Spoken Transcript Scoring</h3>
-              <p class="drawer-hint">Enter your own transcripts to test how BoliBench evaluates them against the ground truth specification:</p>
-              <div class="form-group">
-                <label for="customTranscriptA">Utterance A Actual Transcript</label>
-                <input type="text" id="customTranscriptA" class="form-control" placeholder="Enter transcript for Utterance A">
-              </div>
-              <div class="form-group">
-                <label for="customTranscriptB">Utterance B Actual Transcript</label>
-                <input type="text" id="customTranscriptB" class="form-control" placeholder="Enter transcript for Utterance B">
-              </div>
-              <button type="button" class="btn-primary" id="btnScoreCustomTranscripts">
-                <span>Score Custom Transcripts</span>
-              </button>
-            </div>
-          </div>
-        </section>
-
-        <!-- Right Column: Evaluation Scorecard & Crash Diagnostics -->
-        <section class="card eval-results-card">
-          <div class="card-header">
-            <h2>2. Evaluation Scorecard & Crash Analysis</h2>
-            <span class="status-badge status-idle" id="evalStatusBadge">Awaiting Execution</span>
-          </div>
-
-          <div class="eval-results-body" id="evalResultsPlaceholder">
-            <div class="empty-state">
-              <div class="empty-icon">📊</div>
-              <h3>No Evaluation Executed Yet</h3>
-              <p>Choose a test case on the left and click <strong>"Run Preserved Distinction"</strong> or <strong>"Simulate Acoustic Crash"</strong> to see paired-contrast scoring, Word Error Rate, field extraction, and downstream agent impact.</p>
-            </div>
-          </div>
-
-          <div class="eval-results-body" id="evalResultsContainer" style="display: none;">
-            <!-- Primary Outcome Banner -->
-            <div class="outcome-banner" id="evalOutcomeBanner">
-              <div class="outcome-icon" id="evalOutcomeIcon">⚡</div>
-              <div class="outcome-details">
-                <div class="outcome-title-row">
-                  <h3 id="evalOutcomeTitle">Semantic Distinction Status</h3>
-                  <span class="exec-mode-pill" id="evalExecModePill">MOCK MODE</span>
-                </div>
-                <p id="evalOutcomeExplanation"></p>
-              </div>
-            </div>
-
-            <!-- Key Metric Metrics Cards -->
-            <div class="scorecard-metric-row">
-              <div class="scorecard-metric-card">
-                <span class="metric-label">Semantic Distinction</span>
-                <span class="metric-val" id="metricDistinctionDisplay">—</span>
-              </div>
-              <div class="scorecard-metric-card">
-                <span class="metric-label">Downstream Task Success</span>
-                <span class="metric-val" id="metricTaskSuccessDisplay">—</span>
-              </div>
-              <div class="scorecard-metric-card">
-                <span class="metric-label">Mean WER</span>
-                <span class="metric-val" id="metricMeanWerDisplay">—</span>
-              </div>
-              <div class="scorecard-metric-card">
-                <span class="metric-label">Critical Field Acc.</span>
-                <span class="metric-val" id="metricFieldAccDisplay">—</span>
-              </div>
-            </div>
-
-            <!-- Detailed Utterance Comparison Table -->
-            <div class="comparison-table-wrapper">
-              <table class="contrast-table">
-                <thead>
-                  <tr>
-                    <th>Utterance</th>
-                    <th>Expected Reference</th>
-                    <th>Actual Transcript</th>
-                    <th>WER</th>
-                    <th>Extracted Critical Fields</th>
-                    <th>Task Action</th>
-                  </tr>
-                </thead>
-                <tbody id="evalComparisonTableBody">
-                  <!-- Populated via JS -->
-                </tbody>
-              </table>
-            </div>
-
-            <!-- Voice Agent Crash Impact Analysis Card -->
-            <div class="crash-impact-card" id="crashImpactCard">
-              <div class="crash-card-header">
-                <span class="crash-icon">🚨</span>
-                <h4>Downstream Voice Agent Crash Analysis</h4>
-              </div>
-              <p id="crashImpactDescription" class="crash-impact-text"></p>
-              <div class="crash-field-tags" id="crashFieldTags"></div>
-            </div>
-
-            <!-- Run Metadata & Latency -->
-            <div class="run-telemetry-footer">
-              <span id="runIdDisplay">Run ID: —</span>
-              <span id="runLatencyDisplay">Client Latency: — ms</span>
-              <span id="runTimestampDisplay">Timestamp: —</span>
-            </div>
-          </div>
-        </section>
-      </main>
-
-      <!-- Bottom History and Export Table -->
-      <section class="card eval-history-card">
-        <div class="card-header">
-          <h2>Evaluation Run History & Data Export</h2>
-          <div class="export-actions">
-            <a href="/api/eval/export?format=csv" class="btn-export" download="bolibench_evaluation_results.csv">
-              <span>📥 Export CSV</span>
-            </a>
-            <a href="/api/eval/export?format=json" class="btn-export" download="bolibench_evaluation_results.json">
-              <span>📥 Export JSON</span>
-            </a>
-          </div>
-        </div>
-
-        <div class="history-table-wrapper">
-          <table class="history-table">
-            <thead>
-              <tr>
-                <th>Run ID</th>
-                <th>Test Case ID</th>
-                <th>Category</th>
-                <th>Language</th>
-                <th>Distinction Preserved</th>
-                <th>Task Success</th>
-                <th>Mean WER</th>
-                <th>Failure Category</th>
-                <th>Mode</th>
-                <th>Timestamp</th>
-              </tr>
-            </thead>
-            <tbody id="historyTableBody">
-              <!-- Populated via JS -->
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
-
     <!-- Footer -->
     <footer class="app-footer">
-      <p>Built for the <strong>Great Indian AI Internship Challenge by Gnani AI</strong> &bull; Powered by FastAPI & Gnani Prisma STT v3 REST</p>
+      <div class="footer-content">
+        <p>BoliBench &bull; Built for the <strong>Great Indian AI Internship Challenge by Gnani AI</strong></p>
+        <p class="footer-meta">Evaluation Framework: Paired-Contrast Semantic Engine &bull; Upstream: Gnani Prisma STT v3 REST &bull; Mode: <strong>LIVE_EVALUATION_ENABLED={{ live_evaluation_enabled }}</strong></p>
+      </div>
     </footer>
   </div>
 

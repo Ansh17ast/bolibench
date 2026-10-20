@@ -139,14 +139,33 @@ class PairEvaluationResult(BaseModel):
     simulated_latency_ms: Optional[float] = Field(None, description="Simulated latency for demonstration purposes (clearly distinguished from measured latency)")
 
 
+class ModePerformanceMetrics(BaseModel):
+    """Performance metrics aggregated for a specific execution mode (completed runs only)."""
+    total_attempts: int = Field(0, description="Total attempts initiated in this mode (completed, failed, incomplete)")
+    completed_runs: int = Field(0, description="Count of successfully completed evaluations in this mode")
+    failed_runs: int = Field(0, description="Count of operational failed runs in this mode")
+    incomplete_runs: int = Field(0, description="Count of partial failures in this mode")
+    distinction_preservation_rate: Optional[float] = Field(None, description="Semantic distinction preservation rate (0.0-100.0%) across completed runs in this mode; None if no completed runs")
+    task_success_rate: Optional[float] = Field(None, description="Downstream task success rate (0.0-100.0%) across completed runs in this mode; None if no completed runs")
+    average_wer: Optional[float] = Field(None, description="Average Word Error Rate across completed runs in this mode; None if no completed runs")
+    average_critical_field_accuracy: Optional[float] = Field(None, description="Average critical field accuracy (0.0-100.0%) across completed runs in this mode; None if no completed runs")
+    category_breakdown: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="Performance metrics by category for this mode over completed runs")
+
+
 class AggregateMetrics(BaseModel):
-    """Summary metrics across evaluation runs."""
+    """Summary metrics across evaluation runs with explicit separation between mock demonstration and live evaluation."""
     total_runs: int = Field(0, description="Total number of evaluation run attempts (completed, incomplete, and failed)")
     completed_runs: int = Field(0, description="Total number of successfully completed paired evaluations")
     failed_runs: int = Field(0, description="Total number of operational failed runs (aborted before completing pair)")
     incomplete_runs: int = Field(0, description="Total number of partial live failures (A completed, B failed)")
     mock_runs: int = Field(0, description="Total evaluation attempts executed in deterministic mock mode")
     live_runs: int = Field(0, description="Total evaluation attempts executed against live provider API")
+
+    # Mode-isolated performance metrics
+    mock: ModePerformanceMetrics = Field(default_factory=ModePerformanceMetrics, description="Isolated performance metrics for deterministic mock runs")
+    live: ModePerformanceMetrics = Field(default_factory=ModePerformanceMetrics, description="Isolated performance metrics for live Gnani Prisma evaluations")
+
+    # Overall / backward-compatible aggregates (completed runs across all modes)
     distinction_preservation_rate: Optional[float] = Field(None, description="Distinction preservation rate (0.0-100.0%) across completed runs; None if no completed runs exist")
     task_success_rate: Optional[float] = Field(None, description="Task success rate (0.0-100.0%) across completed runs; None if no completed runs exist")
     average_wer: Optional[float] = Field(None, description="Average Word Error Rate across completed runs; None if no completed runs exist")
