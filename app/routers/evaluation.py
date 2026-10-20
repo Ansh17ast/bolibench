@@ -61,6 +61,8 @@ async def authorize_live_evaluation(
         "test_case_id": req.test_id,
         "confirmation_token": token,
         "expires_in_seconds": int(live_guard.TOKEN_TTL_SECONDS),
+        "required_header": live_guard.REQUIRED_CONFIRM_HEADER,
+        "required_header_value": live_guard.EXPECTED_HEADER_VALUE,
         "warning": "Authorizing live evaluation. This operation will invoke 2 real requests to Gnani Prisma STT v3 and consume programme credits.",
     }
 

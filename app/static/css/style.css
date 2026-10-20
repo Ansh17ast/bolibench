@@ -1630,7 +1630,13 @@ body {
   border-left: 3px solid #ef4444;
 }
 
-/* Category Breakdown Table */
+/* Category Breakdown Tables */
+.category-breakdown-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
 .category-breakdown-card {
   padding: 1.5rem;
 }

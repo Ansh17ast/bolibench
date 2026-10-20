@@ -127,12 +127,12 @@
             </div>
             <div class="health-divider"></div>
             <div class="health-item">
-              <span class="health-label">Live API Calls</span>
-              <span class="health-value" id="healthLiveCalls">0</span>
+              <span class="health-label">Live Evaluation Attempts</span>
+              <span class="health-value" id="healthLiveAttempts">0</span>
             </div>
             <div class="health-divider"></div>
             <div class="health-item">
-              <span class="health-label">Mock Simulations</span>
+              <span class="health-label">Mock Demonstration Runs</span>
               <span class="health-value" id="healthMockRuns">0</span>
             </div>
           </div>
@@ -244,37 +244,82 @@
           </section>
         </div>
 
-        <!-- Linguistic Category Performance Breakdown Table -->
-        <section class="card category-breakdown-card">
-          <div class="card-header">
-            <h2>Linguistic Category Performance Breakdown</h2>
-            <span class="badge">Completed Evaluations Only</span>
-          </div>
-          <div class="card-body">
-            <p class="section-desc">Performance breakdown by linguistic error type. Note how small speech errors in critical fields (quantities, negations, currency) produce disproportionate agent crashes compared to acoustic code-switching.</p>
-            <div class="table-responsive">
-              <table class="data-table" id="categoryBreakdownTable">
-                <thead>
-                  <tr>
-                    <th>Linguistic Category</th>
-                    <th>Mode</th>
-                    <th>Attempts</th>
-                    <th>Completed</th>
-                    <th>Failed / Incomp.</th>
-                    <th>Distinction Preserved</th>
-                    <th>Task Success</th>
-                    <th>Mean WER</th>
-                  </tr>
-                </thead>
-                <tbody id="categoryBreakdownBody">
-                  <tr>
-                    <td colspan="8" class="table-empty-cell">Loading category aggregates...</td>
-                  </tr>
-                </tbody>
-              </table>
+        <!-- Mode-Separated Linguistic Category Performance Breakdown -->
+        <div class="category-breakdown-wrapper">
+          <!-- LIVE GNANI CATEGORY BREAKDOWN -->
+          <section class="card category-breakdown-card" id="liveCategoryCard">
+            <div class="card-header">
+              <div class="mode-header-title">
+                <span class="mode-badge badge-live">LIVE GNANI EVALUATION</span>
+                <h3>Live Linguistic Category Performance</h3>
+              </div>
+              <span class="badge">Completed Evaluations Only</span>
             </div>
-          </div>
-        </section>
+            <div class="card-body">
+              <p class="section-desc">Category performance evaluated strictly against live Gnani Prisma STT v3 REST API. Failed and incomplete provider calls do not contaminate performance averages.</p>
+              <div class="empty-mode-state" id="liveCatEmptyBox" style="display: none; padding: 1.5rem;">
+                <p>No completed live Gnani evaluations recorded yet.</p>
+              </div>
+              <div class="table-responsive" id="liveCatTableWrapper">
+                <table class="data-table" id="liveCategoryTable">
+                  <thead>
+                    <tr>
+                      <th>Linguistic Category</th>
+                      <th>Attempts</th>
+                      <th>Completed</th>
+                      <th>Failed / Incomp.</th>
+                      <th>Distinction Preserved</th>
+                      <th>Task Success</th>
+                      <th>Mean WER</th>
+                    </tr>
+                  </thead>
+                  <tbody id="liveCategoryBreakdownBody">
+                    <tr>
+                      <td colspan="7" class="table-empty-cell">No completed live evaluations recorded yet.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <!-- DETERMINISTIC MOCK CATEGORY BREAKDOWN -->
+          <section class="card category-breakdown-card" id="mockCategoryCard">
+            <div class="card-header">
+              <div class="mode-header-title">
+                <span class="mode-badge badge-mock">MOCK DEMONSTRATION</span>
+                <h3>Deterministic Mock Category Performance</h3>
+              </div>
+              <span class="badge">Completed Demonstrations Only</span>
+            </div>
+            <div class="card-body">
+              <p class="section-desc">Category performance across deterministic, hand-authored speech-contrast test cases (0 credits consumed, zero external network calls).</p>
+              <div class="empty-mode-state" id="mockCatEmptyBox" style="display: none; padding: 1.5rem;">
+                <p>No completed mock demonstrations recorded yet.</p>
+              </div>
+              <div class="table-responsive" id="mockCatTableWrapper">
+                <table class="data-table" id="mockCategoryTable">
+                  <thead>
+                    <tr>
+                      <th>Linguistic Category</th>
+                      <th>Attempts</th>
+                      <th>Completed</th>
+                      <th>Failed</th>
+                      <th>Distinction Preserved</th>
+                      <th>Task Success</th>
+                      <th>Mean WER</th>
+                    </tr>
+                  </thead>
+                  <tbody id="mockCategoryBreakdownBody">
+                    <tr>
+                      <td colspan="7" class="table-empty-cell">Loading mock category aggregates...</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </div>
       </div>
     </div>
 

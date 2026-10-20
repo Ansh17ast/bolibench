@@ -1,6 +1,7 @@
 """Regression and integration tests for BoliBench Phase 6 Judge-Ready Frontend Experience."""
 
 import io
+from pathlib import Path
 import pytest
 from app.config import get_settings
 from app.evaluation.dataset import load_seed_dataset
@@ -8,6 +9,7 @@ from app.evaluation.metrics import score_pair
 from app.evaluation.schemas import ExecutionMode, FailureCategory, PairEvaluationResult, UtteranceEvaluationResult
 from app.evaluation.storage import StorageManager
 from app.routers.evaluation import engine
+from app.services import live_guard
 
 
 @pytest.mark.asyncio
@@ -47,7 +49,12 @@ async def test_frontend_page_structure_and_branding(async_client):
     assert 'id="healthCompletedRuns"' in html
     assert 'id="healthIncompleteRuns"' in html
     assert 'id="healthFailedRuns"' in html
-    assert 'id="categoryBreakdownTable"' in html
+    assert 'id="liveCategoryTable"' in html
+    assert 'id="mockCategoryTable"' in html
+    assert 'id="liveCategoryBreakdownBody"' in html
+    assert 'id="mockCategoryBreakdownBody"' in html
+    assert 'id="healthLiveAttempts"' in html
+    assert "Live Evaluation Attempts" in html
 
     # 5. Audio Upload Previews and Format Notice in Paired Lab
     assert 'id="liveAudioPreviewA"' in html
@@ -383,6 +390,153 @@ async def test_history_filtering_and_operational_error_isolation(async_client, t
         resp_incomp = await async_client.get("/api/eval/results?status=incomplete")
         assert len(resp_incomp.json()) == 1
         assert resp_incomp.json()[0]["run_id"] == "run_h_incomp"
+
+    finally:
+        engine.storage = orig_storage
+
+
+@pytest.mark.asyncio
+async def test_frontend_live_confirmation_header_contract(async_client, monkeypatch):
+    """Regression test: Proves frontend app.js expected confirmation header matches backend live_guard contract."""
+    # 1. Read frontend app.js directly
+    app_js_path = Path(__file__).resolve().parent.parent / "app" / "static" / "js" / "app.js"
+    assert app_js_path.exists()
+    app_js_content = app_js_path.read_text(encoding="utf-8")
+
+    # 2. Check frontend constants
+    assert f'REQUIRED_CONFIRM_HEADER = "{live_guard.REQUIRED_CONFIRM_HEADER}"' in app_js_content
+    assert f'EXPECTED_CONFIRM_HEADER_VALUE = "{live_guard.EXPECTED_HEADER_VALUE}"' in app_js_content
+
+    # 3. Ensure the outdated buggy value is completely removed from the frontend
+    assert "authorized-by-local-operator" not in app_js_content
+
+    # 4. Check backend endpoint returns the exact contract
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
+    get_settings.cache_clear()
+    auth_resp = await async_client.post("/api/eval/authorize-live", json={"test_id": "pair_qty_001"})
+    assert auth_resp.status_code == 200
+    auth_data = auth_resp.json()
+    assert auth_data["required_header"] == live_guard.REQUIRED_CONFIRM_HEADER
+    assert auth_data["required_header_value"] == live_guard.EXPECTED_HEADER_VALUE
+
+
+@pytest.mark.asyncio
+async def test_category_breakdown_mode_separation_and_null_metrics(async_client, tmp_path):
+    """Proves mock and live category breakdowns are isolated and uncompleted runs display null metrics."""
+    test_storage = StorageManager(db_path=tmp_path / "test_cat_isolation.db")
+    orig_storage = engine.storage
+    engine.storage = test_storage
+
+    try:
+        seed_cases = load_seed_dataset()
+        pair_qty = next(p for p in seed_cases if p.category.value == "quantities_and_numbers")
+        pair_neg = next(p for p in seed_cases if p.category.value == "negation")
+
+        # 1. Save completed mock run for quantities_and_numbers
+        mock_run = score_pair(
+            run_id="run_mock_qty",
+            test_case=pair_qty,
+            transcript_a="Do packet chahiye",
+            transcript_b="Teen packet chahiye",
+            execution_mode="mock",
+        )
+        test_storage.save_run(mock_run)
+
+        # 2. Save failed live run for quantities_and_numbers
+        failed_live = PairEvaluationResult(
+            run_id="run_live_fail_qty",
+            test_case_id=pair_qty.id,
+            category=pair_qty.category.value,
+            language_code=pair_qty.language_code,
+            execution_mode=ExecutionMode.LIVE,
+            audio_condition="clean_recorded",
+            timestamp="2026-10-20T05:00:00Z",
+            overall_status="failed",
+            utterance_a=UtteranceEvaluationResult(
+                utterance_id="A",
+                reference_transcript=pair_qty.utterance_a.reference_transcript,
+                actual_transcript="",
+                wer=1.0,
+                substitutions=0,
+                deletions=3,
+                insertions=0,
+                reference_length=3,
+                critical_fields_match=False,
+                detected_intent="UNKNOWN",
+                intent_match=False,
+                task_success=False,
+                status="failed",
+                error_message="Gateway Timeout 504",
+            ),
+            utterance_b=UtteranceEvaluationResult(
+                utterance_id="B",
+                reference_transcript=pair_qty.utterance_b.reference_transcript,
+                actual_transcript="",
+                wer=1.0,
+                substitutions=0,
+                deletions=3,
+                insertions=0,
+                reference_length=3,
+                critical_fields_match=False,
+                detected_intent="UNKNOWN",
+                intent_match=False,
+                task_success=False,
+                status="skipped",
+            ),
+            wer_a=1.0,
+            wer_b=1.0,
+            average_wer=1.0,
+            critical_field_accuracy=0.0,
+            semantic_distinction_preserved=False,
+            task_success=False,
+            primary_failure_category=FailureCategory.PROVIDER_ERROR,
+            failure_explanation="Timeout on Utterance A",
+        )
+        test_storage.save_run(failed_live)
+
+        # 3. Save completed live run for negation
+        completed_live = score_pair(
+            run_id="run_live_comp_neg",
+            test_case=pair_neg,
+            transcript_a=pair_neg.utterance_a.reference_transcript,
+            transcript_b=pair_neg.utterance_b.reference_transcript,
+            execution_mode="live",
+            client_request_elapsed_ms=300.0,
+        )
+        test_storage.save_run(completed_live)
+
+        # Query metrics API
+        resp = await async_client.get("/api/eval/metrics")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        # Check mock category breakdown
+        mock_cats = data["mock"]["category_breakdown"]
+        assert "quantities_and_numbers" in mock_cats
+        assert mock_cats["quantities_and_numbers"]["total"] == 1
+        assert mock_cats["quantities_and_numbers"]["completed"] == 1
+        assert mock_cats["quantities_and_numbers"]["failed"] == 0
+        assert mock_cats["quantities_and_numbers"]["distinction_rate"] == 100.0
+        assert mock_cats["quantities_and_numbers"]["average_wer"] == 0.0
+
+        # Check live category breakdown
+        live_cats = data["live"]["category_breakdown"]
+        # quantities_and_numbers in live mode: 1 attempt, 0 completed, 1 failed
+        assert "quantities_and_numbers" in live_cats
+        assert live_cats["quantities_and_numbers"]["total"] == 1
+        assert live_cats["quantities_and_numbers"]["completed"] == 0
+        assert live_cats["quantities_and_numbers"]["failed"] == 1
+        # Crucial: Uncompleted run metrics MUST be None (Unavailable), not contaminated by placeholder values!
+        assert live_cats["quantities_and_numbers"]["distinction_rate"] is None
+        assert live_cats["quantities_and_numbers"]["task_success_rate"] is None
+        assert live_cats["quantities_and_numbers"]["average_wer"] is None
+
+        # negation in live mode: 1 attempt, 1 completed
+        assert "negation" in live_cats
+        assert live_cats["negation"]["total"] == 1
+        assert live_cats["negation"]["completed"] == 1
+        assert live_cats["negation"]["distinction_rate"] == 100.0
+        assert live_cats["negation"]["average_wer"] == 0.0
 
     finally:
         engine.storage = orig_storage

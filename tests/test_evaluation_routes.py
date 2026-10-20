@@ -614,6 +614,54 @@ async def test_run_live_missing_csrf_header_rejected(async_client, valid_wav_byt
 
 
 @pytest.mark.asyncio
+async def test_run_live_wrong_csrf_header_value_rejected(async_client, valid_wav_bytes, monkeypatch):
+    """Regression test: Proves live evaluation rejects legacy or mismatched confirmation header values.
+
+    Specifically verifies that sending 'authorized-by-local-operator' instead of the required
+    'CONFIRM_LIVE_EVALUATION' results in an immediate 403 Forbidden rejection before reading files
+    or invoking provider APIs.
+    """
+    monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
+    get_settings.cache_clear()
+
+    _, data = await _get_live_auth(async_client, "pair_qty_001")
+    files = {
+        "audio_file_a": ("utterance_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        "audio_file_b": ("utterance_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+    # Send the wrong header value that previously caused the frontend contract mismatch bug
+    wrong_headers = {"X-BoliBench-Confirm-Live": "authorized-by-local-operator"}
+    with patch("app.services.gnani_client.GnaniPrismaClient.transcribe") as mock_transcribe:
+        resp = await async_client.post(
+            "/api/eval/run-live/pair_qty_001",
+            files=files,
+            data=data,
+            headers=wrong_headers,
+        )
+        assert resp.status_code == 403
+        assert "Missing required authorization header" in resp.json()["detail"]
+        assert "CONFIRM_LIVE_EVALUATION" in resp.json()["detail"]
+        mock_transcribe.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_authorize_live_exposes_explicit_header_contract(async_client, monkeypatch):
+    """Proves /api/eval/authorize-live explicitly returns the required header name and expected value."""
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
+    get_settings.cache_clear()
+
+    resp = await async_client.post("/api/eval/authorize-live", json={"test_id": "pair_qty_001"})
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert "required_header" in payload
+    assert payload["required_header"] == "X-BoliBench-Confirm-Live"
+    assert "required_header_value" in payload
+    assert payload["required_header_value"] == "CONFIRM_LIVE_EVALUATION"
+    assert "confirmation_token" in payload
+
+
+@pytest.mark.asyncio
 async def test_run_live_invalid_token_rejected(async_client, valid_wav_bytes, monkeypatch):
     """Proves fabricated or invalid authorization tokens are rejected."""
     monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")

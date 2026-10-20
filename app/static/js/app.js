@@ -81,6 +81,10 @@ document.addEventListener("DOMContentLoaded", () => {
   // ===========================================================================
   // 2. Overview Dashboard & Metric Separation
   // ===========================================================================
+  // Live Evaluation Authorization Contract (Must exactly match live_guard.py on the backend)
+  const REQUIRED_CONFIRM_HEADER = "X-BoliBench-Confirm-Live";
+  const EXPECTED_CONFIRM_HEADER_VALUE = "CONFIRM_LIVE_EVALUATION";
+
   const btnRefreshMetrics = document.getElementById("btnRefreshMetrics");
   if (btnRefreshMetrics) {
     btnRefreshMetrics.addEventListener("click", () => {
@@ -92,7 +96,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const healthCompletedRuns = document.getElementById("healthCompletedRuns");
   const healthIncompleteRuns = document.getElementById("healthIncompleteRuns");
   const healthFailedRuns = document.getElementById("healthFailedRuns");
-  const healthLiveCalls = document.getElementById("healthLiveCalls");
+  const healthLiveAttempts = document.getElementById("healthLiveAttempts") || document.getElementById("healthLiveCalls");
   const healthMockRuns = document.getElementById("healthMockRuns");
 
   const liveAttemptsPill = document.getElementById("liveAttemptsPill");
@@ -116,7 +120,14 @@ document.addEventListener("DOMContentLoaded", () => {
   const mockStatCompleted = document.getElementById("mockStatCompleted");
   const mockStatFailed = document.getElementById("mockStatFailed");
 
-  const categoryBreakdownBody = document.getElementById("categoryBreakdownBody");
+  // Mode-Separated Category Breakdown Elements
+  const liveCategoryBreakdownBody = document.getElementById("liveCategoryBreakdownBody");
+  const liveCatEmptyBox = document.getElementById("liveCatEmptyBox");
+  const liveCatTableWrapper = document.getElementById("liveCatTableWrapper");
+
+  const mockCategoryBreakdownBody = document.getElementById("mockCategoryBreakdownBody");
+  const mockCatEmptyBox = document.getElementById("mockCatEmptyBox");
+  const mockCatTableWrapper = document.getElementById("mockCatTableWrapper");
 
   // Paired Lab Summary Cards (Backward-compatible)
   const statTotalRuns = document.getElementById("statTotalRuns");
@@ -135,7 +146,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (healthCompletedRuns) healthCompletedRuns.textContent = m.completed_runs;
       if (healthIncompleteRuns) healthIncompleteRuns.textContent = m.incomplete_runs;
       if (healthFailedRuns) healthFailedRuns.textContent = m.failed_runs;
-      if (healthLiveCalls) healthLiveCalls.textContent = m.live_runs;
+      if (healthLiveAttempts) healthLiveAttempts.textContent = m.live_runs;
       if (healthMockRuns) healthMockRuns.textContent = m.mock_runs;
 
       // Backward-compatible Lab stats
@@ -223,7 +234,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
 
-      // 3. CATEGORY BREAKDOWN TABLE
+      // 3. MODE-SEPARATED CATEGORY BREAKDOWN TABLES
       renderCategoryBreakdown(m);
     } catch (err) {
       console.error("Failed to load metrics:", err);
@@ -231,38 +242,60 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function renderCategoryBreakdown(metrics) {
-    if (!categoryBreakdownBody) return;
-    const catData = metrics.category_breakdown || {};
-    const categories = Object.keys(catData);
+    if (!metrics) return;
+    renderModeCategoryTable(
+      liveCategoryBreakdownBody,
+      liveCatEmptyBox,
+      liveCatTableWrapper,
+      metrics.live?.category_breakdown,
+      true
+    );
+    renderModeCategoryTable(
+      mockCategoryBreakdownBody,
+      mockCatEmptyBox,
+      mockCatTableWrapper,
+      metrics.mock?.category_breakdown,
+      false
+    );
+  }
 
-    if (categories.length === 0) {
-      categoryBreakdownBody.innerHTML = `
+  function renderModeCategoryTable(tbody, emptyBox, tableWrapper, catData, isLive) {
+    if (!tbody) return;
+    const categories = catData ? Object.keys(catData) : [];
+    const hasAnyAttempts = categories.length > 0 && categories.some((cat) => (catData[cat].total || 0) > 0);
+
+    if (!hasAnyAttempts) {
+      if (emptyBox) emptyBox.style.display = "block";
+      if (tableWrapper) tableWrapper.style.display = "none";
+      tbody.innerHTML = `
         <tr>
-          <td colspan="8" class="table-empty-cell">No evaluation runs recorded in SQLite yet. Execute a test case in the Crash Lab to view linguistic breakdown.</td>
+          <td colspan="7" class="table-empty-cell">
+            ${isLive ? "No live Gnani evaluations recorded yet." : "No mock demonstrations recorded yet."}
+          </td>
         </tr>
       `;
       return;
     }
 
+    if (emptyBox) emptyBox.style.display = "none";
+    if (tableWrapper) tableWrapper.style.display = "block";
+
     const rowsHtml = categories.map((cat) => {
       const row = catData[cat];
-      const distStr = row.distinction_rate != null ? `${row.distinction_rate.toFixed(1)}%` : "—%";
-      const taskStr = row.task_success_rate != null ? `${row.task_success_rate.toFixed(1)}%` : "—%";
-      const werStr = row.average_wer != null ? `${(row.average_wer * 100).toFixed(1)}%` : "—";
+      const distStr = row.distinction_rate != null
+        ? `${row.distinction_rate.toFixed(1)}%`
+        : '<span class="val-unavailable" style="color: var(--text-subtle); font-style: italic;">Unavailable</span>';
+      const taskStr = row.task_success_rate != null
+        ? `${row.task_success_rate.toFixed(1)}%`
+        : '<span class="val-unavailable" style="color: var(--text-subtle); font-style: italic;">Unavailable</span>';
+      const werStr = row.average_wer != null
+        ? `${(row.average_wer * 100).toFixed(1)}%`
+        : '<span class="val-unavailable" style="color: var(--text-subtle); font-style: italic;">Unavailable</span>';
       const failedCount = (row.failed || 0) + (row.incomplete || 0);
-
-      // Check mode breakdowns if available
-      const mockCat = metrics.mock?.category_breakdown?.[cat];
-      const liveCat = metrics.live?.category_breakdown?.[cat];
-      let modeBadges = [];
-      if (liveCat && liveCat.total > 0) modeBadges.push('<span class="badge-live">LIVE</span>');
-      if (mockCat && mockCat.total > 0) modeBadges.push('<span class="badge-mock">MOCK</span>');
-      const modeHtml = modeBadges.length > 0 ? modeBadges.join(" ") : '<span class="count-tag">NONE</span>';
 
       return `
         <tr>
           <td><strong>${escapeHtml(cat)}</strong></td>
-          <td>${modeHtml}</td>
           <td>${row.total}</td>
           <td><span style="color: #34d399; font-weight: 700;">${row.completed}</span></td>
           <td><span style="color: ${failedCount > 0 ? '#f87171' : 'var(--text-subtle)'}; font-weight: 700;">${failedCount}</span></td>
@@ -273,7 +306,7 @@ document.addEventListener("DOMContentLoaded", () => {
       `;
     }).join("");
 
-    categoryBreakdownBody.innerHTML = rowsHtml;
+    tbody.innerHTML = rowsHtml;
   }
 
   // ===========================================================================
@@ -631,11 +664,14 @@ document.addEventListener("DOMContentLoaded", () => {
         btnLiveEvalText.textContent = "Sending Audio A to Gnani Prisma...";
         evalStatusBadge.textContent = "Running Live STT Evaluation...";
 
+        const confirmHeader = authData.required_header || REQUIRED_CONFIRM_HEADER;
+        const confirmValue = authData.required_header_value || EXPECTED_CONFIRM_HEADER_VALUE;
+
         const evalResp = await fetch(`/api/eval/run-live/${testId}`, {
           method: "POST",
           headers: {
             "X-Requested-With": "XMLHttpRequest",
-            "X-BoliBench-Confirm-Live": "authorized-by-local-operator",
+            [confirmHeader]: confirmValue,
           },
           body: formData,
         });

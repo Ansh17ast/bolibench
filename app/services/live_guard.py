@@ -26,6 +26,12 @@ class AuthTokenRecord(NamedTuple):
     consumed: bool
 
 
+# Server-wide live evaluation confirmation header contract
+REQUIRED_CONFIRM_HEADER = "X-BoliBench-Confirm-Live"
+EXPECTED_HEADER_VALUE = "CONFIRM_LIVE_EVALUATION"
+TOKEN_TTL_SECONDS = 300.0  # 5 minutes validity
+
+
 class LiveEvaluationGuard:
     """Manages authorization tokens and validates same-origin requests for live evaluations.
 
@@ -36,9 +42,9 @@ class LiveEvaluationGuard:
     - Not a signed JWT; validation is stateful and bound to the issued test_case_id.
     """
 
-    REQUIRED_CONFIRM_HEADER = "X-BoliBench-Confirm-Live"
-    EXPECTED_HEADER_VALUE = "CONFIRM_LIVE_EVALUATION"
-    TOKEN_TTL_SECONDS = 300.0  # 5 minutes validity
+    REQUIRED_CONFIRM_HEADER = REQUIRED_CONFIRM_HEADER
+    EXPECTED_HEADER_VALUE = EXPECTED_HEADER_VALUE
+    TOKEN_TTL_SECONDS = TOKEN_TTL_SECONDS
 
     # Explicit complete allowed origins (scheme + host + port)
     ALLOWED_SCHEMES = {"http", "https"}
