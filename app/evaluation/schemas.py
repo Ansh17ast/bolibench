@@ -141,15 +141,18 @@ class PairEvaluationResult(BaseModel):
 
 class AggregateMetrics(BaseModel):
     """Summary metrics across evaluation runs."""
-    total_runs: int = 0
-    mock_runs: int = 0
-    live_runs: int = 0
-    distinction_preservation_rate: float = 0.0
-    task_success_rate: float = 0.0
-    average_wer: float = 0.0
-    average_critical_field_accuracy: float = 0.0
-    category_breakdown: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
-    failure_category_breakdown: Dict[str, int] = Field(default_factory=dict)
+    total_runs: int = Field(0, description="Total number of evaluation run attempts (completed, incomplete, and failed)")
+    completed_runs: int = Field(0, description="Total number of successfully completed paired evaluations")
+    failed_runs: int = Field(0, description="Total number of operational failed runs (aborted before completing pair)")
+    incomplete_runs: int = Field(0, description="Total number of partial live failures (A completed, B failed)")
+    mock_runs: int = Field(0, description="Total evaluation attempts executed in deterministic mock mode")
+    live_runs: int = Field(0, description="Total evaluation attempts executed against live provider API")
+    distinction_preservation_rate: Optional[float] = Field(None, description="Distinction preservation rate (0.0-100.0%) across completed runs; None if no completed runs exist")
+    task_success_rate: Optional[float] = Field(None, description="Task success rate (0.0-100.0%) across completed runs; None if no completed runs exist")
+    average_wer: Optional[float] = Field(None, description="Average Word Error Rate across completed runs; None if no completed runs exist")
+    average_critical_field_accuracy: Optional[float] = Field(None, description="Average critical field accuracy (0.0-100.0%) across completed runs; None if no completed runs exist")
+    category_breakdown: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="Performance metrics by category computed over completed runs only")
+    failure_category_breakdown: Dict[str, int] = Field(default_factory=dict, description="Taxonomy breakdown of all recorded failure categories")
 
 
 class EvaluateTranscriptsRequest(BaseModel):

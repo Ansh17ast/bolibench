@@ -195,10 +195,12 @@ BoliBench strictly isolates execution semantics, telemetry, and credit protectio
     - Measures genuine client-side round-trip elapsed time ($T_{\text{client}}$) via `time.perf_counter()` around the HTTP request and records it as `client_request_elapsed_ms` (and `client_measured_latency_ms`).
     - The legacy `backend_latency_ms` field is documented as a backwards-compatible alias for `client_request_elapsed_ms`.
     - Inspects the official Gnani response schema for provider-reported processing duration ($T_{\text{provider}}$). Because the official Gnani STT REST v3 API does not report server processing duration in its response payload, `provider_processing_time_ms` remains strictly `null` (displayed as "Not reported" in the UI). Client-side elapsed time is **never** substituted for provider latency.
-  - **Partial Failure Safeguard:**
+  - **Partial Failure Safeguard & Metric Aggregation Isolation:**
     - If Utterance A fails, Utterance B is never called (zero unnecessary provider requests), and a safe failed audit run (`overall_status="failed"`) is persisted with error details and timings.
     - If Utterance A succeeds but Utterance B fails or times out, a safe incomplete audit record (`overall_status="incomplete"`) is persisted preserving Utterance A's real transcript and provider request ID, documenting that Utterance A consumed credits while Utterance B failed.
-    - Incomplete or failed runs are never presented or aggregated as successful evaluations. No automatic retries are performed.
+    - Incomplete or failed runs are safely audited in SQLite and discoverable in run history (`/api/eval/results`) and failure reporting (`failure_category_breakdown`), but are strictly excluded from benchmark accuracy metrics (mean WER, task success rate, distinction preservation rate, and critical-field accuracy) so operational provider errors never contaminate transcription or semantic performance measurements.
+    - Empty completed datasets return null rather than invented scores (e.g. no fabricated 0.0% or 100% metrics).
+    - No automatic retries are performed.
   - **Credit Protection:** Live evaluation requires an explicit user confirmation checkbox, confirmation dialog, and server authorization token. Automated tests always use deterministic mocked client responses and never consume programme credits.
 
 ---
@@ -209,13 +211,14 @@ BoliBench strictly isolates execution semantics, telemetry, and credit protectio
    - Deterministic paired-contrast evaluation scoring engine.
    - Exact dynamic programming Levenshtein Word Error Rate (WER).
    - Domain-specific critical field extractors (quantities, negation, corrections, entities, intent).
-   - Thread-safe SQLite persistence with JSON and CSV exports preserving latency semantics.
+   - Thread-safe SQLite persistence with JSON and CSV exports preserving latency semantics and execution status.
    - Strict telemetry separation ensuring mock runs never report fabricated measured latency.
    - Single-audio telemetry cleanly distinguishing browser end-to-end latency, backend-measured Gnani API request time, and provider-internal processing time ("Not reported").
    - Server-side credit guard, origin validation, and anti-CSRF authorization manager (`app/services/live_guard.py`).
    - Default disabled live evaluation deployment safety guard (`LIVE_EVALUATION_ENABLED=false`).
-   - Live paired audio REST API (`POST /api/eval/run-live/{test_id}`) with strict acoustic condition enum validation and format restriction to WAV.
-   - Comprehensive test suite (91 tests passing with 0 network calls and 0 credits consumed).
+   - Live paired audio REST API (`POST /api/eval/run-live/{test_id}`) with strict acoustic condition enum validation and format restriction to WAV (verifiably $\le 60$s).
+   - Backward-compatible SQLite migration and metric aggregation isolation ensuring operational errors never contaminate benchmark performance averages.
+   - Comprehensive test suite (95 tests passing with 0 network calls and 0 credits consumed).
 2. **Pending Acoustic Research (`pending_acoustic`):**
    - Calibrated acoustic noise testing with multi-speaker recordings under measured signal-to-noise ratios (street noise, cafeteria babble, reverberation).
    - Crowdsourced audio dataset recording all 24 seed utterances across diverse regional Indian accents.

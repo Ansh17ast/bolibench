@@ -248,7 +248,8 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/eval/run-mock/pai
    - Records genuine client elapsed round-trip time (`client_request_elapsed_ms`, with `backend_latency_ms` alias) and keeps `provider_processing_time_ms = null` ("Not reported" in UI).
    - Evaluates returned transcripts using the deterministic scoring engine.
    - Preserves provider request IDs and persists run to SQLite.
-   - If Utterance A fails, Utterance B is never called and a failed run is recorded. If Utterance A succeeds and B fails, an incomplete audit run is recorded documenting that Utterance A consumed credits while B failed. Failed or incomplete runs are never presented as successful paired evaluations.
+   - If Utterance A fails, Utterance B is never called and a safe failed run is recorded. If Utterance A succeeds and B fails, an incomplete audit run is recorded documenting that Utterance A consumed credits while B failed.
+   - Failed or incomplete runs are safely discoverable in SQLite run history and failure category reporting, but are excluded from benchmark accuracy metrics (mean WER, task success, distinction preservation) to prevent operational errors from masquerading as speech model failures.
 
 ---
 
@@ -259,17 +260,17 @@ Run the test suite:
 python -m pytest -v
 ```
 
-### Actual Test Suite Result (84 Tests Passing):
+### Actual Test Suite Result (95 Tests Passing):
 ```
-collected 84 items
+collected 95 items
 
-tests/test_audio_validator.py ............                               [ 14%]
-tests/test_evaluation_engine.py .....................                   [ 39%]
-tests/test_evaluation_routes.py ...............................         [ 76%]
-tests/test_gnani_client.py ...........                                   [ 89%]
+tests/test_audio_validator.py ...............                            [ 15%]
+tests/test_evaluation_engine.py ...........................             [ 43%]
+tests/test_evaluation_routes.py ..................................      [ 77%]
+tests/test_gnani_client.py ............                                  [ 90%]
 tests/test_routes.py .........                                           [100%]
 
-============================= 84 passed in 1.18s ==============================
+============================= 95 passed in 1.72s ==============================
 ```
 
 ### Verified vs. Pending Status Matrix

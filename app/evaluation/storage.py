@@ -42,6 +42,7 @@ class StorageManager:
                     language_code TEXT NOT NULL,
                     execution_mode TEXT NOT NULL,
                     audio_condition TEXT NOT NULL,
+                    overall_status TEXT NOT NULL DEFAULT 'completed',
                     wer_a REAL NOT NULL,
                     wer_b REAL NOT NULL,
                     average_wer REAL NOT NULL,
@@ -75,22 +76,51 @@ class StorageManager:
                 cursor.execute("ALTER TABLE evaluation_runs ADD COLUMN simulated_latency_ms REAL")
             except sqlite3.OperationalError:
                 pass
+
+            # Backward-compatible schema migration if overall_status column is missing
+            try:
+                cursor.execute("ALTER TABLE evaluation_runs ADD COLUMN overall_status TEXT NOT NULL DEFAULT 'completed'")
+            except sqlite3.OperationalError:
+                pass
+
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_eval_runs_overall_status
+                ON evaluation_runs (overall_status)
+                """
+            )
+
+            # Ensure existing records without status migrate as completed
+            cursor.execute("UPDATE evaluation_runs SET overall_status = 'completed' WHERE overall_status IS NULL OR overall_status = ''")
+
+            # Synchronize overall_status from payload_json if an explicit status was saved in payload
+            cursor.execute("SELECT run_id, payload_json FROM evaluation_runs WHERE overall_status = 'completed'")
+            for row in cursor.fetchall():
+                try:
+                    p = json.loads(row["payload_json"])
+                    status = p.get("overall_status")
+                    if status and status != "completed":
+                        cursor.execute("UPDATE evaluation_runs SET overall_status = ? WHERE run_id = ?", (status, row["run_id"]))
+                except Exception:
+                    pass
+
             conn.commit()
 
     def save_run(self, result: PairEvaluationResult) -> str:
         """Persists an evaluation run."""
         payload_json = json.dumps(result.model_dump(), ensure_ascii=False)
+        overall_status = getattr(result, "overall_status", "completed") or "completed"
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
                 INSERT OR REPLACE INTO evaluation_runs (
                     run_id, test_case_id, category, language_code, execution_mode,
-                    audio_condition, wer_a, wer_b, average_wer, critical_field_accuracy,
+                    audio_condition, overall_status, wer_a, wer_b, average_wer, critical_field_accuracy,
                     distinction_preserved, task_success, primary_failure_category,
                     failure_explanation, client_latency_ms, provider_latency_ms,
                     simulated_latency_ms, created_at, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     result.run_id,
@@ -99,6 +129,7 @@ class StorageManager:
                     result.language_code,
                     result.execution_mode.value if isinstance(result.execution_mode, ExecutionMode) else str(result.execution_mode),
                     result.audio_condition,
+                    overall_status,
                     result.wer_a,
                     result.wer_b,
                     result.average_wer,
@@ -121,20 +152,33 @@ class StorageManager:
         """Retrieves a single evaluation run by ID."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT payload_json FROM evaluation_runs WHERE run_id = ?", (run_id,))
+            cursor.execute("SELECT payload_json, overall_status FROM evaluation_runs WHERE run_id = ?", (run_id,))
             row = cursor.fetchone()
             if row:
                 data = json.loads(row["payload_json"])
+                if not data.get("overall_status"):
+                    data["overall_status"] = row["overall_status"] or "completed"
                 return PairEvaluationResult(**data)
         return None
 
-    def list_runs(self, limit: int = 100, category: Optional[str] = None) -> List[PairEvaluationResult]:
-        """Lists recent evaluation runs, optionally filtered by category."""
-        query = "SELECT payload_json FROM evaluation_runs"
+    def list_runs(
+        self,
+        limit: int = 100,
+        category: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> List[PairEvaluationResult]:
+        """Lists recent evaluation runs, optionally filtered by category or status."""
+        query = "SELECT payload_json, overall_status FROM evaluation_runs"
         params: List[Any] = []
+        conditions: List[str] = []
         if category:
-            query += " WHERE category = ?"
+            conditions.append("category = ?")
             params.append(category)
+        if status:
+            conditions.append("overall_status = ?")
+            params.append(status)
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
 
@@ -144,23 +188,28 @@ class StorageManager:
             cursor.execute(query, tuple(params))
             for row in cursor.fetchall():
                 data = json.loads(row["payload_json"])
+                if not data.get("overall_status"):
+                    data["overall_status"] = row["overall_status"] or "completed"
                 results.append(PairEvaluationResult(**data))
         return results
 
     def get_aggregate_metrics(self) -> AggregateMetrics:
-        """Calculates aggregate metrics across all runs."""
+        """Calculates aggregate metrics across all runs, restricting performance averages to completed runs."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
                 SELECT
                     COUNT(*) as total_runs,
+                    SUM(CASE WHEN overall_status = 'completed' THEN 1 ELSE 0 END) as completed_runs,
+                    SUM(CASE WHEN overall_status = 'failed' THEN 1 ELSE 0 END) as failed_runs,
+                    SUM(CASE WHEN overall_status = 'incomplete' THEN 1 ELSE 0 END) as incomplete_runs,
                     SUM(CASE WHEN execution_mode = 'mock' THEN 1 ELSE 0 END) as mock_runs,
                     SUM(CASE WHEN execution_mode = 'live' THEN 1 ELSE 0 END) as live_runs,
-                    AVG(distinction_preserved) as avg_distinction_preserved,
-                    AVG(task_success) as avg_task_success,
-                    AVG(average_wer) as avg_wer,
-                    AVG(critical_field_accuracy) as avg_field_acc
+                    AVG(CASE WHEN overall_status = 'completed' THEN distinction_preserved ELSE NULL END) as avg_distinction_preserved,
+                    AVG(CASE WHEN overall_status = 'completed' THEN task_success ELSE NULL END) as avg_task_success,
+                    AVG(CASE WHEN overall_status = 'completed' THEN average_wer ELSE NULL END) as avg_wer,
+                    AVG(CASE WHEN overall_status = 'completed' THEN critical_field_accuracy ELSE NULL END) as avg_field_acc
                 FROM evaluation_runs
                 """
             )
@@ -170,14 +219,18 @@ class StorageManager:
             if total_runs == 0:
                 return AggregateMetrics()
 
+            completed_runs = summary["completed_runs"] or 0
+            failed_runs = summary["failed_runs"] or 0
+            incomplete_runs = summary["incomplete_runs"] or 0
             mock_runs = summary["mock_runs"] or 0
             live_runs = summary["live_runs"] or 0
-            dist_rate = round(float(summary["avg_distinction_preserved"] or 0.0) * 100.0, 2)
-            task_rate = round(float(summary["avg_task_success"] or 0.0) * 100.0, 2)
-            avg_wer = round(float(summary["avg_wer"] or 0.0), 4)
-            avg_acc = round(float(summary["avg_field_acc"] or 0.0) * 100.0, 2)
 
-            # Failure category breakdown
+            dist_rate = round(float(summary["avg_distinction_preserved"]) * 100.0, 2) if summary["avg_distinction_preserved"] is not None else None
+            task_rate = round(float(summary["avg_task_success"]) * 100.0, 2) if summary["avg_task_success"] is not None else None
+            avg_wer = round(float(summary["avg_wer"]), 4) if summary["avg_wer"] is not None else None
+            avg_acc = round(float(summary["avg_field_acc"]) * 100.0, 2) if summary["avg_field_acc"] is not None else None
+
+            # Failure category breakdown across all attempts (including provider operational errors)
             cursor.execute(
                 """
                 SELECT primary_failure_category, COUNT(*) as count
@@ -187,15 +240,18 @@ class StorageManager:
             )
             failure_breakdown = {row["primary_failure_category"]: row["count"] for row in cursor.fetchall()}
 
-            # Category breakdown
+            # Category breakdown: counts all attempts, but computes performance averages over completed runs only
             cursor.execute(
                 """
                 SELECT
                     category,
                     COUNT(*) as total,
-                    AVG(distinction_preserved) as dist_rate,
-                    AVG(task_success) as task_rate,
-                    AVG(average_wer) as avg_wer
+                    SUM(CASE WHEN overall_status = 'completed' THEN 1 ELSE 0 END) as completed,
+                    SUM(CASE WHEN overall_status = 'failed' THEN 1 ELSE 0 END) as failed,
+                    SUM(CASE WHEN overall_status = 'incomplete' THEN 1 ELSE 0 END) as incomplete,
+                    AVG(CASE WHEN overall_status = 'completed' THEN distinction_preserved ELSE NULL END) as dist_rate,
+                    AVG(CASE WHEN overall_status = 'completed' THEN task_success ELSE NULL END) as task_rate,
+                    AVG(CASE WHEN overall_status = 'completed' THEN average_wer ELSE NULL END) as avg_wer
                 FROM evaluation_runs
                 GROUP BY category
                 """
@@ -204,13 +260,19 @@ class StorageManager:
             for row in cursor.fetchall():
                 cat_breakdown[row["category"]] = {
                     "total": row["total"],
-                    "distinction_rate": round(float(row["dist_rate"] or 0.0) * 100.0, 2),
-                    "task_success_rate": round(float(row["task_rate"] or 0.0) * 100.0, 2),
-                    "average_wer": round(float(row["avg_wer"] or 0.0), 4),
+                    "completed": row["completed"],
+                    "failed": row["failed"],
+                    "incomplete": row["incomplete"],
+                    "distinction_rate": round(float(row["dist_rate"]) * 100.0, 2) if row["dist_rate"] is not None else None,
+                    "task_success_rate": round(float(row["task_rate"]) * 100.0, 2) if row["task_rate"] is not None else None,
+                    "average_wer": round(float(row["avg_wer"]), 4) if row["avg_wer"] is not None else None,
                 }
 
             return AggregateMetrics(
                 total_runs=total_runs,
+                completed_runs=completed_runs,
+                failed_runs=failed_runs,
+                incomplete_runs=incomplete_runs,
                 mock_runs=mock_runs,
                 live_runs=live_runs,
                 distinction_preservation_rate=dist_rate,
@@ -232,7 +294,7 @@ class StorageManager:
         output = io.StringIO()
         fieldnames = [
             "run_id", "test_case_id", "category", "language_code", "execution_mode",
-            "audio_condition", "timestamp", "wer_a", "wer_b", "average_wer",
+            "audio_condition", "overall_status", "timestamp", "wer_a", "wer_b", "average_wer",
             "critical_field_accuracy", "distinction_preserved", "task_success",
             "primary_failure_category", "failure_explanation",
             "client_request_elapsed_ms", "client_measured_latency_ms", "provider_processing_time_ms", "simulated_latency_ms",
@@ -249,6 +311,7 @@ class StorageManager:
                 "language_code": r.language_code,
                 "execution_mode": r.execution_mode.value if isinstance(r.execution_mode, ExecutionMode) else str(r.execution_mode),
                 "audio_condition": r.audio_condition,
+                "overall_status": getattr(r, "overall_status", "completed") or "completed",
                 "timestamp": r.timestamp,
                 "wer_a": r.wer_a,
                 "wer_b": r.wer_b,

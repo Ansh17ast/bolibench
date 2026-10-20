@@ -138,10 +138,16 @@ class EvaluationEngine:
         """Evaluates a live audio pair using Gnani Prisma STT REST API.
 
         Guarantees:
-        - Executes actual provider requests sequentially.
-        - Calculates genuine client-side elapsed time.
-        - Preserves provider request IDs and backend processing latency.
-        - If either call fails, no incomplete pair evaluation is persisted or returned.
+        - Executes actual provider requests sequentially (Utterance A, then Utterance B).
+        - Calculates genuine client-side elapsed time for each request.
+        - Preserves provider request IDs and backend processing latency if reported.
+        - If Utterance A fails, Utterance B is skipped (0 extra provider calls) and an audited
+          failed run record (overall_status="failed") is persisted to SQLite before re-raising.
+        - If Utterance A succeeds and Utterance B fails, an audited incomplete run record
+          (overall_status="incomplete") is persisted to SQLite preserving Utterance A's real transcript
+          and provider request ID, and noting that Utterance A consumed credits, before re-raising.
+        - Failed and incomplete runs are never presented as successful paired evaluations and do
+          not contaminate completed benchmark accuracy metrics.
         - Never marks a mock result as live.
         """
         test_case = self.get_test_case(test_case_id)
@@ -353,9 +359,9 @@ class EvaluationEngine:
         """Retrieves a single evaluation run."""
         return self.storage.get_run(run_id)
 
-    def list_runs(self, limit: int = 100, category: Optional[str] = None) -> List[PairEvaluationResult]:
+    def list_runs(self, limit: int = 100, category: Optional[str] = None, status: Optional[str] = None) -> List[PairEvaluationResult]:
         """Lists recent evaluation runs."""
-        return self.storage.list_runs(limit=limit, category=category)
+        return self.storage.list_runs(limit=limit, category=category, status=status)
 
     def get_aggregate_metrics(self) -> AggregateMetrics:
         """Calculates aggregate metrics across evaluation runs."""

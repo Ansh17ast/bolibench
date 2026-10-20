@@ -27,9 +27,12 @@ from app.evaluation.metrics import (
     score_pair,
 )
 from app.evaluation.schemas import (
+    ExecutionMode,
     FailureCategory,
+    PairEvaluationResult,
     TestCasePair,
     TestCategory,
+    UtteranceEvaluationResult,
     UtteranceSpec,
 )
 from app.evaluation.storage import StorageManager
@@ -552,3 +555,314 @@ async def test_engine_evaluate_live_audio_b_fails(tmp_path, valid_wav_bytes):
     assert runs[0].primary_failure_category.value == "provider_error"
     assert "Utterance A succeeded" in runs[0].failure_explanation
     assert "credits may have been consumed" in runs[0].failure_explanation
+
+
+def test_aggregate_metrics_excludes_incomplete_and_failed_runs(tmp_path: Path):
+    """Proves completed runs contribute to performance averages while failed/incomplete runs do not."""
+    db_file = tmp_path / "test_clean_metrics.db"
+    storage = StorageManager(db_path=db_file)
+    pair = load_seed_dataset()[0]
+
+    # 0. Empty dataset has total_runs=0 and None for averages (no invented scores)
+    empty_metrics = storage.get_aggregate_metrics()
+    assert empty_metrics.total_runs == 0
+    assert empty_metrics.completed_runs == 0
+    assert empty_metrics.distinction_preservation_rate is None
+    assert empty_metrics.average_wer is None
+    assert empty_metrics.task_success_rate is None
+    assert empty_metrics.average_critical_field_accuracy is None
+
+    # 1. Add Completed Run 1: Ideal run (WER=0.0, distinction preserved, task success)
+    run_c1 = score_pair(
+        run_id="run_comp_001",
+        test_case=pair,
+        transcript_a="Do packet chahiye",
+        transcript_b="Teen packet chahiye",
+        execution_mode="mock",
+    )
+    storage.save_run(run_c1)
+
+    # 2. Add Completed Run 2: High WER run (WER=0.5, distinction collapsed, task failed)
+    run_c2 = score_pair(
+        run_id="run_comp_002",
+        test_case=pair,
+        transcript_a="Do packet chahiye",
+        transcript_b="Do packet chahiye",
+        execution_mode="mock",
+    )
+    storage.save_run(run_c2)
+
+    # Completed baseline:
+    # run 1: avg_wer = 0.0, distinction = 1, task = 1, field_acc = 1.0
+    # run 2: avg_wer = 0.1667, distinction = 0, task = 0, field_acc = 0.5
+    # expected averages across completed:
+    # avg_wer = 0.0833, distinction = 50.0%, task = 50.0%, field_acc = 75.0%
+    base_metrics = storage.get_aggregate_metrics()
+    assert base_metrics.total_runs == 2
+    assert base_metrics.completed_runs == 2
+    assert base_metrics.failed_runs == 0
+    assert base_metrics.incomplete_runs == 0
+    assert base_metrics.average_wer == 0.0833
+    assert base_metrics.distinction_preservation_rate == 50.0
+    assert base_metrics.task_success_rate == 50.0
+    assert base_metrics.average_critical_field_accuracy == 75.0
+
+    # 3. Add an Operational Failed Run (Utterance A failed, e.g. provider error)
+    failed_run = PairEvaluationResult(
+        run_id="run_failed_ops",
+        test_case_id=pair.id,
+        category=pair.category.value,
+        language_code=pair.language_code,
+        execution_mode=ExecutionMode.LIVE,
+        audio_condition="clean_recorded",
+        timestamp="2026-10-20T04:00:00Z",
+        overall_status="failed",
+        utterance_a=UtteranceEvaluationResult(
+            utterance_id="A",
+            reference_transcript=pair.utterance_a.reference_transcript,
+            actual_transcript="",
+            wer=1.0,
+            substitutions=0,
+            deletions=3,
+            insertions=0,
+            reference_length=3,
+            critical_fields_match=False,
+            detected_intent="UNKNOWN",
+            intent_match=False,
+            task_success=False,
+            status="failed",
+            error_message="Connection timed out",
+        ),
+        utterance_b=UtteranceEvaluationResult(
+            utterance_id="B",
+            reference_transcript=pair.utterance_b.reference_transcript,
+            actual_transcript="",
+            wer=1.0,
+            substitutions=0,
+            deletions=3,
+            insertions=0,
+            reference_length=3,
+            critical_fields_match=False,
+            detected_intent="UNKNOWN",
+            intent_match=False,
+            task_success=False,
+            status="skipped",
+        ),
+        wer_a=1.0,
+        wer_b=1.0,
+        average_wer=1.0,
+        critical_field_accuracy=0.0,
+        semantic_distinction_preserved=False,
+        task_success=False,
+        primary_failure_category=FailureCategory.PROVIDER_ERROR,
+        failure_explanation="Provider request for Utterance A failed: Connection timed out.",
+    )
+    storage.save_run(failed_run)
+
+    # 4. Add an Incomplete Run (Utterance A succeeded, Utterance B failed)
+    incomplete_run = PairEvaluationResult(
+        run_id="run_incomplete_ops",
+        test_case_id=pair.id,
+        category=pair.category.value,
+        language_code=pair.language_code,
+        execution_mode=ExecutionMode.LIVE,
+        audio_condition="clean_recorded",
+        timestamp="2026-10-20T04:05:00Z",
+        overall_status="incomplete",
+        utterance_a=UtteranceEvaluationResult(
+            utterance_id="A",
+            reference_transcript=pair.utterance_a.reference_transcript,
+            actual_transcript="Do packet chahiye",
+            wer=0.0,
+            substitutions=0,
+            deletions=0,
+            insertions=0,
+            reference_length=3,
+            critical_fields_match=True,
+            detected_intent="ORDER_PRODUCT",
+            intent_match=True,
+            task_success=True,
+            status="completed",
+            request_id="req_live_123",
+        ),
+        utterance_b=UtteranceEvaluationResult(
+            utterance_id="B",
+            reference_transcript=pair.utterance_b.reference_transcript,
+            actual_transcript="",
+            wer=1.0,
+            substitutions=0,
+            deletions=3,
+            insertions=0,
+            reference_length=3,
+            critical_fields_match=False,
+            detected_intent="UNKNOWN",
+            intent_match=False,
+            task_success=False,
+            status="failed",
+            error_message="HTTP 502 Bad Gateway",
+        ),
+        wer_a=0.0,
+        wer_b=1.0,
+        average_wer=0.5,
+        critical_field_accuracy=0.5,
+        semantic_distinction_preserved=False,
+        task_success=False,
+        primary_failure_category=FailureCategory.PROVIDER_ERROR,
+        failure_explanation="Partial live evaluation failure: Utterance A succeeded, Utterance B failed.",
+    )
+    storage.save_run(incomplete_run)
+
+    # 5. Verify Aggregate Metrics:
+    # Total attempts = 4 (2 completed, 1 failed, 1 incomplete)
+    # Mock attempts = 2, Live attempts = 2
+    metrics = storage.get_aggregate_metrics()
+    assert metrics.total_runs == 4
+    assert metrics.completed_runs == 2
+    assert metrics.failed_runs == 1
+    assert metrics.incomplete_runs == 1
+    assert metrics.mock_runs == 2
+    assert metrics.live_runs == 2
+
+    # CRITICAL ASSERTION: The 1.0 WER from failed run and 0.5 WER from incomplete run DO NOT contaminate!
+    assert metrics.average_wer == 0.0833
+    assert metrics.distinction_preservation_rate == 50.0
+    assert metrics.task_success_rate == 50.0
+    assert metrics.average_critical_field_accuracy == 75.0
+
+    # Operational failures remain discoverable in failure breakdown
+    assert metrics.failure_category_breakdown["provider_error"] == 2
+
+    # Category performance averages also use completed evaluations only
+    cat = metrics.category_breakdown[pair.category.value]
+    assert cat["total"] == 4
+    assert cat["completed"] == 2
+    assert cat["failed"] == 1
+    assert cat["incomplete"] == 1
+    assert cat["average_wer"] == 0.0833
+    assert cat["distinction_rate"] == 50.0
+    assert cat["task_success_rate"] == 50.0
+
+
+def test_sqlite_backward_compatible_migration_preserves_legacy_records_as_completed(tmp_path: Path):
+    """Proves legacy SQLite database without overall_status migrates seamlessly preserving rows as completed."""
+    import json
+    import sqlite3
+    db_file = tmp_path / "legacy_bolibench.db"
+
+    # Create raw table WITHOUT overall_status (simulating pre-Phase-5.2 schema)
+    with sqlite3.connect(str(db_file)) as conn:
+        conn.execute(
+            """
+            CREATE TABLE evaluation_runs (
+                run_id TEXT PRIMARY KEY,
+                test_case_id TEXT NOT NULL,
+                category TEXT NOT NULL,
+                language_code TEXT NOT NULL,
+                execution_mode TEXT NOT NULL,
+                audio_condition TEXT NOT NULL,
+                wer_a REAL NOT NULL,
+                wer_b REAL NOT NULL,
+                average_wer REAL NOT NULL,
+                critical_field_accuracy REAL NOT NULL,
+                distinction_preserved INTEGER NOT NULL,
+                task_success INTEGER NOT NULL,
+                primary_failure_category TEXT NOT NULL,
+                failure_explanation TEXT NOT NULL,
+                client_latency_ms REAL,
+                provider_latency_ms REAL,
+                created_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            )
+            """
+        )
+        legacy_payload = json.dumps({
+            "run_id": "legacy_run_001",
+            "test_case_id": "pair_qty_001",
+            "category": "quantities_and_numbers",
+            "language_code": "hi-IN",
+            "execution_mode": "mock",
+            "audio_condition": "text_only_simulation",
+            "timestamp": "2026-10-18T10:00:00Z",
+            "utterance_a": {
+                "utterance_id": "A",
+                "reference_transcript": "Do packet chahiye",
+                "actual_transcript": "Do packet chahiye",
+                "wer": 0.0,
+                "substitutions": 0,
+                "deletions": 0,
+                "insertions": 0,
+                "reference_length": 3,
+                "critical_fields_match": True,
+                "detected_intent": "ORDER_PRODUCT",
+                "intent_match": True,
+                "task_success": True,
+                "status": "completed",
+            },
+            "utterance_b": {
+                "utterance_id": "B",
+                "reference_transcript": "Teen packet chahiye",
+                "actual_transcript": "Teen packet chahiye",
+                "wer": 0.0,
+                "substitutions": 0,
+                "deletions": 0,
+                "insertions": 0,
+                "reference_length": 3,
+                "critical_fields_match": True,
+                "detected_intent": "ORDER_PRODUCT",
+                "intent_match": True,
+                "task_success": True,
+                "status": "completed",
+            },
+            "wer_a": 0.0,
+            "wer_b": 0.0,
+            "average_wer": 0.0,
+            "critical_field_accuracy": 1.0,
+            "semantic_distinction_preserved": True,
+            "task_success": True,
+            "primary_failure_category": "none",
+            "failure_explanation": "None",
+        })
+        conn.execute(
+            """
+            INSERT INTO evaluation_runs VALUES (
+                'legacy_run_001', 'pair_qty_001', 'quantities_and_numbers', 'hi-IN',
+                'mock', 'text_only_simulation', 0.0, 0.0, 0.0, 1.0, 1, 1, 'none',
+                'None', NULL, NULL, '2026-10-18T10:00:00Z', ?
+            )
+            """,
+            (legacy_payload,),
+        )
+        conn.commit()
+
+    # Now instantiate StorageManager on the legacy database
+    storage = StorageManager(db_path=db_file)
+
+    # 1. Assert column overall_status was added and row defaulted to 'completed'
+    with sqlite3.connect(str(db_file)) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("PRAGMA table_info(evaluation_runs)")
+        columns = [row["name"] for row in cur.fetchall()]
+        assert "overall_status" in columns
+
+        cur.execute("SELECT overall_status FROM evaluation_runs WHERE run_id = 'legacy_run_001'")
+        row = cur.fetchone()
+        assert row["overall_status"] == "completed"
+
+    # 2. Assert get_run and list_runs expose overall_status == 'completed'
+    run = storage.get_run("legacy_run_001")
+    assert run is not None
+    assert run.overall_status == "completed"
+
+    runs = storage.list_runs()
+    assert len(runs) == 1
+    assert runs[0].overall_status == "completed"
+
+    # 3. Assert metrics treat legacy record as a completed run
+    metrics = storage.get_aggregate_metrics()
+    assert metrics.total_runs == 1
+    assert metrics.completed_runs == 1
+    assert metrics.failed_runs == 0
+    assert metrics.incomplete_runs == 0
+    assert metrics.average_wer == 0.0
+    assert metrics.distinction_preservation_rate == 100.0

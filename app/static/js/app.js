@@ -699,9 +699,9 @@ document.addEventListener("DOMContentLoaded", () => {
       const m = await response.json();
 
       statTotalRuns.textContent = m.total_runs;
-      statDistinctionRate.textContent = `${m.distinction_preservation_rate.toFixed(1)}%`;
-      statTaskSuccessRate.textContent = `${m.task_success_rate.toFixed(1)}%`;
-      statAvgWer.textContent = `${(m.average_wer * 100).toFixed(1)}%`;
+      statDistinctionRate.textContent = m.distinction_preservation_rate != null ? `${m.distinction_preservation_rate.toFixed(1)}%` : "—%";
+      statTaskSuccessRate.textContent = m.task_success_rate != null ? `${m.task_success_rate.toFixed(1)}%` : "—%";
+      statAvgWer.textContent = m.average_wer != null ? `${(m.average_wer * 100).toFixed(1)}%` : "—";
     } catch (err) {
       console.error("Failed to load metrics:", err);
     }

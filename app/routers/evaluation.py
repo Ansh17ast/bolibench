@@ -105,8 +105,8 @@ async def run_mock_evaluation(
 async def run_live_evaluation(
     test_id: str,
     request: Request,
-    audio_file_a: UploadFile = File(..., description="Audio file for Utterance A (WAV, MP3, OGG, FLAC, AAC, M4A <= 60s)"),
-    audio_file_b: UploadFile = File(..., description="Audio file for Utterance B (WAV, MP3, OGG, FLAC, AAC, M4A <= 60s)"),
+    audio_file_a: UploadFile = File(..., description="Audio file for Utterance A (WAV format only, duration strictly validated <= 60s)"),
+    audio_file_b: UploadFile = File(..., description="Audio file for Utterance B (WAV format only, duration strictly validated <= 60s)"),
     audio_condition: str = Form("clean_recorded", description="Acoustic environment metadata (e.g. clean_recorded, noisy_recorded)"),
     confirmation_token: Optional[str] = Form(None, description="Single-use confirmation authorization token from /api/eval/authorize-live"),
 ):
@@ -120,6 +120,10 @@ async def run_live_evaluation(
       - Single-use confirmation token is missing, invalid, expired, or already consumed
     - Validates audio_condition against AudioCondition enum (rejects text_only_simulation on live audio).
     - Requires GNANI_API_KEY to be configured in .env.
+
+    AUDIO VALIDATION POLICY:
+    - Live paired evaluation strictly accepts WAV format only (.wav) with verifiable PCM header duration <= 60 seconds.
+    - General single-audio upload endpoint (/transcribe) accepts WAV, MP3, OGG, FLAC, AAC, M4A up to 25 MB with magic byte validation.
     """
     # 0. STRICT DEPLOYMENT SAFETY & CREDIT GUARD FIRST
     settings = get_settings()
@@ -231,9 +235,10 @@ async def evaluate_transcripts(req: EvaluateTranscriptsRequest):
 async def list_evaluation_results(
     limit: int = Query(50, ge=1, le=500),
     category: Optional[str] = Query(None),
+    status: Optional[str] = Query(None, description="Filter by overall_status: completed, failed, incomplete"),
 ):
     """Lists recent evaluation runs stored in SQLite."""
-    return engine.list_runs(limit=limit, category=category)
+    return engine.list_runs(limit=limit, category=category, status=status)
 
 
 @router.get("/results/{run_id}", response_model=PairEvaluationResult)

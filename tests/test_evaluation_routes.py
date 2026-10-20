@@ -874,3 +874,252 @@ async def test_run_live_missing_origin_non_local_rejected(async_client, monkeypa
         live_guard.validate_same_origin(req)
     assert exc_info.value.status_code == 403
     assert "missing origin or referer header" in exc_info.value.detail.lower()
+
+
+def test_openapi_live_route_documentation_reflects_wav_only():
+    """Asserts that OpenAPI schema for live paired evaluation documents WAV-only format."""
+    from app.main import app
+    openapi_schema = app.openapi()
+    live_path = openapi_schema["paths"].get("/api/eval/run-live/{test_id}", {})
+    post_op = live_path.get("post", {})
+    assert post_op, "POST /api/eval/run-live/{test_id} not found in OpenAPI schema"
+
+    # 1. Check description explains Audio Validation Policy
+    doc = post_op.get("description", "")
+    assert "WAV format only" in doc
+    assert "<= 60 seconds" in doc or "<= 60s" in doc
+    assert "General single-audio upload" in doc
+
+    # 2. Check requestBody schema descriptions for audio files
+    req_body = post_op.get("requestBody", {})
+    form_schema = req_body.get("content", {}).get("multipart/form-data", {}).get("schema", {})
+    ref = form_schema.get("$ref")
+    if ref and ref.startswith("#/components/schemas/"):
+        schema_name = ref.split("/")[-1]
+        schema = openapi_schema["components"]["schemas"].get(schema_name, {})
+    else:
+        schema = form_schema
+
+    props = schema.get("properties", {})
+    desc_a = props.get("audio_file_a", {}).get("description", "")
+    desc_b = props.get("audio_file_b", {}).get("description", "")
+
+    assert "WAV format only" in desc_a
+    assert "<= 60s" in desc_a or "<= 60 seconds" in desc_a
+    assert "WAV format only" in desc_b
+    assert "<= 60s" in desc_b or "<= 60 seconds" in desc_b
+
+    # Verify stale format list (MP3, OGG, etc.) is removed from live upload description
+    assert "MP3" not in desc_a
+    assert "MP3" not in desc_b
+
+
+@pytest.mark.asyncio
+async def test_failed_and_incomplete_runs_remain_accessible_in_history(async_client, tmp_path):
+    """Proves failed and incomplete operational runs remain discoverable in history with overall_status."""
+    from app.evaluation.storage import StorageManager
+    from app.evaluation.schemas import PairEvaluationResult, UtteranceEvaluationResult, ExecutionMode, FailureCategory
+    from app.routers.evaluation import engine
+
+    test_storage = StorageManager(db_path=tmp_path / "test_history_status.db")
+    orig_storage = engine.storage
+    engine.storage = test_storage
+
+    try:
+        # 1. Insert 1 completed, 1 failed, 1 incomplete run
+        completed_run = PairEvaluationResult(
+            run_id="hist_comp_001",
+            test_case_id="pair_qty_001",
+            category="quantities_and_numbers",
+            language_code="hi-IN",
+            execution_mode=ExecutionMode.MOCK,
+            audio_condition="text_only_simulation",
+            timestamp="2026-10-20T04:10:00Z",
+            overall_status="completed",
+            utterance_a=UtteranceEvaluationResult(
+                utterance_id="A",
+                reference_transcript="Do packet chahiye",
+                actual_transcript="Do packet chahiye",
+                wer=0.0,
+                substitutions=0,
+                deletions=0,
+                insertions=0,
+                reference_length=3,
+                critical_fields_match=True,
+                detected_intent="ORDER_PRODUCT",
+                intent_match=True,
+                task_success=True,
+                status="completed",
+            ),
+            utterance_b=UtteranceEvaluationResult(
+                utterance_id="B",
+                reference_transcript="Teen packet chahiye",
+                actual_transcript="Teen packet chahiye",
+                wer=0.0,
+                substitutions=0,
+                deletions=0,
+                insertions=0,
+                reference_length=3,
+                critical_fields_match=True,
+                detected_intent="ORDER_PRODUCT",
+                intent_match=True,
+                task_success=True,
+                status="completed",
+            ),
+            wer_a=0.0,
+            wer_b=0.0,
+            average_wer=0.0,
+            critical_field_accuracy=1.0,
+            semantic_distinction_preserved=True,
+            task_success=True,
+            primary_failure_category=FailureCategory.NONE,
+            failure_explanation="Success",
+        )
+        failed_run = PairEvaluationResult(
+            run_id="hist_failed_002",
+            test_case_id="pair_qty_001",
+            category="quantities_and_numbers",
+            language_code="hi-IN",
+            execution_mode=ExecutionMode.LIVE,
+            audio_condition="clean_recorded",
+            timestamp="2026-10-20T04:11:00Z",
+            overall_status="failed",
+            utterance_a=UtteranceEvaluationResult(
+                utterance_id="A",
+                reference_transcript="Do packet chahiye",
+                actual_transcript="",
+                wer=1.0,
+                substitutions=0,
+                deletions=3,
+                insertions=0,
+                reference_length=3,
+                critical_fields_match=False,
+                detected_intent="UNKNOWN",
+                intent_match=False,
+                task_success=False,
+                status="failed",
+                error_message="Network connection reset",
+            ),
+            utterance_b=UtteranceEvaluationResult(
+                utterance_id="B",
+                reference_transcript="Teen packet chahiye",
+                actual_transcript="",
+                wer=1.0,
+                substitutions=0,
+                deletions=3,
+                insertions=0,
+                reference_length=3,
+                critical_fields_match=False,
+                detected_intent="UNKNOWN",
+                intent_match=False,
+                task_success=False,
+                status="skipped",
+            ),
+            wer_a=1.0,
+            wer_b=1.0,
+            average_wer=1.0,
+            critical_field_accuracy=0.0,
+            semantic_distinction_preserved=False,
+            task_success=False,
+            primary_failure_category=FailureCategory.PROVIDER_ERROR,
+            failure_explanation="Provider request for Utterance A failed: Network connection reset.",
+        )
+        incomplete_run = PairEvaluationResult(
+            run_id="hist_incomp_003",
+            test_case_id="pair_qty_001",
+            category="quantities_and_numbers",
+            language_code="hi-IN",
+            execution_mode=ExecutionMode.LIVE,
+            audio_condition="clean_recorded",
+            timestamp="2026-10-20T04:12:00Z",
+            overall_status="incomplete",
+            utterance_a=UtteranceEvaluationResult(
+                utterance_id="A",
+                reference_transcript="Do packet chahiye",
+                actual_transcript="Do packet chahiye",
+                wer=0.0,
+                substitutions=0,
+                deletions=0,
+                insertions=0,
+                reference_length=3,
+                critical_fields_match=True,
+                detected_intent="ORDER_PRODUCT",
+                intent_match=True,
+                task_success=True,
+                status="completed",
+                request_id="req_success_111",
+            ),
+            utterance_b=UtteranceEvaluationResult(
+                utterance_id="B",
+                reference_transcript="Teen packet chahiye",
+                actual_transcript="",
+                wer=1.0,
+                substitutions=0,
+                deletions=3,
+                insertions=0,
+                reference_length=3,
+                critical_fields_match=False,
+                detected_intent="UNKNOWN",
+                intent_match=False,
+                task_success=False,
+                status="failed",
+                error_message="Rate limit 429",
+            ),
+            wer_a=0.0,
+            wer_b=1.0,
+            average_wer=0.5,
+            critical_field_accuracy=0.5,
+            semantic_distinction_preserved=False,
+            task_success=False,
+            primary_failure_category=FailureCategory.PROVIDER_ERROR,
+            failure_explanation="Partial failure: Utterance A succeeded, Utterance B rate limited.",
+        )
+        test_storage.save_run(completed_run)
+        test_storage.save_run(failed_run)
+        test_storage.save_run(incomplete_run)
+
+        # 2. Query all results via history endpoint
+        resp = await async_client.get("/api/eval/results")
+        assert resp.status_code == 200
+        runs = resp.json()
+        assert len(runs) == 3
+
+        statuses = {r["run_id"]: r["overall_status"] for r in runs}
+        assert statuses["hist_comp_001"] == "completed"
+        assert statuses["hist_failed_002"] == "failed"
+        assert statuses["hist_incomp_003"] == "incomplete"
+
+        # 3. Test filtering by status
+        resp_failed = await async_client.get("/api/eval/results?status=failed")
+        assert resp_failed.status_code == 200
+        failed_list = resp_failed.json()
+        assert len(failed_list) == 1
+        assert failed_list[0]["run_id"] == "hist_failed_002"
+        assert failed_list[0]["overall_status"] == "failed"
+
+        resp_incomp = await async_client.get("/api/eval/results?status=incomplete")
+        assert resp_incomp.status_code == 200
+        incomp_list = resp_incomp.json()
+        assert len(incomp_list) == 1
+        assert incomp_list[0]["run_id"] == "hist_incomp_003"
+        assert incomp_list[0]["overall_status"] == "incomplete"
+
+        # 4. Single run retrieval exposes overall_status and error details
+        resp_single_failed = await async_client.get("/api/eval/results/hist_failed_002")
+        assert resp_single_failed.status_code == 200
+        s_failed = resp_single_failed.json()
+        assert s_failed["overall_status"] == "failed"
+        assert s_failed["primary_failure_category"] == "provider_error"
+        assert "Network connection reset" in s_failed["failure_explanation"]
+        assert s_failed["utterance_a"]["status"] == "failed"
+        assert s_failed["utterance_b"]["status"] == "skipped"
+
+        resp_single_incomp = await async_client.get("/api/eval/results/hist_incomp_003")
+        assert resp_single_incomp.status_code == 200
+        s_incomp = resp_single_incomp.json()
+        assert s_incomp["overall_status"] == "incomplete"
+        assert s_incomp["utterance_a"]["request_id"] == "req_success_111"
+        assert s_incomp["utterance_b"]["status"] == "failed"
+
+    finally:
+        engine.storage = orig_storage
