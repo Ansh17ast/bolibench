@@ -53,6 +53,19 @@ uploads/
 *.sqlite
 *.sqlite3
 *.db
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+
+# Persistent dataset stores & execution outputs
+human_recordings_v1/
+benchmark_results/
+benchmark_checkpoints/
+
+# Local developer scratch and test audio
+local_test_audio/
+scratch/
 
 # Pytest / Coverage
 .pytest_cache/

@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     gnani_base_url: str = "https://api.vachana.ai/stt/v3"
     gnani_request_timeout_seconds: float = 30.0
 
+    # Administrative Secret for Trusted Speaker Management
+    admin_api_key: Optional[str] = None
+
     # Upload Constraints (25 MB default safety ceiling)
     max_audio_size_bytes: int = 26_214_400
 
@@ -43,10 +46,21 @@ class Settings(BaseSettings):
             return False
         return True
 
+    @property
+    def is_admin_configured(self) -> bool:
+        """Returns True if an admin API key is configured."""
+        if not self.admin_api_key:
+            return False
+        key = self.admin_api_key.strip()
+        if not key or key == "your_admin_secret_key_here":
+            return False
+        return True
+
     def __repr__(self) -> str:
         """Safe string representation preventing credential leaks."""
         return (
             f"<Settings app_env={self.app_env} gnani_api_configured={self.is_api_configured} "
+            f"admin_configured={self.is_admin_configured} "
             f"live_eval_enabled={self.live_evaluation_enabled} live_transcription_enabled={self.live_transcription_enabled}>"
         )
 
