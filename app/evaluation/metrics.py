@@ -94,6 +94,7 @@ CROSS_SCRIPT_MAP: Dict[str, str] = {
     "crore": "10000000", "करोड़": "10000000", "10000000": "10000000",
 
     # Common vocabulary in seed evaluations
+    "pack": "pack", "पैक": "pack",
     "packet": "packet", "packets": "packet", "पैकेट": "packet", "पेकेट": "packet",
     "chahiye": "chahiye", "चाहिए": "chahiye", "चाहिये": "chahiye",
     "rupaye": "rupaye", "rupees": "rupaye", "रुपये": "rupaye", "रुपए": "rupaye", "rs": "rupaye",
@@ -107,6 +108,9 @@ CROSS_SCRIPT_MAP: Dict[str, str] = {
     "booking": "booking", "बुकिंग": "booking",
     "balance": "balance", "बैलेंस": "balance",
     "account": "account", "अकाउंट": "account", "खाता": "account",
+    "amount": "amount", "अमाउंट": "amount",
+    "aur": "aur", "और": "aur",
+    "me": "me", "में": "me",
     "band": "band", "बंद": "band",
     "cart": "cart", "कार्ट": "cart",
     "khali": "khali", "खाली": "khali",
@@ -118,6 +122,20 @@ CROSS_SCRIPT_MAP: Dict[str, str] = {
     "mumbai": "mumbai", "मुंबई": "mumbai",
     "delhi": "delhi", "दिल्ली": "delhi",
     "flight": "flight", "फ्लाइट": "flight",
+    "rahul": "rahul", "राहुल": "rahul",
+    "rohit": "rohit", "रोहित": "rohit",
+    "sharma": "sharma", "शर्मा": "sharma",
+    "return": "return", "रिटर्न": "return",
+    "badalna": "badalna", "बदलना": "badalna", "badal": "badalna", "बदल": "badalna",
+    "delivery": "delivery", "डिलीवरी": "delivery",
+    "subah": "subah", "सुबह": "subah",
+    "baje": "baje", "बजे": "baje",
+    "naam": "naam", "नाम": "naam",
+    "par": "par", "पर": "par",
+    "hai": "hai", "है": "hai",
+    "mera": "mera", "मेरा": "mera",
+    "mujhe": "mujhe", "मुझे": "mujhe",
+    "apna": "apna", "अपना": "apna",
 }
 
 # Auxiliary verbal triggers where 'do' / 'दो' functions as the imperative/auxiliary verb ("give" / "perform")
@@ -356,9 +374,55 @@ AFFIRMATIVE_TOKENS: Set[str] = {
 }
 
 
+def _extract_all_numeric_candidates(text: str) -> List[int]:
+    """Helper returning all integer quantities mentioned in text in sequence."""
+    cleaned = re.sub(r"(?<=\d),(?=\d)", "", text)
+    cleaned = re.sub(r"[₹$€£]", " ", cleaned)
+    cleaned = re.sub(r"\b\d{1,2}:\d{2}\b", " ", cleaned)
+    cleaned = re.sub(
+        r"(?:सुबह|subah|शाम|shaam|at)?\s*(?:\d{1,2}|[a-zA-Z\u0900-\u097F]+)\s*(?:बजे|baje|am|pm|clock|o'clock)\b",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    norm = normalize_text(cleaned)
+    words = norm.split()
+    found: List[int] = []
+    i = 0
+    while i < len(words):
+        w = words[i]
+        val = None
+        if w in NUMBER_WORDS:
+            if w in ("do", "दो"):
+                if (i > 0 and words[i - 1] in VERBAL_AUXILIARY_PRECEDING_TOKENS) or (
+                    i + 1 < len(words)
+                    and words[i + 1] in {"not", "n't", "dont", "you", "they", "we", "it", "so", "nothing", "cancel"}
+                ):
+                    i += 1
+                    continue
+            val = NUMBER_WORDS[w]
+        elif w.isdigit():
+            val = int(w)
+        if val is not None:
+            if i + 1 < len(words) and words[i + 1] in SCALE_MULTIPLIERS:
+                val = val * SCALE_MULTIPLIERS[words[i + 1]]
+                i += 1
+            found.append(val)
+        i += 1
+    return found
+
+
 def extract_quantities(text: str) -> Dict[str, Any]:
     """Extracts numeric quantities, scales, and currency amounts deterministically."""
-    norm = normalize_text(text)
+    # Mask clock time expressions (e.g. "09:00", "सुबह 9 बजे", "10:00 am") so hours are never extracted as order quantities
+    cleaned_for_qty = re.sub(r"\b\d{1,2}:\d{2}\b", " ", text)
+    cleaned_for_qty = re.sub(
+        r"(?:सुबह|subah|शाम|shaam|at)?\s*(?:\d{1,2}|[a-zA-Z\u0900-\u097F]+)\s*(?:बजे|baje|am|pm|clock|o'clock)\b",
+        " ",
+        cleaned_for_qty,
+        flags=re.IGNORECASE,
+    )
+    norm = normalize_text(cleaned_for_qty)
     words = norm.split()
     results: Dict[str, Any] = {}
 
@@ -376,6 +440,13 @@ def extract_quantities(text: str) -> Dict[str, Any]:
     for i, word in enumerate(words):
         base_val = None
         if word in NUMBER_WORDS:
+            # Context-aware check for polysemous Hindi 'do' / 'दो':
+            # Preceded by verbal root (kar do, bhej do) -> imperative auxiliary verb
+            if word in ("do", "दो") and i > 0 and words[i - 1] in VERBAL_AUXILIARY_PRECEDING_TOKENS:
+                continue
+            # Followed by negative or English auxiliary pronoun (do not, do you, don't) -> English verb
+            if word in ("do", "दो") and i + 1 < len(words) and words[i + 1] in {"not", "n't", "dont", "you", "they", "we", "it", "so", "nothing", "cancel"}:
+                continue
             base_val = NUMBER_WORDS[word]
         elif word.isdigit():
             base_val = int(word)
@@ -407,146 +478,527 @@ def extract_quantities(text: str) -> Dict[str, Any]:
 
 def extract_negation(text: str) -> Dict[str, Any]:
     """Extracts negation status and affirmative/negative intent deterministically."""
-    norm = normalize_text(text)
-    words = norm.split()
+    norm = unicodedata.normalize("NFC", text.lower())
+    norm_clean = re.sub(r"[\.,!?;:\"'—\(\)\[\]\{\}«»“”‘’।॥\-]", " ", norm)
+    words = norm_clean.split()
 
-    is_negated = any(word in NEGATION_TOKENS for word in words)
+    neg_tokens = {
+        "nahi", "nahin", "नहीं", "mat", "मत", "na", "ना", "न", "ruko", "रुको",
+        "no", "not", "dont", "don't", "never", "stop", "stopp", "neither", "nor", "none",
+    }
+    is_negated = any(w in neg_tokens for w in words)
+    if not is_negated:
+        is_negated = bool(
+            re.search(
+                r"\b(don'?t|can'?t|won'?t|didn'?t|doesn'?t|isn'?t|aren'?t|wasn'?t|weren'?t|never|not|no|nahi|nahin|नहीं|मत|mat|na|ना|रुको|ruko)\b",
+                norm,
+                re.IGNORECASE,
+            )
+        )
 
-    # Detect specific imperative combinations (e.g. "cancel mat karo" vs "cancel kar do")
+    # Detect specific imperative combinations
     action = "proceed"
-    if "cancel" in words:
+    has_cancel = bool(re.search(r"\b(cancel|कैंसल|कैंसिल|रद्द)\b", norm))
+    has_order = bool(re.search(r"\b(order|ऑर्डर)\b", norm))
+
+    if has_cancel:
         if is_negated:
-            # "cancel mat karo" -> keep / do not cancel
-            action = "keep_booking"
+            action = "keep_order" if has_order else "keep_booking"
         else:
-            # "cancel kar do" -> perform cancellation
-            action = "cancel_booking"
-    elif "confirm" in words or "checkout" in words:
-        if is_negated:
-            action = "hold_cart"
-        else:
-            action = "confirm_order"
-    elif "transfer" in words:
-        if is_negated:
-            action = "block_transfer"
-        else:
-            action = "execute_transfer"
+            action = "cancel_order" if has_order else "cancel_booking"
+    elif bool(re.search(r"\b(confirm|checkout|कन्फर्म|पुष्टि)\b", norm)):
+        action = "hold_cart" if is_negated else "confirm_order"
+    elif bool(re.search(r"\b(transfer|ट्रांसफर|bhejo|भेजो)\b", norm)):
+        action = "block_transfer" if is_negated else "execute_transfer"
+    elif bool(re.search(r"\b(invoice|ईमेल|email)\b", norm)):
+        action = "suppress_email" if is_negated else "email_invoice"
+    elif bool(re.search(r"\b(renew|रिन्यू|subscription)\b", norm)):
+        action = "do_not_renew_subscription" if is_negated else "renew_subscription"
+    elif bool(re.search(r"\b(खाना|food|dish)\b", norm)):
+        action = "reject_dish" if is_negated else "order_dish"
     else:
         action = "denied" if is_negated else "confirmed"
 
     return {
         "is_negated": is_negated,
+        "negation_detected": is_negated,
         "action": action,
     }
 
 
 def extract_corrections(text: str) -> Dict[str, Any]:
     """Extracts change-of-mind corrections, identifying initial vs final intended target."""
-    norm = normalize_text(text)
+    cleaned_num_text = re.sub(r"(?<=\d),(?=\d)", "", text)
+    cleaned_num_text = re.sub(r"[₹$€£]", " ", cleaned_num_text)
+    norm = normalize_text(cleaned_num_text)
 
-    # Correction cue phrases
-    cues = [
-        "no wait", "no wait to", "nahi", "nahin", "nahi ruko",
-        "nahi pehle", "actually", "change to", "not", "make it",
+    # 1. Check for item / color / destination retractions (e.g. "लाल नहीं नीला", "पार्सल दिल्ली नहीं मुंबई")
+    known_colors = {
+        "लाल", "नीला", "नीली", "पीला", "पीली", "हरा", "हरी", "काला", "काली", "सफ़ेद", "गुलाबी", "बैंगनी", "नारंगी", "आसमानी", "भूरा", "भूरी",
+        "red", "blue", "green", "black", "white", "yellow", "pink", "purple", "orange", "brown",
+    }
+    known_cities = {
+        "दिल्ली", "मुंबई", "जयपुर", "उदयपुर", "बैंगलोर", "बेंगलुरु", "हैदराबाद", "चेन्नई", "कोलकाता", "पुणे", "अहमदाबाद",
+        "delhi", "mumbai", "jaipur", "udaipur", "bangalore", "bengaluru", "hyderabad", "chennai", "kolkata", "pune",
+    }
+    m_item = re.search(r"([A-Za-z\u0900-\u097F]+)\s+(?:नहीं|nahi|not)\s*,?\s*([A-Za-z\u0900-\u097F]+)", norm)
+    if m_item:
+        w_init = m_item.group(1).strip()
+        w_fin = m_item.group(2).strip()
+        if (w_init in known_colors and w_fin in known_colors) or (w_init in known_cities and w_fin in known_cities):
+            is_dest = w_init in known_cities or w_fin in known_cities
+            return {
+                "correction_detected": True,
+                "initial_value": w_init,
+                "final_target": w_fin,
+                "quantity": None,
+                "destination": w_fin if is_dest else None,
+                "final_destination": w_fin if is_dest else None,
+                "initial_destination": w_init if is_dest else None,
+                "initial_item": None if is_dest else w_init,
+                "final_item": None if is_dest else w_fin,
+                "color": None if is_dest else w_fin,
+            }
+
+    # 2. Explicit multi-token retraction cues
+    explicit_cues = [
+        "no wait to", "no wait", "wait make that", "make that", "wait make it", "wait sorry",
+        "nahi ruko", "nahi pehle", "nahi nahi", "नहीं नहीं", "नहीं रुको", "actually", "change to", "make it", "sorry",
     ]
 
-    for cue in cues:
-        pattern = rf"\b{re.escape(cue)}\b"
+    for cue in explicit_cues:
+        pattern = rf"(?:^|\s){re.escape(cue)}(?:\s|$)"
         match = re.search(pattern, norm)
         if match:
             before_text = norm[:match.start()].strip()
             after_text = norm[match.end():].strip()
 
-            # Extract final target from after_text
-            after_qty = extract_quantities(after_text)
-            before_qty = extract_quantities(before_text)
+            after_candidates = _extract_all_numeric_candidates(after_text)
+            before_candidates = _extract_all_numeric_candidates(before_text)
 
-            # Check destinations (e.g. "flight to Mumbai, no wait, to Delhi")
-            dest_pattern = r"(?:to|flight to|jaana hai)\s+([a-zA-Z]+)"
+            dest_pattern = r"\b(?:flight to|courier to|jaana hai|it to|to)\s+([a-zA-Z]+)"
             before_dest = re.findall(dest_pattern, before_text)
-            after_dest = re.findall(r"(?:to|flight to|se|)\s*([a-zA-Z]+)", after_text)
+            after_dest = re.findall(r"\b(?:flight to|courier to|it to|se|to)\s+([a-zA-Z]+)", after_text)
+            if not after_dest and before_dest and cue.endswith("to"):
+                m_direct = re.match(r"^([a-zA-Z]+)", after_text)
+                if m_direct:
+                    after_dest = [m_direct.group(1)]
 
-            final_destination = after_dest[-1] if after_dest else (after_text.split()[-1] if after_text else None)
-            initial_destination = before_dest[-1] if before_dest else (before_text.split()[-1] if before_text else None)
+            final_destination = after_dest[-1].lower() if after_dest else None
+            initial_destination = before_dest[-1].lower() if before_dest else None
+
+            # Time candidates in before/after text
+            before_times = re.findall(r"\b(\d{1,2})\s*(?:am|pm)?\b", before_text)
+            after_times = re.findall(r"\b(\d{1,2})\s*(?:am|pm)?\b", after_text)
+            init_time = f"{int(before_times[-1]):02d}:00" if before_times else None
+            fin_time = f"{int(after_times[-1]):02d}:00" if after_times else None
+
+            final_val = after_candidates[-1] if after_candidates else (final_destination or fin_time)
+            initial_val = (
+                before_candidates[-1]
+                if before_candidates
+                else (after_candidates[0] if len(after_candidates) > 1 else (initial_destination or init_time))
+            )
 
             return {
                 "correction_detected": True,
-                "initial_value": before_qty.get("quantity") or initial_destination,
-                "final_target": after_qty.get("quantity") or final_destination,
-                "quantity": after_qty.get("quantity"),
+                "initial_value": initial_val,
+                "final_target": final_val,
+                "quantity": after_candidates[-1] if after_candidates else None,
                 "destination": final_destination,
+                "final_destination": final_destination,
+                "initial_destination": initial_destination,
+                "initial_time": init_time,
+                "final_time": fin_time,
+                "time": fin_time,
             }
 
-    # If no correction cue is found, the statement is an uncorrected direct command
-    direct_qty = extract_quantities(norm)
-    destinations = re.findall(r"(?:to|flight to)\s+([a-zA-Z]+)", norm)
-    final_dest = destinations[-1] if destinations else None
+    # 3. Numeric retractions: e.g. "two packets, not two—three packets" or "दो पैकेट नहीं दो, तीन पैकेट"
+    cand_list = _extract_all_numeric_candidates(cleaned_num_text)
+    if any(k in norm.split() for k in ("not", "nahi", "nahin", "नहीं", "no", "ना")):
+        if len(cand_list) >= 2 and cand_list[0] != cand_list[-1]:
+            return {
+                "correction_detected": True,
+                "initial_value": cand_list[0],
+                "final_target": cand_list[-1],
+                "quantity": cand_list[-1],
+                "destination": None,
+                "final_destination": None,
+            }
+
+    # 4. If no correction cue is found, direct uncorrected command
+    direct_qty = extract_quantities(cleaned_num_text)
+    destinations = re.findall(r"(?:to|flight to|courier to)\s+([a-zA-Z]+)", norm)
+    final_dest = destinations[-1].lower() if destinations else None
+
+    # Check for direct color/item
+    direct_item = None
+    for item in ("लाल", "नीला", "पीला", "हरा", "काला", "सफ़ेद", "red", "blue", "green", "black", "white"):
+        if item in norm:
+            direct_item = item
+            break
+
+    # Check for direct time
+    direct_times = re.findall(r"\b(\d{1,2})\s*(?:am|pm)?\b", norm)
+    direct_time = f"{int(direct_times[0]):02d}:00" if (direct_times and any(w in norm for w in ("am", "pm", "meeting", "बजे", "baje"))) else None
+
+    direct_val = (
+        direct_qty.get("quantity")
+        if direct_qty.get("quantity") is not None
+        else (final_dest or direct_item or direct_time)
+    )
 
     return {
         "correction_detected": False,
-        "initial_value": direct_qty.get("quantity") or final_dest,
-        "final_target": direct_qty.get("quantity") or final_dest,
+        "initial_value": direct_val,
+        "final_target": direct_val,
         "quantity": direct_qty.get("quantity"),
         "destination": final_dest,
+        "final_destination": final_dest,
+        "initial_item": direct_item,
+        "final_item": direct_item,
+        "color": direct_item,
+        "initial_time": direct_time,
+        "final_time": direct_time,
+        "time": direct_time,
     }
 
 
 def extract_entities(text: str) -> Dict[str, Any]:
-    """Extracts named entities and product names deterministically."""
-    norm = normalize_text(text)
-
+    """Extracts named entities, person names, and products deterministically across English & Devanagari."""
+    norm = unicodedata.normalize("NFC", text.strip())
     results: Dict[str, Any] = {}
 
-    # Person names
-    if "rahul sharma" in norm or "rahul" in norm:
-        results["person_name"] = "Rahul Sharma"
-    elif "rohit sharma" in norm or "rohit" in norm:
-        results["person_name"] = "Rohit Sharma"
-
-    # Product names (Prisma vs Krishna, Timbre vs Timber)
-    if "prisma" in norm:
+    # 1. Product names
+    if "prisma" in norm.lower() or "प्रिज्मा" in norm:
         results["product_name"] = "Prisma STT"
-    elif "krishna" in norm:
+    elif "krishna" in norm.lower() or "कृष्णा" in norm:
         results["product_name"] = "Krishna STT"
-    elif "timbre" in norm:
+    elif "timbre" in norm.lower():
         results["product_name"] = "Timbre"
-    elif "timber" in norm:
+    elif "timber" in norm.lower():
         results["product_name"] = "Timber"
 
-    # Cities
-    if "mumbai" in norm:
+    # 2. Cities
+    if "mumbai" in norm.lower() or "मुंबई" in norm:
         results["destination"] = "Mumbai"
-    elif "delhi" in norm:
+    elif "delhi" in norm.lower() or "दिल्ली" in norm:
         results["destination"] = "Delhi"
+
+    # 3. Explicit Anchored Person Names (Rahul Sharma vs Rohit Sharma)
+    if any(p in norm.lower() for p in ("rahul sharma", "राहुल शर्मा")):
+        results["person_name"] = "Rahul Sharma"
+        results["name"] = "Rahul Sharma"
+        results["recipient"] = "Rahul Sharma"
+    elif any(p in norm.lower() for p in ("rohit sharma", "रोहित शर्मा")):
+        results["person_name"] = "Rohit Sharma"
+        results["name"] = "Rohit Sharma"
+        results["recipient"] = "Rohit Sharma"
+
+    # 4. English Name Patterns: "payment to <Name>", "transfer money to <Name>", "assign ticket to <Name>", "call <Name>"
+    pronoun_exclusions = {
+        "delhi", "mumbai", "my", "me", "the", "a", "an", "this", "that", "these", "those",
+        "you", "everyone", "someone", "anyone", "nobody", "all", "us", "them", "him", "her",
+        "it", "here", "there", "work", "home", "office", "school", "hospital", "bank",
+        "today", "tomorrow", "morning", "evening", "night", "now",
+    }
+    m_en = re.search(
+        r"\b(?:assign ticket to|deliver (?:the )?package to|payment to|money to|transfer (?:money )?to|send (?:payment |money )?to|call)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)\b",
+        norm,
+        re.IGNORECASE,
+    )
+    if m_en and "name" not in results:
+        raw_name = m_en.group(1).title()
+        if raw_name.lower() not in pronoun_exclusions:
+            results["name"] = raw_name
+            results["recipient"] = raw_name
+            results["contact"] = raw_name
+            results["assignee"] = raw_name
+            results["person_name"] = raw_name
+
+    # 5. Hindi Devanagari Name Patterns:
+    m_hi_ko = re.search(r"([^\s]+)\s+को(?:\s+|$)", norm)
+    if m_hi_ko and "name" not in results:
+        raw_name = m_hi_ko.group(1).strip()
+        if raw_name not in {"मुझ", "मुझे", "हम", "हमें", "सब", "कस्टमर", "शाम"}:
+            results["name"] = raw_name
+            results["recipient"] = raw_name
+            results["contact"] = raw_name
+            results["assignee"] = raw_name
+            results["person_name"] = raw_name
+
+    m_hi_khata = re.search(r"([^\s]+)\s+के\s+खाते\s+में(?:\s+|$)", norm)
+    if m_hi_khata and "name" not in results:
+        raw_name = m_hi_khata.group(1).strip()
+        results["name"] = raw_name
+        results["recipient"] = raw_name
+        results["contact"] = raw_name
+        results["assignee"] = raw_name
+
+    m_hi_no = re.search(r"([^\s]+)\s+का\s+नंबर(?:\s+|$)", norm)
+    if m_hi_no and "name" not in results:
+        raw_name = m_hi_no.group(1).strip()
+        results["name"] = raw_name
+        results["recipient"] = raw_name
+        results["contact"] = raw_name
+
+    # Single-name fallbacks
+    if "name" not in results:
+        if "rahul" in norm.lower() or "राहुल" in norm:
+            results["name"] = "Rahul"
+            results["recipient"] = "Rahul"
+            results["person_name"] = "Rahul Sharma"
+        elif "rohit" in norm.lower() or "रोहित" in norm:
+            results["name"] = "Rohit"
+            results["recipient"] = "Rohit"
+            results["person_name"] = "Rohit Sharma"
+        elif "rohan" in norm.lower() or "रोहन" in norm:
+            results["name"] = "Rohan"
+            results["recipient"] = "Rohan"
+            results["person_name"] = "Rohan"
 
     return results
 
 
+HINDI_TIME_WORDS: Dict[str, int] = {
+    "ek": 1, "एक": 1, "1": 1,
+    "do": 2, "दो": 2, "2": 2,
+    "teen": 3, "तीन": 3, "3": 3,
+    "char": 4, "chaar": 4, "चार": 4, "4": 4,
+    "paanch": 5, "panch": 5, "पाँच": 5, "पांच": 5, "5": 5,
+    "chhah": 6, "che": 6, "छह": 6, "6": 6,
+    "saat": 7, "सात": 7, "7": 7,
+    "aath": 8, "ath": 8, "आठ": 8, "8": 8,
+    "nau": 9, "नौ": 9, "9": 9,
+    "das": 10, "दस": 10, "10": 10,
+    "gyarah": 11, "ग्यारह": 11, "11": 11,
+    "barah": 12, "बारह": 12, "12": 12,
+}
+
+EN_TIME_WORDS: Dict[str, int] = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+}
+
+
+def extract_time(text: str) -> Dict[str, Any]:
+    """Extracts scheduled time, hour, and period deterministically across Hindi and English."""
+    norm = unicodedata.normalize("NFC", text.lower())
+    results: Dict[str, Any] = {}
+
+    has_pm_word = ("दोपहर" in norm and "12" not in norm) or "शाम" in norm or "रात" in norm or bool(re.search(r"\bpm\b", norm))
+    has_am_word = "सुबह" in norm or bool(re.search(r"\bam\b", norm))
+
+    # 1. Digital format like "09:00", "19:30", "02:00", "04:00"
+    m_digital = re.search(r"\b(\d{1,2}):(\d{2})\b", text)
+    if m_digital:
+        h = int(m_digital.group(1))
+        m = int(m_digital.group(2))
+        h_24 = h
+        if has_pm_word and h < 12:
+            h_24 = h + 12
+        elif has_am_word and h == 12:
+            h_24 = 0
+        results["hour"] = h_24
+        results["minute"] = m
+        results["time"] = f"{h_24:02d}:{m:02d}"
+        results["delivery_time"] = f"{h:02d}:{m:02d}"
+        results["meridiem"] = "PM" if has_pm_word else ("AM" if has_am_word else ("PM" if h_24 >= 12 else "AM"))
+        results["period"] = results["meridiem"]
+        return results
+
+    # 2. English hour + AM/PM: e.g. "five PM", "8 PM", "six AM", "six PM", "seven PM", "nine PM"
+    m_en = re.search(r"\b([a-zA-Z]+|\d{1,2})\s*(am|pm)\b", norm)
+    if m_en:
+        h_token = m_en.group(1)
+        period = m_en.group(2).upper()
+        h = int(h_token) if h_token.isdigit() else EN_TIME_WORDS.get(h_token)
+        if h is not None:
+            h_24 = (h + 12) if (period == "PM" and h < 12) else (0 if (period == "AM" and h == 12) else h)
+            results["hour"] = h_24
+            results["time"] = f"{h_24:02d}:00"
+            results["delivery_time"] = f"{h:02d}:00"
+            results["meridiem"] = period
+            results["period"] = period
+            return results
+
+    # 3. English compound words: e.g. "ten thirty", "twelve thirty"
+    m_comp = re.search(
+        r"\b(ten|twelve|one|two|three|four|five|six|seven|eight|nine|eleven)\s+(thirty|fifteen|forty five)\b",
+        norm,
+    )
+    if m_comp:
+        h_w = m_comp.group(1)
+        m_w = m_comp.group(2)
+        h = EN_TIME_WORDS.get(h_w, 0)
+        m = 30 if m_w == "thirty" else (15 if m_w == "fifteen" else 45)
+        results["hour"] = h
+        results["minute"] = m
+        results["time"] = f"{h:02d}:{m:02d}"
+        results["delivery_time"] = f"{h:02d}:{m:02d}"
+        return results
+
+    # 4. Hindi half-past: "साढ़े सात बजे", "साढ़े आठ बजे"
+    m_half = re.search(r"(?:साढ़े|साढ़े)\s+([^\s]+)\s*बजे", norm)
+    if m_half:
+        tok = m_half.group(1)
+        h = int(tok) if tok.isdigit() else HINDI_TIME_WORDS.get(tok)
+        if h is not None:
+            h_24 = (h + 12) if (has_pm_word and h < 12) else h
+            results["hour"] = h_24
+            results["minute"] = 30
+            results["time"] = f"{h_24:02d}:30"
+            results["delivery_time"] = f"{h:02d}:30"
+            results["meridiem"] = "PM" if has_pm_word else "AM"
+            results["period"] = results["meridiem"]
+            return results
+
+    # 5. Hindi hour + बजे: "नौ बजे", "ग्यारह बजे", "दो बजे", "चार बजे", "दस बजे"
+    m_baje = re.search(r"([^\s]+)\s*बजे", norm)
+    if m_baje:
+        tok = m_baje.group(1)
+        h = int(tok) if tok.isdigit() else HINDI_TIME_WORDS.get(tok)
+        if h is not None:
+            h_24 = (h + 12) if (has_pm_word and h < 12) else h
+            results["hour"] = h_24
+            results["time"] = f"{h_24:02d}:00"
+            results["delivery_time"] = f"{h:02d}:00"
+            results["meridiem"] = "PM" if has_pm_word else ("AM" if has_am_word else None)
+            results["period"] = results["meridiem"]
+            return results
+
+    # 6. Direct hour match ONLY if explicit time cue ("सुबह", "subah", "शाम", "shaam") is present
+    if "सुबह" in norm or "subah" in norm or "शाम" in norm or "shaam" in norm:
+        words = norm.split()
+        for w in words:
+            if w in HINDI_TIME_WORDS:
+                h = HINDI_TIME_WORDS[w]
+                h_24 = (h + 12) if (has_pm_word and h < 12) else h
+                results["hour"] = h_24
+                results["time"] = f"{h_24:02d}:00"
+                results["delivery_time"] = f"{h:02d}:00"
+                results["period"] = "AM" if has_am_word else "PM"
+                results["meridiem"] = results["period"]
+                return results
+
+    return results
+
+
+def normalize_intent_alias(intent: Optional[str]) -> Optional[str]:
+    """Normalizes equivalent intent identifiers to canonical benchmark representations."""
+    if not intent:
+        return intent
+    aliases = {
+        "RETURN_ORDER": "RETURN_PRODUCT",
+        "RETURN_PRODUCT": "RETURN_PRODUCT",
+        "CHANGE_ADDRESS": "MODIFY_ADDRESS",
+        "MODIFY_ADDRESS": "MODIFY_ADDRESS",
+        "REFUND_PAYMENT": "REFUND_PAYMENT",
+        "CHECK_REFUND": "CHECK_REFUND",
+        "BOOK_CAB": "BOOK_CAB",
+        "CANCEL_CAB": "CANCEL_CAB",
+        "CANCEL_MANDATE": "CANCEL_MANDATE",
+        "REPEAT_TRANSACTION": "REPEAT_TRANSACTION",
+        "TRACK_PACKAGE": "TRACK_PACKAGE",
+        "EXCHANGE_ITEM": "EXCHANGE_ITEM",
+        "ESCALATE_HUMAN_AGENT": "ESCALATE_HUMAN_AGENT",
+        "FILE_COMPLAINT": "FILE_COMPLAINT",
+        "CANCEL_ORDER": "CANCEL_ORDER",
+        "MODIFY_ORDER": "MODIFY_ORDER",
+    }
+    return aliases.get(intent.strip(), intent.strip())
+
+
 def extract_command_intent(text: str) -> str:
     """Classifies spoken utterance command intent supporting Latin, Romanized Hindi, and Devanagari."""
-    norm = normalize_text(text)
-    words = norm.split()
+    norm = unicodedata.normalize("NFC", text.lower())
 
     # Negation tokens for intent checks
     negation_set = {"mat", "nahi", "nahin", "no", "not", "मत", "नहीं", "ना"}
+    is_neg = any(n in norm.split() for n in negation_set)
 
+    # 1. Cab booking vs cancellation
+    if any(k in norm for k in ("गाड़ी", "गाड़ी", "cab", "taxi", "ride", "टैक्सी")):
+        if any(c in norm for c in ("cancel", "कैंसिल", "कैंसल", "रद्द")):
+            return "CANCEL_CAB"
+        if any(b in norm for b in ("book", "बुक", "dispatch")):
+            return "BOOK_CAB"
+
+    # 2. Address modification (MUST precede delivery inquiries and generic modify)
+    if any(a in norm for a in ("address", "एड्रेस", "पता")) and any(c in norm for c in ("change", "modify", "badal", "बदल", "update", "अपडेट")):
+        return "MODIFY_ADDRESS"
+
+    # 3. Order / Package Tracking & Delivery Inquiry
+    if any(t in norm for t in ("track", "tracking", "ट्रैक")):
+        return "TRACK_PACKAGE"
+    if "when will" in norm and any(p in norm for p in ("package", "order", "delivery", "arrive")):
+        return "DELIVERY_INQUIRY"
+
+    # 4. Refund status vs refund request
+    if any(r in norm for r in ("refund", "रिफंड")):
+        if any(s in norm for s in ("status", "स्टेटस", "बताओ", "check")):
+            return "CHECK_REFUND"
+        return "REFUND_PAYMENT"
+
+    # 5. Exchange item
+    if any(e in norm for e in ("exchange", "एक्सचेंज")):
+        return "EXCHANGE_ITEM"
+
+    # 6. Escalation / Customer Support
+    if any(c in norm for c in ("customer care", "कस्टमर केयर", "human", "बात करवाओ", "agent", "support")):
+        return "ESCALATE_HUMAN_AGENT"
+
+    # 7. Complaint
+    if any(c in norm for c in ("complaint", "शिकायत", "complain")):
+        return "FILE_COMPLAINT"
+
+    # 8. Payment Repetition vs Cancel Mandate
+    if any(m in norm for m in ("recurring", "mandate", "ऑटोपे", "ऑटो पे")) or (any(s in norm for s in ("stop", "रोक", "कैंसिल", "cancel")) and any(p in norm for p in ("payment", "deduction", "पेमेंट"))):
+        return "CANCEL_MANDATE"
+    if any(r in norm for r in ("repeat", "again", "फिर से", "दोबारा")) and any(p in norm for p in ("payment", "पेमेंट", "transaction", "ट्रांजेक्शन", "रुपये")):
+        return "REPEAT_TRANSACTION"
+
+    # 9. Request funds
+    if any(k in norm for k in ("request", "maang", "मांग", "माँग")):
+        return "REQUEST_FUNDS"
+
+    # 10. Post-order return / modify intents (must precede generic order intent)
+    if any(r in norm for r in ("return", "रिटर्न", "वापस")):
+        return "RETURN_ORDER"
+    if any(m in norm for m in ("modify", "मॉडिफाई", "badal", "बदल", "change", "edit")):
+        return "MODIFY_ORDER"
+
+    # 11. Cancellation of order / package / booking
+    if any(c in norm for c in ("cancel", "कैंसल", "कैंसिल", "रद्द")):
+        has_pkg = any(p in norm for p in ("package", "delivery", "डिलीवरी", "order", "ऑर्डर"))
+        if is_neg:
+            return "KEEP_ORDER" if has_pkg else "KEEP_BOOKING"
+        return "CANCEL_ORDER" if has_pkg else "CANCEL_BOOKING"
+
+    # 12. Delivery scheduling / inquiry
+    if "डिलीवरी" in norm or "delivery" in norm:
+        if any(t in norm for t in ("बजे", "baje", "time", "सुबह", "subah", "शाम", "shaam")):
+            return "SCHEDULE_DELIVERY"
+        return "DELIVERY_INQUIRY"
+
+    # 13. Banking / Balance
     if "balance" in norm or "बैलेंस" in norm:
         return "CHECK_BALANCE"
-    if "band" in norm or "बंद" in norm or "close" in norm or "terminate" in norm:
+    if any(k in norm for k in ("band", "बंद", "close", "terminate")):
         return "CLOSE_ACCOUNT"
-    if ("cancel" in norm or "कैंसिल" in norm or "रद्द" in norm) and any(n in words for n in negation_set):
-        return "KEEP_BOOKING"
-    if "cancel" in norm or "कैंसिल" in norm or "रद्द" in norm:
-        return "CANCEL_BOOKING"
-    if "empty" in norm or "khali" in norm or "खाली" in norm:
-        return "EMPTY_CART"
-    if "confirm" in norm or "checkout" in norm or "कन्फर्म" in norm or "पुष्टि" in norm:
-        return "CONFIRM_ORDER"
-    if "pay" in norm or "bhejo" in norm or "भेजो" in norm or "transfer" in norm or "ट्रांसफर" in norm:
+
+    # 14. Generic Payments
+    if any(k in norm for k in ("pay", "bhejo", "भेजो", "transfer", "ट्रांसफर")):
         return "TRANSFER_FUNDS"
-    if "request" in norm or "maang" in norm or "मांग" in norm or "माँग" in norm:
-        return "REQUEST_FUNDS"
-    if "order" in norm or "ऑर्डर" in norm or "chahiye" in norm or "चाहिए" in norm or "चाहिये" in norm or "plate" in norm or "प्लेट" in norm:
+
+    # 15. Cart and Confirmation
+    if any(k in norm for k in ("empty", "khali", "खाली")):
+        return "EMPTY_CART"
+    if any(c in norm for c in ("confirm", "checkout", "कन्फर्म", "पुष्टि")):
+        return "CONFIRM_ORDER"
+
+    # 16. General ordering
+    if any(k in norm for k in ("order", "ऑर्डर", "chahiye", "चाहिए", "plate", "प्लेट")):
         return "ORDER_PRODUCT"
 
     return "UNKNOWN_INTENT"
@@ -571,12 +1023,15 @@ def extract_all_critical_fields(
     elif category == TestCategory.COMMAND_INTENT:
         fields["intent"] = extract_command_intent(transcript)
         fields.update(extract_quantities(transcript))
+    elif category == TestCategory.TIME_EXTRACTION:
+        fields.update(extract_time(transcript))
     elif category == TestCategory.HINDI_ENGLISH_CODE_SWITCHING:
         fields.update(extract_negation(transcript))
         fields.update(extract_quantities(transcript))
         fields.update(extract_entities(transcript))
 
     return fields
+
 
 
 # -----------------------------------------------------------------------------
@@ -613,7 +1068,12 @@ def evaluate_utterance(
     )
 
     detected_intent = extract_command_intent(actual_transcript)
-    intent_match = (detected_intent == utterance_spec.expected_intent)
+    if utterance_spec.expected_intent is not None:
+        intent_match = (
+            normalize_intent_alias(detected_intent) == normalize_intent_alias(utterance_spec.expected_intent)
+        )
+    else:
+        intent_match = True
 
     # Evaluate critical fields match
     field_matches: Dict[str, bool] = {}
@@ -624,7 +1084,12 @@ def evaluate_utterance(
         if isinstance(expected_val, (int, float)) and isinstance(actual_val, (int, float)):
             field_matches[field_name] = (round(float(expected_val), 2) == round(float(actual_val), 2))
         elif isinstance(expected_val, str) and isinstance(actual_val, str):
-            field_matches[field_name] = (expected_val.strip().lower() == actual_val.strip().lower())
+            if field_name == "intent":
+                field_matches[field_name] = (
+                    normalize_intent_alias(expected_val) == normalize_intent_alias(actual_val)
+                )
+            else:
+                field_matches[field_name] = (expected_val.strip().lower() == actual_val.strip().lower())
         else:
             field_matches[field_name] = (expected_val == actual_val)
 
@@ -725,7 +1190,16 @@ def classify_failure(
                 "Downstream voice bot routed to wrong person or requested wrong product SKU.",
             )
 
-    # 6. Intent Error
+    # 6. Time Extraction Error
+    if category == TestCategory.TIME_EXTRACTION or dist_field in ("delivery_time", "time", "hour"):
+        if not distinction_preserved or not (result_a.critical_fields_match and result_b.critical_fields_match):
+            return (
+                FailureCategory.TIME_ERROR,
+                f"Time distinction collapsed (Expected: {exp_a} vs {exp_b}, extracted: {val_a} vs {val_b}). "
+                "Downstream scheduling or delivery agent would book or route at the wrong time.",
+            )
+
+    # 7. Intent Error
     if category == TestCategory.COMMAND_INTENT or not (result_a.intent_match and result_b.intent_match):
         return (
             FailureCategory.INTENT_ERROR,
@@ -829,10 +1303,22 @@ def score_pair(
     exp_a = test_case.utterance_a.expected_critical_fields.get(dist_field)
     exp_b = test_case.utterance_b.expected_critical_fields.get(dist_field)
 
+    def _critical_values_match(actual: Any, expected: Any) -> bool:
+        if actual is None or expected is None:
+            return actual is expected
+        if isinstance(actual, (int, float)) and isinstance(expected, (int, float)):
+            return round(float(actual), 2) == round(float(expected), 2)
+        if isinstance(actual, str) and isinstance(expected, str):
+            if dist_field == "intent":
+                return normalize_intent_alias(actual) == normalize_intent_alias(expected)
+            return actual.strip().lower() == expected.strip().lower()
+        return actual == expected
+
     distinction_preserved = (
         val_a is not None and val_b is not None
-        and val_a == exp_a and val_b == exp_b
-        and val_a != val_b
+        and _critical_values_match(val_a, exp_a)
+        and _critical_values_match(val_b, exp_b)
+        and not _critical_values_match(val_a, val_b)
     )
 
     # 4. Critical-field accuracy across all expected fields in both utterances

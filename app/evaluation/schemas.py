@@ -15,6 +15,7 @@ class TestCategory(str, Enum):
     PRODUCT_NAMES = "product_names"
     COMMAND_INTENT = "command_intent"
     HINDI_ENGLISH_CODE_SWITCHING = "hindi_english_code_switching"
+    TIME_EXTRACTION = "time_extraction"
 
 
 class CodeSwitchingType(str, Enum):
@@ -32,6 +33,7 @@ class FailureCategory(str, Enum):
     CORRECTION_ERROR = "correction_error"
     ENTITY_SUBSTITUTION = "entity_substitution"
     INTENT_ERROR = "intent_error"
+    TIME_ERROR = "time_error"
     EXTRACTION_FAILURE = "extraction_failure"
     HIGH_WER_CORRUPTION = "high_wer_corruption"
     PROVIDER_ERROR = "provider_error"
@@ -112,6 +114,7 @@ class UtteranceEvaluationResult(BaseModel):
     simulated_latency_ms: Optional[float] = Field(None, description="Simulated latency (ms) for demonstration; null if not simulated")
     request_id: Optional[str] = Field(None, description="Provider request ID for live call; null for mock")
     normalized_wer: Optional[float] = Field(None, description="Supplementary cross-script-normalized Word Error Rate")
+    reference_available: Optional[bool] = Field(True, description="Whether ground-truth reference transcript was available")
 
 
 class PairEvaluationResult(BaseModel):
@@ -141,6 +144,19 @@ class PairEvaluationResult(BaseModel):
     client_request_elapsed_ms: Optional[float] = Field(None, description="Total client-side measured round-trip elapsed latency (ms) across both requests; alias for client_measured_latency_ms")
     provider_processing_time_ms: Optional[float] = Field(None, description="Actual backend processing latency (ms) reported by provider; null if not reported by provider or in mock mode")
     simulated_latency_ms: Optional[float] = Field(None, description="Simulated latency for demonstration purposes (clearly distinguished from measured latency)")
+    evaluation_mode: Optional[str] = Field("reference_benchmark", description="'reference_benchmark' or 'automatic_inference'")
+    detection_confidence: Optional[str] = Field(None, description="Confidence of automatic scenario detection ('high', 'medium', 'ambiguous')")
+    distinction_field: Optional[str] = Field(None, description="Critical business field distinguishing the pair (e.g. quantity, is_negated, time)")
+    supporting_evidence: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Audit trail of signals supporting category inference")
+    is_curated_reference: Optional[bool] = Field(False, description="Whether this pair matches a known benchmark reference pair")
+    dataset_source: Optional[str] = Field("synthetic_benchmark", description="'synthetic_benchmark' or 'human_recording'")
+    dataset_classification: Optional[str] = Field("synthetic", description="Provenance classification cohort: human_verified, synthetic, test_artifact, unverified")
+    human_pair_id: Optional[str] = Field(None, description="Human contrastive pair identifier if dataset_source == 'human_recording'")
+
+    @property
+    def distinction_preserved(self) -> bool:
+        """Convenience property matching database column and legacy naming."""
+        return self.semantic_distinction_preserved
 
 
 class ModePerformanceMetrics(BaseModel):

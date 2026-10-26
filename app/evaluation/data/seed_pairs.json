@@ -418,5 +418,179 @@
       "expected_action": "proceed_to_payment_gateway",
       "simulated_crashed_transcript": "Order confirm mat karna cart empty karo"
     }
+  },
+  {
+    "id": "pair_neg_order_001",
+    "category": "negation",
+    "language_code": "hi-IN",
+    "code_switching_type": "hinglish_code_mixed",
+    "description": "E-commerce order cancellation negation: cancel order vs do not cancel order.",
+    "expected_distinction": "Utterance A confirms order cancellation whereas Utterance B explicitly forbids cancellation.",
+    "distinction_field": "is_negated",
+    "audio_condition": "text_only_simulation",
+    "provenance": "hand_authored_text_simulation",
+    "consent_metadata": "text_simulation_no_pii",
+    "utterance_a": {
+      "id": "pair_neg_order_001_a",
+      "text": "मेरा ऑर्डर कैंसल कर दो।",
+      "reference_transcript": "मेरा ऑर्डर कैंसल कर दो।",
+      "expected_intent": "CANCEL_ORDER",
+      "expected_critical_fields": {
+        "is_negated": false,
+        "action": "cancel_order"
+      },
+      "expected_action": "cancel_order",
+      "simulated_crashed_transcript": "मेरा ऑर्डर कैंसल मत करना"
+    },
+    "utterance_b": {
+      "id": "pair_neg_order_001_b",
+      "text": "मेरा ऑर्डर कैंसल मत करना।",
+      "reference_transcript": "मेरा ऑर्डर कैंसल मत करना",
+      "expected_intent": "KEEP_ORDER",
+      "expected_critical_fields": {
+        "is_negated": true,
+        "action": "keep_order"
+      },
+      "expected_action": "keep_order",
+      "simulated_crashed_transcript": "मेरा ऑर्डर कैंसल कर दो।"
+    }
+  },
+  {
+    "id": "pair_corr_qty_001",
+    "category": "corrections_and_mind_changes",
+    "language_code": "hi-IN",
+    "code_switching_type": "hinglish_code_mixed",
+    "description": "In-flight quantity correction during item ordering: 2 packets corrected to 3 packets.",
+    "expected_distinction": "Utterance A orders quantity 2 whereas Utterance B updates final quantity to 3.",
+    "distinction_field": "final_target",
+    "audio_condition": "text_only_simulation",
+    "provenance": "hand_authored_text_simulation",
+    "consent_metadata": "text_simulation_no_pii",
+    "utterance_a": {
+      "id": "pair_corr_qty_001_a",
+      "text": "मुझे दो पैकेट चाहिए।",
+      "reference_transcript": "मुझे दो पैकेट चाहिए।",
+      "expected_intent": "ORDER_PRODUCT",
+      "expected_critical_fields": {
+        "correction_detected": false,
+        "final_target": 2
+      },
+      "expected_action": "order_items_qty_2",
+      "simulated_crashed_transcript": "दो नहीं, तीन पैकेट चाहिए।"
+    },
+    "utterance_b": {
+      "id": "pair_corr_qty_001_b",
+      "text": "दो नहीं, तीन पैकेट चाहिए।",
+      "reference_transcript": "दो नहीं, तीन पैकेट चाहिए।",
+      "expected_intent": "ORDER_PRODUCT",
+      "expected_critical_fields": {
+        "correction_detected": true,
+        "final_target": 3
+      },
+      "expected_action": "order_items_qty_3",
+      "simulated_crashed_transcript": "मुझे दो पैकेट चाहिए।"
+    }
+  },
+  {
+    "id": "pair_intent_order_001",
+    "category": "command_intent",
+    "language_code": "hi-IN",
+    "code_switching_type": "hinglish_code_mixed",
+    "description": "Post-order intent disambiguation: return item vs replace/modify item.",
+    "expected_distinction": "Utterance A requests order return whereas Utterance B requests order modification/exchange.",
+    "distinction_field": "intent",
+    "audio_condition": "text_only_simulation",
+    "provenance": "hand_authored_text_simulation",
+    "consent_metadata": "text_simulation_no_pii",
+    "utterance_a": {
+      "id": "pair_intent_order_001_a",
+      "text": "मुझे अपना ऑर्डर रिटर्न करना है।",
+      "reference_transcript": "मुझे अपना ऑर्डर रिटर्न करना है।",
+      "expected_intent": "RETURN_ORDER",
+      "expected_critical_fields": {
+        "intent": "RETURN_ORDER"
+      },
+      "expected_action": "initiate_order_return",
+      "simulated_crashed_transcript": "मुझे अपना ऑर्डर बदलना है।"
+    },
+    "utterance_b": {
+      "id": "pair_intent_order_001_b",
+      "text": "मुझे अपना ऑर्डर बदलना है।",
+      "reference_transcript": "मुझे अपना ऑर्डर बदलना है।",
+      "expected_intent": "MODIFY_ORDER",
+      "expected_critical_fields": {
+        "intent": "MODIFY_ORDER"
+      },
+      "expected_action": "initiate_order_exchange",
+      "simulated_crashed_transcript": "मुझे अपना ऑर्डर रिटर्न करना है।"
+    }
+  },
+  {
+    "id": "pair_ent_deliv_001",
+    "category": "named_entities",
+    "language_code": "hi-IN",
+    "code_switching_type": "hinglish_code_mixed",
+    "description": "Phonetically similar recipient names in delivery: Rahul Sharma vs Rohit Sharma.",
+    "expected_distinction": "Utterance A designates recipient Rahul Sharma whereas Utterance B designates recipient Rohit Sharma.",
+    "distinction_field": "person_name",
+    "audio_condition": "text_only_simulation",
+    "provenance": "hand_authored_text_simulation",
+    "consent_metadata": "text_simulation_no_pii",
+    "utterance_a": {
+      "id": "pair_ent_deliv_001_a",
+      "text": "डिलीवरी राहुल शर्मा के नाम पर है।",
+      "reference_transcript": "डिलीवरी राहुल शर्मा के नाम पर है।",
+      "expected_intent": "DELIVERY_INQUIRY",
+      "expected_critical_fields": {
+        "person_name": "Rahul Sharma"
+      },
+      "expected_action": "assign_delivery_rahul",
+      "simulated_crashed_transcript": "डिलीवरी रोहित शर्मा के नाम पर है।"
+    },
+    "utterance_b": {
+      "id": "pair_ent_deliv_001_b",
+      "text": "डिलीवरी रोहित शर्मा के नाम पर है।",
+      "reference_transcript": "डिलीवरी रोहित शर्मा के नाम पर है।",
+      "expected_intent": "DELIVERY_INQUIRY",
+      "expected_critical_fields": {
+        "person_name": "Rohit Sharma"
+      },
+      "expected_action": "assign_delivery_rohit",
+      "simulated_crashed_transcript": "डिलीवरी राहुल शर्मा के नाम पर है।"
+    }
+  },
+  {
+    "id": "pair_time_deliv_001",
+    "category": "time_extraction",
+    "language_code": "hi-IN",
+    "code_switching_type": "hinglish_code_mixed",
+    "description": "Delivery time slot distinction: 9:00 AM vs 10:00 AM delivery window.",
+    "expected_distinction": "Utterance A schedules delivery for 09:00 whereas Utterance B schedules delivery for 10:00.",
+    "distinction_field": "delivery_time",
+    "audio_condition": "text_only_simulation",
+    "provenance": "hand_authored_text_simulation",
+    "consent_metadata": "text_simulation_no_pii",
+    "utterance_a": {
+      "id": "pair_time_deliv_001_a",
+      "text": "डिलीवरी सुबह नौ बजे चाहिए।",
+      "reference_transcript": "डिलीवरी सुबह नौ बजे चाहिए।",
+      "expected_intent": "SCHEDULE_DELIVERY",
+      "expected_critical_fields": {
+        "delivery_time": "09:00"
+      },
+      "expected_action": "schedule_delivery_0900",
+      "simulated_crashed_transcript": "डिलीवरी सुबह दस बजे चाहिए।"
+    },
+    "utterance_b": {
+      "id": "pair_time_deliv_001_b",
+      "text": "डिलीवरी सुबह दस बजे चाहिए।",
+      "reference_transcript": "डिलीवरी सुबह दस बजे चाहिए।",
+      "expected_intent": "SCHEDULE_DELIVERY",
+      "expected_critical_fields": {
+        "delivery_time": "10:00"
+      },
+      "expected_action": "schedule_delivery_1000",
+      "simulated_crashed_transcript": "डिलीवरी सुबह नौ बजे चाहिए।"
+    }
   }
 ]

@@ -1,10 +1,13 @@
 """SQLite persistence layer and export utilities for BoliBench evaluation results."""
 
 import csv
+from datetime import datetime, timezone
 import io
 import json
+import os
 from pathlib import Path
 import sqlite3
+import sys
 from typing import Any, Dict, List, Optional
 
 from app.evaluation.schemas import (
@@ -16,25 +19,78 @@ from app.evaluation.schemas import (
     PairEvaluationResult,
 )
 
-DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent.parent / "bolibench_evaluation.db"
+PROD_DB_PATH = Path(__file__).resolve().parent.parent.parent / "bolibench_evaluation.db"
+DEFAULT_DB_PATH = PROD_DB_PATH
+
+
+def get_default_db_path() -> Path:
+    """Resolves the active default SQLite database path.
+
+    Loading priority:
+    1. Explicit environment override `BOLIBENCH_DB_PATH` (used by test suites and custom deployments).
+    2. Monkeypatched `DEFAULT_DB_PATH` module attribute (if different from PROD_DB_PATH).
+    3. Test safety guard: If running under pytest and no override is set, redirects to a
+       temporary session database to prevent any import or test from ever touching bolibench_evaluation.db.
+    4. Default production database (`bolibench_evaluation.db`).
+    """
+    env_db = os.environ.get("BOLIBENCH_DB_PATH")
+    if env_db:
+        return Path(env_db).resolve()
+
+    if Path(DEFAULT_DB_PATH).resolve() != PROD_DB_PATH.resolve():
+        return Path(DEFAULT_DB_PATH).resolve()
+
+    if "pytest" in sys.modules and not os.environ.get("BOLIBENCH_ALLOW_REAL_DB"):
+        import tempfile
+        temp_dir = Path(tempfile.gettempdir()) / "bolibench_pytest_isolated"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        return temp_dir / f"test_default_{os.getpid()}.db"
+
+    return PROD_DB_PATH
 
 
 class StorageManager:
     """Manages SQLite storage for evaluation runs and aggregate metrics."""
 
     def __init__(self, db_path: Optional[Path] = None):
-        self.db_path = str(db_path or DEFAULT_DB_PATH)
+        if db_path is not None:
+            self.db_path = str(db_path)
+        else:
+            self.db_path = str(get_default_db_path())
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout = 30000")
         return conn
+
+    def _safe_add_column(self, cursor: sqlite3.Cursor, table: str, column_def: str) -> None:
+        """Safely executes ALTER TABLE ADD COLUMN, ignoring duplicate column errors while re-raising genuine failures."""
+        try:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column_def}")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" in str(exc).lower():
+                pass
+            else:
+                raise
 
     def _init_db(self) -> None:
         """Initializes database tables if they do not exist."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            cursor.execute("PRAGMA journal_mode = WAL")
+            cursor.execute("PRAGMA synchronous = NORMAL")
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version TEXT PRIMARY KEY,
+                    applied_at TEXT NOT NULL
+                )
+                """
+            )
+
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS evaluation_runs (
@@ -76,31 +132,29 @@ class StorageManager:
                 ON evaluation_runs (category)
                 """
             )
-            # Backward-compatible schema migration if simulated_latency_ms column is missing
-            try:
-                cursor.execute("ALTER TABLE evaluation_runs ADD COLUMN simulated_latency_ms REAL")
-            except sqlite3.OperationalError:
-                pass
 
-            # Backward-compatible schema migration if overall_status column is missing
-            try:
-                cursor.execute("ALTER TABLE evaluation_runs ADD COLUMN overall_status TEXT NOT NULL DEFAULT 'completed'")
-            except sqlite3.OperationalError:
-                pass
+            # Safe backward-compatible schema migrations with verified error handling
+            self._safe_add_column(cursor, "evaluation_runs", "simulated_latency_ms REAL")
+            self._safe_add_column(cursor, "evaluation_runs", "overall_status TEXT NOT NULL DEFAULT 'completed'")
+            self._safe_add_column(cursor, "evaluation_runs", "normalized_wer_a REAL")
+            self._safe_add_column(cursor, "evaluation_runs", "normalized_wer_b REAL")
+            self._safe_add_column(cursor, "evaluation_runs", "average_normalized_wer REAL")
+            self._safe_add_column(cursor, "evaluation_runs", "dataset_source TEXT NOT NULL DEFAULT 'synthetic_benchmark'")
+            self._safe_add_column(cursor, "evaluation_runs", "dataset_classification TEXT NOT NULL DEFAULT 'synthetic'")
 
-            # Backward-compatible schema migration for cross-script-normalized WER metrics
-            try:
-                cursor.execute("ALTER TABLE evaluation_runs ADD COLUMN normalized_wer_a REAL")
-            except sqlite3.OperationalError:
-                pass
-            try:
-                cursor.execute("ALTER TABLE evaluation_runs ADD COLUMN normalized_wer_b REAL")
-            except sqlite3.OperationalError:
-                pass
-            try:
-                cursor.execute("ALTER TABLE evaluation_runs ADD COLUMN average_normalized_wer REAL")
-            except sqlite3.OperationalError:
-                pass
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_eval_runs_dataset_source
+                ON evaluation_runs (dataset_source)
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_eval_runs_dataset_classification
+                ON evaluation_runs (dataset_classification)
+                """
+            )
 
             cursor.execute(
                 """
@@ -109,19 +163,23 @@ class StorageManager:
                 """
             )
 
-            # Ensure existing records without status migrate as completed
-            cursor.execute("UPDATE evaluation_runs SET overall_status = 'completed' WHERE overall_status IS NULL OR overall_status = ''")
-
-            # Synchronize overall_status from payload_json if an explicit status was saved in payload
-            cursor.execute("SELECT run_id, payload_json FROM evaluation_runs WHERE overall_status = 'completed'")
-            for row in cursor.fetchall():
-                try:
-                    p = json.loads(row["payload_json"])
-                    status = p.get("overall_status")
-                    if status and status != "completed":
-                        cursor.execute("UPDATE evaluation_runs SET overall_status = ? WHERE run_id = ?", (status, row["run_id"]))
-                except Exception:
-                    pass
+            # Tracked one-time migration: sync overall_status from payload_json
+            cursor.execute("SELECT 1 FROM schema_migrations WHERE version = '20261020_sync_overall_status'")
+            if cursor.fetchone() is None:
+                cursor.execute("UPDATE evaluation_runs SET overall_status = 'completed' WHERE overall_status IS NULL OR overall_status = ''")
+                cursor.execute("SELECT run_id, payload_json FROM evaluation_runs WHERE overall_status = 'completed'")
+                for row in cursor.fetchall():
+                    try:
+                        p = json.loads(row["payload_json"])
+                        status = p.get("overall_status")
+                        if status and status != "completed":
+                            cursor.execute("UPDATE evaluation_runs SET overall_status = ? WHERE run_id = ?", (status, row["run_id"]))
+                    except Exception:
+                        pass
+                cursor.execute(
+                    "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+                    ("20261020_sync_overall_status", datetime.now(timezone.utc).isoformat())
+                )
 
             # Table for isolated offline derived assessments (re-scores)
             cursor.execute(
@@ -142,12 +200,92 @@ class StorageManager:
                 """
             )
 
+            # Table for batch benchmark runs (isolated from single runs)
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS batch_benchmark_runs (
+                    batch_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    execution_mode TEXT NOT NULL,
+                    total_pairs INTEGER NOT NULL,
+                    completed_pairs INTEGER NOT NULL,
+                    failed_pairs INTEGER NOT NULL,
+                    incomplete_pairs INTEGER NOT NULL,
+                    skipped_pairs INTEGER NOT NULL,
+                    attempted_requests INTEGER NOT NULL,
+                    successful_requests INTEGER NOT NULL,
+                    failed_requests INTEGER NOT NULL,
+                    retried_requests INTEGER NOT NULL DEFAULT 0,
+                    mean_raw_wer REAL,
+                    mean_normalized_wer REAL,
+                    critical_field_accuracy REAL,
+                    distinction_preservation_rate REAL,
+                    task_success_rate REAL,
+                    summary_json TEXT NOT NULL
+                )
+                """
+            )
+
+            # Table for individual batch benchmark evaluated items
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS batch_benchmark_items (
+                    item_id TEXT PRIMARY KEY,
+                    batch_id TEXT NOT NULL,
+                    pair_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    language_code TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    audio_condition TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    raw_wer_a REAL,
+                    raw_wer_b REAL,
+                    average_raw_wer REAL,
+                    normalized_wer_a REAL,
+                    normalized_wer_b REAL,
+                    average_normalized_wer REAL,
+                    critical_field_accuracy REAL,
+                    distinction_preserved INTEGER,
+                    task_success INTEGER,
+                    primary_failure_category TEXT,
+                    failure_explanation TEXT,
+                    request_id_a TEXT,
+                    request_id_b TEXT,
+                    actual_transcript_a TEXT,
+                    actual_transcript_b TEXT,
+                    reference_transcript_a TEXT,
+                    reference_transcript_b TEXT,
+                    client_elapsed_a_ms REAL,
+                    client_elapsed_b_ms REAL,
+                    total_latency_ms REAL,
+                    error_message TEXT,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_batch_items_batch_id
+                ON batch_benchmark_items (batch_id)
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_batch_items_pair_id
+                ON batch_benchmark_items (pair_id)
+                """
+            )
+
             conn.commit()
 
     def save_run(self, result: PairEvaluationResult) -> str:
         """Persists an evaluation run."""
         payload_json = json.dumps(result.model_dump(), ensure_ascii=False)
         overall_status = getattr(result, "overall_status", "completed") or "completed"
+        dataset_source = getattr(result, "dataset_source", "synthetic_benchmark") or "synthetic_benchmark"
+        dataset_classification = getattr(result, "dataset_classification", "synthetic") or "synthetic"
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -158,8 +296,8 @@ class StorageManager:
                     normalized_wer_a, normalized_wer_b, average_normalized_wer,
                     critical_field_accuracy, distinction_preserved, task_success,
                     primary_failure_category, failure_explanation, client_latency_ms,
-                    provider_latency_ms, simulated_latency_ms, created_at, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    provider_latency_ms, simulated_latency_ms, created_at, payload_json, dataset_source, dataset_classification
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     result.run_id,
@@ -185,22 +323,106 @@ class StorageManager:
                     result.simulated_latency_ms,
                     result.timestamp,
                     payload_json,
+                    dataset_source,
+                    dataset_classification,
                 ),
             )
             conn.commit()
         return result.run_id
 
+    def _row_to_result(self, row: sqlite3.Row) -> PairEvaluationResult:
+        """Parses a database row into a PairEvaluationResult, adapting historical and batch runner formats."""
+        data = json.loads(row["payload_json"]) if row["payload_json"] else {}
+        if not data.get("run_id"):
+            data["run_id"] = row["run_id"]
+        if not data.get("test_case_id"):
+            data["test_case_id"] = row["test_case_id"]
+        if not data.get("category"):
+            data["category"] = row["category"]
+        if not data.get("language_code"):
+            data["language_code"] = row["language_code"] or "hi-IN"
+        if not data.get("overall_status"):
+            data["overall_status"] = row["overall_status"] or "completed"
+        if not data.get("execution_mode"):
+            data["execution_mode"] = row["execution_mode"] or "live"
+        if not data.get("audio_condition"):
+            data["audio_condition"] = row["audio_condition"] or "clean_recorded"
+        if not data.get("timestamp"):
+            data["timestamp"] = data.get("created_at") or row["created_at"] or ""
+        if "dataset_source" not in data:
+            try:
+                data["dataset_source"] = row["dataset_source"] or "synthetic_benchmark"
+            except Exception:
+                data["dataset_source"] = "synthetic_benchmark"
+        if "dataset_classification" not in data:
+            try:
+                data["dataset_classification"] = row["dataset_classification"] or "synthetic"
+            except Exception:
+                data["dataset_classification"] = "synthetic"
+        if "semantic_distinction_preserved" not in data:
+            data["semantic_distinction_preserved"] = bool(row["distinction_preserved"]) if row["distinction_preserved"] is not None else bool(data.get("distinction_preserved", False))
+        if "task_success" not in data:
+            data["task_success"] = bool(row["task_success"]) if row["task_success"] is not None else False
+        if "critical_field_accuracy" not in data:
+            data["critical_field_accuracy"] = float(row["critical_field_accuracy"] or 0.0)
+        if "wer_a" not in data:
+            data["wer_a"] = float(row["wer_a"] or 0.0)
+        if "wer_b" not in data:
+            data["wer_b"] = float(row["wer_b"] or 0.0)
+        if "average_wer" not in data:
+            data["average_wer"] = float(row["average_wer"] or 0.0)
+        p_fail = data.get("primary_failure_category") or row["primary_failure_category"] or "none"
+        valid_cats = {fc.value for fc in FailureCategory}
+        if p_fail not in valid_cats:
+            if p_fail == "semantic_distinction_collapsed":
+                p_fail = FailureCategory.EXTRACTION_FAILURE.value
+            else:
+                p_fail = FailureCategory.NONE.value
+        data["primary_failure_category"] = p_fail
+        if not data.get("failure_explanation"):
+            data["failure_explanation"] = row["failure_explanation"] or ""
+        if "utterance_a" not in data or not isinstance(data["utterance_a"], dict):
+            data["utterance_a"] = {
+                "utterance_id": f"{row['test_case_id']}_a",
+                "reference_transcript": "",
+                "actual_transcript": "",
+                "wer": float(row["wer_a"] or 0.0),
+                "substitutions": 0,
+                "deletions": 0,
+                "insertions": 0,
+                "reference_length": 0,
+                "critical_fields_match": bool(row["distinction_preserved"]),
+                "detected_intent": "",
+                "intent_match": True,
+                "task_success": bool(row["task_success"]),
+                "status": "completed" if row["overall_status"] == "completed" else "failed",
+            }
+        if "utterance_b" not in data or not isinstance(data["utterance_b"], dict):
+            data["utterance_b"] = {
+                "utterance_id": f"{row['test_case_id']}_b",
+                "reference_transcript": "",
+                "actual_transcript": "",
+                "wer": float(row["wer_b"] or 0.0),
+                "substitutions": 0,
+                "deletions": 0,
+                "insertions": 0,
+                "reference_length": 0,
+                "critical_fields_match": bool(row["distinction_preserved"]),
+                "detected_intent": "",
+                "intent_match": True,
+                "task_success": bool(row["task_success"]),
+                "status": "completed" if row["overall_status"] == "completed" else "failed",
+            }
+        return PairEvaluationResult(**data)
+
     def get_run(self, run_id: str) -> Optional[PairEvaluationResult]:
         """Retrieves a single evaluation run by ID."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT payload_json, overall_status FROM evaluation_runs WHERE run_id = ?", (run_id,))
+            cursor.execute("SELECT * FROM evaluation_runs WHERE run_id = ?", (run_id,))
             row = cursor.fetchone()
             if row:
-                data = json.loads(row["payload_json"])
-                if not data.get("overall_status"):
-                    data["overall_status"] = row["overall_status"] or "completed"
-                return PairEvaluationResult(**data)
+                return self._row_to_result(row)
         return None
 
     def list_runs(
@@ -208,9 +430,11 @@ class StorageManager:
         limit: int = 100,
         category: Optional[str] = None,
         status: Optional[str] = None,
+        dataset_source: Optional[str] = None,
+        dataset_classification: Optional[str] = None,
     ) -> List[PairEvaluationResult]:
-        """Lists recent evaluation runs, optionally filtered by category or status."""
-        query = "SELECT payload_json, overall_status FROM evaluation_runs"
+        """Lists recent evaluation runs, optionally filtered by category, status, dataset_source, or dataset_classification."""
+        query = "SELECT * FROM evaluation_runs"
         params: List[Any] = []
         conditions: List[str] = []
         if category:
@@ -219,6 +443,12 @@ class StorageManager:
         if status:
             conditions.append("overall_status = ?")
             params.append(status)
+        if dataset_source:
+            conditions.append("dataset_source = ?")
+            params.append(dataset_source)
+        if dataset_classification:
+            conditions.append("dataset_classification = ?")
+            params.append(dataset_classification)
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY created_at DESC LIMIT ?"
@@ -229,18 +459,20 @@ class StorageManager:
             cursor = conn.cursor()
             cursor.execute(query, tuple(params))
             for row in cursor.fetchall():
-                data = json.loads(row["payload_json"])
-                if not data.get("overall_status"):
-                    data["overall_status"] = row["overall_status"] or "completed"
-                results.append(PairEvaluationResult(**data))
+                results.append(self._row_to_result(row))
         return results
 
-    def get_aggregate_metrics(self) -> AggregateMetrics:
-        """Calculates aggregate metrics across all runs, separating mock vs live mode performance."""
+    def get_aggregate_metrics(self, dataset_classification: Optional[str] = None) -> AggregateMetrics:
+        """Calculates aggregate metrics across all runs, separating mock vs live mode performance.
+        Optionally filters by dataset_classification ('human_verified', 'synthetic', etc.).
+        """
+        where_clause = " WHERE dataset_classification = ?" if dataset_classification else ""
+        params: Tuple[Any, ...] = (dataset_classification,) if dataset_classification else ()
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                """
+                f"""
                 SELECT
                     COUNT(*) as total_runs,
                     SUM(CASE WHEN overall_status = 'completed' THEN 1 ELSE 0 END) as completed_runs,
@@ -254,7 +486,9 @@ class StorageManager:
                     AVG(CASE WHEN overall_status = 'completed' THEN average_normalized_wer ELSE NULL END) as avg_norm_wer,
                     AVG(CASE WHEN overall_status = 'completed' THEN critical_field_accuracy ELSE NULL END) as avg_field_acc
                 FROM evaluation_runs
-                """
+                {where_clause}
+                """,
+                params,
             )
             summary = cursor.fetchone()
 
@@ -276,7 +510,7 @@ class StorageManager:
 
             # Mode-specific performance metrics (completed runs only)
             cursor.execute(
-                """
+                f"""
                 SELECT
                     execution_mode,
                     COUNT(*) as total_attempts,
@@ -289,8 +523,10 @@ class StorageManager:
                     AVG(CASE WHEN overall_status = 'completed' THEN average_normalized_wer ELSE NULL END) as avg_norm_wer,
                     AVG(CASE WHEN overall_status = 'completed' THEN critical_field_accuracy ELSE NULL END) as avg_field_acc
                 FROM evaluation_runs
+                {where_clause}
                 GROUP BY execution_mode
-                """
+                """,
+                params,
             )
             mode_stats: Dict[str, Dict[str, Any]] = {}
             for row in cursor.fetchall():
@@ -298,7 +534,7 @@ class StorageManager:
 
             # Category breakdown per mode (completed runs only)
             cursor.execute(
-                """
+                f"""
                 SELECT
                     execution_mode,
                     category,
@@ -310,8 +546,10 @@ class StorageManager:
                     AVG(CASE WHEN overall_status = 'completed' THEN task_success ELSE NULL END) as task_rate,
                     AVG(CASE WHEN overall_status = 'completed' THEN average_wer ELSE NULL END) as avg_wer
                 FROM evaluation_runs
+                {where_clause}
                 GROUP BY execution_mode, category
-                """
+                """,
+                params,
             )
             mode_cat_stats: Dict[str, Dict[str, Dict[str, Any]]] = {"mock": {}, "live": {}}
             for row in cursor.fetchall():
@@ -356,17 +594,19 @@ class StorageManager:
 
             # Failure category breakdown across all attempts (including provider operational errors)
             cursor.execute(
-                """
+                f"""
                 SELECT primary_failure_category, COUNT(*) as count
                 FROM evaluation_runs
+                {where_clause}
                 GROUP BY primary_failure_category
-                """
+                """,
+                params,
             )
             failure_breakdown = {row["primary_failure_category"]: row["count"] for row in cursor.fetchall()}
 
             # Overall Category breakdown: counts all attempts, but computes performance averages over completed runs only
             cursor.execute(
-                """
+                f"""
                 SELECT
                     category,
                     COUNT(*) as total,
@@ -377,8 +617,10 @@ class StorageManager:
                     AVG(CASE WHEN overall_status = 'completed' THEN task_success ELSE NULL END) as task_rate,
                     AVG(CASE WHEN overall_status = 'completed' THEN average_wer ELSE NULL END) as avg_wer
                 FROM evaluation_runs
+                {where_clause}
                 GROUP BY category
-                """
+                """,
+                params,
             )
             cat_breakdown: Dict[str, Dict[str, Any]] = {}
             for row in cursor.fetchall():
@@ -527,3 +769,131 @@ class StorageManager:
         for item in items:
             writer.writerow(item.model_dump())
         return output.getvalue()
+
+    # -------------------------------------------------------------------------
+    # Batch Benchmark Runs & Items Storage
+    # -------------------------------------------------------------------------
+
+    def save_batch_run(self, batch_data: Dict[str, Any]) -> str:
+        """Persists a batch benchmark run summary."""
+        batch_id = batch_data["batch_id"]
+        summary_json = batch_data.get("summary_json") or json.dumps(batch_data, ensure_ascii=False)
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO batch_benchmark_runs (
+                    batch_id, name, created_at, execution_mode, total_pairs,
+                    completed_pairs, failed_pairs, incomplete_pairs, skipped_pairs,
+                    attempted_requests, successful_requests, failed_requests,
+                    retried_requests, mean_raw_wer, mean_normalized_wer,
+                    critical_field_accuracy, distinction_preservation_rate,
+                    task_success_rate, summary_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    batch_id,
+                    batch_data.get("name", "Batch Benchmark Run"),
+                    batch_data.get("created_at", ""),
+                    batch_data.get("execution_mode", "dry_run"),
+                    int(batch_data.get("total_pairs", 0)),
+                    int(batch_data.get("completed_pairs", 0)),
+                    int(batch_data.get("failed_pairs", 0)),
+                    int(batch_data.get("incomplete_pairs", 0)),
+                    int(batch_data.get("skipped_pairs", 0)),
+                    int(batch_data.get("attempted_requests", 0)),
+                    int(batch_data.get("successful_requests", 0)),
+                    int(batch_data.get("failed_requests", 0)),
+                    int(batch_data.get("retried_requests", 0)),
+                    batch_data.get("mean_raw_wer"),
+                    batch_data.get("mean_normalized_wer"),
+                    batch_data.get("critical_field_accuracy"),
+                    batch_data.get("distinction_preservation_rate"),
+                    batch_data.get("task_success_rate"),
+                    summary_json,
+                ),
+            )
+            conn.commit()
+        return batch_id
+
+    def save_batch_item(self, item_data: Dict[str, Any]) -> str:
+        """Persists an item from a batch benchmark run."""
+        item_id = item_data.get("item_id") or f"{item_data['batch_id']}_{item_data['pair_id']}"
+        payload_json = item_data.get("payload_json") or json.dumps(item_data, ensure_ascii=False)
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO batch_benchmark_items (
+                    item_id, batch_id, pair_id, category, language_code,
+                    source_type, audio_condition, status, raw_wer_a, raw_wer_b,
+                    average_raw_wer, normalized_wer_a, normalized_wer_b,
+                    average_normalized_wer, critical_field_accuracy,
+                    distinction_preserved, task_success, primary_failure_category,
+                    failure_explanation, request_id_a, request_id_b,
+                    actual_transcript_a, actual_transcript_b,
+                    reference_transcript_a, reference_transcript_b,
+                    client_elapsed_a_ms, client_elapsed_b_ms, total_latency_ms,
+                    error_message, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item_id,
+                    item_data["batch_id"],
+                    item_data["pair_id"],
+                    item_data.get("category", ""),
+                    item_data.get("language_code", "hi-IN"),
+                    item_data.get("source_type", "human_recorded"),
+                    item_data.get("audio_condition", "clean_recorded"),
+                    item_data.get("status", "completed"),
+                    item_data.get("raw_wer_a"),
+                    item_data.get("raw_wer_b"),
+                    item_data.get("average_raw_wer"),
+                    item_data.get("normalized_wer_a"),
+                    item_data.get("normalized_wer_b"),
+                    item_data.get("average_normalized_wer"),
+                    item_data.get("critical_field_accuracy"),
+                    1 if item_data.get("distinction_preserved") else 0,
+                    1 if item_data.get("task_success") else 0,
+                    item_data.get("primary_failure_category"),
+                    item_data.get("failure_explanation"),
+                    item_data.get("request_id_a"),
+                    item_data.get("request_id_b"),
+                    item_data.get("actual_transcript_a"),
+                    item_data.get("actual_transcript_b"),
+                    item_data.get("reference_transcript_a"),
+                    item_data.get("reference_transcript_b"),
+                    item_data.get("client_elapsed_a_ms"),
+                    item_data.get("client_elapsed_b_ms"),
+                    item_data.get("total_latency_ms"),
+                    item_data.get("error_message"),
+                    payload_json,
+                    item_data.get("created_at", ""),
+                ),
+            )
+            conn.commit()
+        return item_id
+
+    def get_batch_run(self, batch_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves a batch benchmark run summary by batch_id."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM batch_benchmark_runs WHERE batch_id = ?", (batch_id,))
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+        return None
+
+    def list_batch_items(self, batch_id: str) -> List[Dict[str, Any]]:
+        """Lists all items for a given batch benchmark run."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM batch_benchmark_items WHERE batch_id = ? ORDER BY created_at ASC", (batch_id,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def list_batch_runs(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Lists recent batch benchmark runs."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM batch_benchmark_runs ORDER BY created_at DESC LIMIT ?", (limit,))
+            return [dict(row) for row in cursor.fetchall()]

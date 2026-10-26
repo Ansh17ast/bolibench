@@ -74,9 +74,12 @@ if static_dir.exists():
 templates = Jinja2Templates(directory=str(templates_dir))
 
 from app.routers.evaluation import router as evaluation_router
+from app.routers.recording import router as recording_router
 from app.evaluation.dataset import load_seed_dataset
 
 app.include_router(evaluation_router)
+app.include_router(recording_router)
+
 
 
 # -----------------------------------------------------------------------------
@@ -158,6 +161,26 @@ async def index_page(request: Request):
             "test_cases": load_seed_dataset(),
         },
     )
+
+
+@app.get("/studio", response_class=HTMLResponse)
+@app.get("/recording-studio", response_class=HTMLResponse)
+async def studio_page(request: Request):
+    """Renders the dedicated In-Website Human Audio Recording Studio."""
+    settings = get_settings()
+    return templates.TemplateResponse(
+        request=request,
+        name="studio.html",
+        context={
+            "is_configured": settings.is_api_configured,
+            "live_evaluation_enabled": settings.live_evaluation_enabled,
+            "live_transcription_enabled": settings.live_transcription_enabled,
+            "languages": LANGUAGE_META,
+            "max_mb": settings.max_audio_size_bytes // (1024 * 1024),
+            "test_cases": load_seed_dataset(),
+        },
+    )
+
 
 
 @app.post("/api/transcribe", response_model=TranscriptionResponse)

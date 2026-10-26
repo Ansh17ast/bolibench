@@ -24,7 +24,8 @@ engine = EvaluationEngine()
 
 
 class AuthorizeLiveRequest(BaseModel):
-    test_id: str
+    test_id: Optional[str] = "auto"
+    expected_category: Optional[str] = None
 
 
 @router.post("/authorize-live")
@@ -37,8 +38,8 @@ async def authorize_live_evaluation(
     Security & Credit Guard:
     - Rejects request if live evaluation is disabled (LIVE_EVALUATION_ENABLED=false).
     - Validates same-origin headers (Sec-Fetch-Site, Origin, Referer).
-    - Requires target test case existence.
-    - Issues a cryptographically random, single-use, 5-minute token.
+    - For target_id != 'auto', verifies target test case existence.
+    - Issues a cryptographically random, single-use, 5-minute token bound to the test_id.
     - NEVER makes any external network calls or consumes credits.
     - NEVER logs the issued token secret.
     """
@@ -49,17 +50,30 @@ async def authorize_live_evaluation(
             detail="Forbidden: Live evaluation is disabled by default to protect programme credits. Set LIVE_EVALUATION_ENABLED=true in .env for authorized local operator testing.",
         )
 
-    test_case = engine.get_test_case(req.test_id)
-    if not test_case:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Test case with ID '{req.test_id}' not found.",
-        )
+    target_id = req.test_id or "auto"
+    if target_id != "auto":
+        test_case = engine.get_test_case(target_id)
+        if not test_case:
+            from app.services.recording_storage import RecordingStorage
+            human_pair = RecordingStorage().get_pair(target_id)
+            if not human_pair:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Test case or human contrast pair with ID '{target_id}' not found.",
+                )
+        elif req.expected_category and req.expected_category != test_case.category.value:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Configuration mismatch: Target test case '{target_id}' belongs to category '{test_case.category.value}', "
+                    f"but client expected '{req.expected_category}'. Test selection out of sync."
+                ),
+            )
 
-    token = live_guard.issue_authorization_token(test_id=req.test_id, request=request)
+    token = live_guard.issue_authorization_token(test_id=target_id, request=request)
     return {
         "status": "authorized",
-        "test_case_id": req.test_id,
+        "test_case_id": target_id,
         "confirmation_token": token,
         "expires_in_seconds": int(live_guard.TOKEN_TTL_SECONDS),
         "required_header": live_guard.REQUIRED_CONFIRM_HEADER,
@@ -112,6 +126,8 @@ async def run_live_evaluation(
     audio_file_b: UploadFile = File(..., description="Audio file for Utterance B (WAV format only, duration strictly validated <= 60s)"),
     audio_condition: str = Form("clean_recorded", description="Acoustic environment metadata (e.g. clean_recorded, noisy_recorded)"),
     confirmation_token: Optional[str] = Form(None, description="Single-use confirmation authorization token from /api/eval/authorize-live"),
+    expected_category: Optional[str] = Form(None, description="Optional client-declared category to guard against test/category mismatches"),
+    resume_run_id: Optional[str] = Form(None, description="Optional run ID of an incomplete evaluation to resume"),
 ):
     """Executes a live paired-contrast evaluation using Gnani Prisma STT REST API.
 
@@ -165,12 +181,22 @@ async def run_live_evaluation(
             detail="Condition 'text_only_simulation' cannot be used for live audio evaluation. Please select an acoustic recording condition (e.g. 'clean_recorded', 'noisy_recorded', 'clean_synthetic', 'noisy_synthetic', 'pending_acoustic').",
         )
 
-    test_case = engine.get_test_case(test_id)
-    if not test_case:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Test case with ID '{test_id}' not found.",
-        )
+    if test_id != "auto":
+        test_case = engine.get_test_case(test_id)
+        if not test_case:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Test case with ID '{test_id}' not found.",
+            )
+
+        if expected_category and expected_category != test_case.category.value:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Configuration mismatch: Target test case '{test_id}' belongs to category '{test_case.category.value}', "
+                    f"but client requested evaluation under category '{expected_category}'. Aborting before reading audio or invoking provider."
+                ),
+            )
 
     validator = AudioValidator(max_size_bytes=settings.max_audio_size_bytes)
 
@@ -198,17 +224,30 @@ async def run_live_evaluation(
     client = GnaniPrismaClient(settings=settings)
 
     try:
-        result = await engine.evaluate_live_audio(
-            test_case_id=test_id,
-            audio_a_bytes=content_a,
-            filename_a=audio_file_a.filename or f"utterance_a{ext_a}",
-            content_type_a=content_type_a,
-            audio_b_bytes=content_b,
-            filename_b=audio_file_b.filename or f"utterance_b{ext_b}",
-            content_type_b=content_type_b,
-            client=client,
-            audio_condition=cond_enum.value,
-        )
+        if test_id == "auto":
+            result = await engine.evaluate_auto_pair_live(
+                audio_a_bytes=content_a,
+                filename_a=audio_file_a.filename or f"utterance_a{ext_a}",
+                content_type_a=content_type_a,
+                audio_b_bytes=content_b,
+                filename_b=audio_file_b.filename or f"utterance_b{ext_b}",
+                content_type_b=content_type_b,
+                client=client,
+                audio_condition=cond_enum.value,
+            )
+        else:
+            result = await engine.evaluate_live_audio(
+                test_case_id=test_id,
+                audio_a_bytes=content_a,
+                filename_a=audio_file_a.filename or f"utterance_a{ext_a}",
+                content_type_a=content_type_a,
+                audio_b_bytes=content_b,
+                filename_b=audio_file_b.filename or f"utterance_b{ext_b}",
+                content_type_b=content_type_b,
+                client=client,
+                audio_condition=cond_enum.value,
+                resume_run_id=resume_run_id,
+            )
         return result
     except GnaniClientError as exc:
         raise HTTPException(
@@ -220,6 +259,24 @@ async def run_live_evaluation(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Live paired audio evaluation failed: {str(exc)}",
         )
+
+
+class EvaluateAutoTranscriptsRequest(BaseModel):
+    transcript_a: str
+    transcript_b: str
+    audio_condition: str = "clean_recorded"
+    language_code: str = "hi-IN"
+
+
+@router.post("/evaluate-auto-transcripts", response_model=PairEvaluationResult)
+async def evaluate_auto_transcripts(req: EvaluateAutoTranscriptsRequest):
+    """Offline deterministic evaluation that infers semantic contrast from arbitrary transcripts."""
+    return engine.evaluate_auto_pair_mock(
+        transcript_a=req.transcript_a,
+        transcript_b=req.transcript_b,
+        audio_condition=req.audio_condition,
+        language_code=req.language_code,
+    )
 
 
 @router.post("/evaluate-transcripts", response_model=PairEvaluationResult)
@@ -234,14 +291,171 @@ async def evaluate_transcripts(req: EvaluateTranscriptsRequest):
         )
 
 
+
+class HumanPairLiveEvalRequest(BaseModel):
+    confirmation_token: Optional[str] = None
+    audio_condition: str = "clean_recorded"
+    resume_run_id: Optional[str] = None
+
+
+class BatchHumanPairLiveRequest(BaseModel):
+    pair_ids: List[str]
+    confirmation_token: Optional[str] = None
+    audio_condition: str = "clean_recorded"
+
+
+@router.get("/human-pairs")
+async def list_human_pairs_for_evaluation(
+    category: Optional[str] = Query(None),
+    language: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    classification: Optional[str] = Query(None, description="Filter by classification (human_verified, synthetic, test_artifact, unverified)"),
+    curated_only: bool = Query(False, description="Filter only curated human_verified pairs ready for official benchmark evaluation"),
+    exclude_test_artifacts: bool = Query(False, description="Exclude test artifacts if true"),
+):
+    """Lists human-recorded contrast pairs from human_recordings_v1 for evaluation."""
+    from app.services.recording_storage import RecordingStorage
+    storage = RecordingStorage()
+    all_pairs = storage.list_candidate_pairs(
+        classification=classification,
+        curated_only=curated_only,
+        exclude_test_artifacts=exclude_test_artifacts,
+    )
+    filtered = []
+    for p in all_pairs:
+        if category and category != "all" and p.get("category") != category:
+            continue
+        if language and language != "all" and p.get("language") != language:
+            continue
+        if status and status != "all":
+            if status in ("ready", "ready_for_evaluation"):
+                # Pairs with both Utterance A and B recorded are eligible for evaluation
+                is_eligible = bool(p.get("utterance_a") and p.get("utterance_b"))
+                if not is_eligible and p.get("status") not in ("ready_for_evaluation", "completed", "awaiting_verification"):
+                    continue
+            elif status == "completed" and not p.get("is_evaluated"):
+                continue
+            elif status == "incomplete" and p.get("status") != "incomplete":
+                continue
+            elif status not in ("ready", "ready_for_evaluation", "completed", "incomplete") and p.get("status") != status:
+                continue
+        filtered.append(p)
+    return filtered
+
+
+@router.post("/run-human-pair-live/{pair_id}", response_model=PairEvaluationResult)
+async def run_human_pair_live_evaluation(
+    pair_id: str,
+    request: Request,
+    req: HumanPairLiveEvalRequest = HumanPairLiveEvalRequest(),
+):
+    """Executes a live paired-contrast evaluation for a human recording pair against Gnani Prisma STT v3."""
+    settings = get_settings()
+    if not settings.live_evaluation_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Live evaluation is disabled by default to protect programme credits. Set LIVE_EVALUATION_ENABLED=true in .env for authorized local operator testing.",
+        )
+
+    # Verify authorization token and CSRF header
+    live_guard.verify_authorization(
+        test_id=pair_id,
+        confirmation_token=req.confirmation_token,
+        request=request,
+    )
+
+    if not settings.is_api_configured:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Gnani API key is not configured. Set GNANI_API_KEY in .env to perform live evaluations.",
+        )
+
+    client = GnaniPrismaClient(settings=settings)
+    try:
+        return await engine.evaluate_human_pair_live(
+            pair_id=pair_id,
+            client=client,
+            audio_condition=req.audio_condition,
+            resume_run_id=req.resume_run_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Live human pair evaluation error: %s", str(exc))
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Human pair evaluation failed: {str(exc)}")
+
+
+@router.post("/run-human-pair-mock/{pair_id}", response_model=PairEvaluationResult)
+async def run_human_pair_mock_evaluation(
+    pair_id: str,
+    simulated_crashed: bool = Query(False),
+):
+    """Deterministic mock evaluation for a human-recorded contrast pair (0 credits consumed)."""
+    try:
+        return engine.evaluate_human_pair_mock(pair_id=pair_id, simulated_crashed=simulated_crashed)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Mock human pair evaluation error: %s", str(exc))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+
+@router.post("/run-human-pairs-batch-live", response_model=List[PairEvaluationResult])
+async def run_human_pairs_batch_live(
+    req: BatchHumanPairLiveRequest,
+    request: Request,
+):
+    """Executes live evaluation sequentially on multiple selected human contrast pairs."""
+    settings = get_settings()
+    if not settings.live_evaluation_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Live evaluation is disabled by default to protect programme credits.",
+        )
+
+    live_guard.verify_authorization(
+        test_id="auto",
+        confirmation_token=req.confirmation_token,
+        request=request,
+    )
+
+    if not settings.is_api_configured:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Gnani API key is not configured.",
+        )
+
+    client = GnaniPrismaClient(settings=settings)
+    results = []
+    for pid in req.pair_ids:
+        try:
+            res = await engine.evaluate_human_pair_live(
+                pair_id=pid,
+                client=client,
+                audio_condition=req.audio_condition,
+            )
+            results.append(res)
+        except Exception as exc:
+            logger.warning("Batch pair %s evaluation encountered error: %s", pid, str(exc))
+    return results
+
+
 @router.get("/results", response_model=List[PairEvaluationResult])
 async def list_evaluation_results(
     limit: int = Query(50, ge=1, le=500),
     category: Optional[str] = Query(None),
     status: Optional[str] = Query(None, description="Filter by overall_status: completed, failed, incomplete"),
+    dataset_source: Optional[str] = Query(None, description="Filter by dataset_source: synthetic_benchmark, human_recording"),
+    dataset_classification: Optional[str] = Query(None, description="Filter by dataset_classification: human_verified, synthetic, test_artifact, unverified"),
 ):
     """Lists recent evaluation runs stored in SQLite."""
-    return engine.list_runs(limit=limit, category=category, status=status)
+    return engine.list_runs(
+        limit=limit,
+        category=category,
+        status=status,
+        dataset_source=dataset_source,
+        dataset_classification=dataset_classification,
+    )
 
 
 @router.get("/results/{run_id}", response_model=PairEvaluationResult)
@@ -257,9 +471,11 @@ async def get_evaluation_result(run_id: str):
 
 
 @router.get("/metrics", response_model=AggregateMetrics)
-async def get_aggregate_metrics():
+async def get_aggregate_metrics(
+    dataset_classification: Optional[str] = Query(None, description="Filter by dataset_classification: human_verified, synthetic, test_artifact, unverified"),
+):
     """Computes aggregate accuracy, pass rates, WER, and failure category breakdown."""
-    return engine.get_aggregate_metrics()
+    return engine.get_aggregate_metrics(dataset_classification=dataset_classification)
 
 
 @router.get("/export")
