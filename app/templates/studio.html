@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Human Recording Studio — BoliBench Indian Voice AI</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <a href="/" style="text-decoration: none; display: flex; align-items: center; gap: 0.75rem;">
+          <div class="logo-mark" aria-hidden="true">⚡</div>
+          <div class="brand-text">
+            <h1>BoliBench</h1>
+            <p class="tagline">Indian Voice AI Crash-Test Lab</p>
+          </div>
+        </a>
+      </div>
+      <div class="header-badges">
+        <span class="challenge-badge">Great Indian AI Internship Challenge</span>
+        <div class="status-pill {% if is_configured %}status-active{% else %}status-warning{% endif %}" id="apiStatusPill">
+          <span class="status-dot"></span>
+          <span class="status-text">
+            {% if is_configured %}
+              Gnani Prisma: Configured
+            {% else %}
+              Gnani Key: Not Set (Mock Available)
+            {% endif %}
+          </span>
+        </div>
+        <div class="status-pill status-guard" id="safetyGuardPill" title="Live evaluation safety state">
+          <span class="status-dot dot-guard"></span>
+          <span class="status-text">
+            {% if live_evaluation_enabled %}
+              Live Mode: Enabled (Operator Mode)
+            {% else %}
+              Live Guard: Protected (Mock Mode Only)
+            {% endif %}
+          </span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Navigation Bar -->
+    <nav class="lab-navigation-container" aria-label="BoliBench Navigation">
+      <div class="nav-primary-cluster" role="tablist" aria-label="Primary Workflows">
+        <a href="/#overviewView" class="lab-tab-btn" id="tabLinkOverview" style="text-decoration: none;">
+          <span class="tab-icon">📊</span> Overview
+        </a>
+        <a href="/#evaluateView" class="lab-tab-btn" id="tabLinkEvaluate" style="text-decoration: none;">
+          <span class="tab-icon">⚡</span> Run Evaluation
+        </a>
+        <a href="/#historyView" class="lab-tab-btn" id="tabLinkHistory" style="text-decoration: none;">
+          <span class="tab-icon">🕒</span> Results &amp; Evidence
+        </a>
+        <button class="lab-tab-btn active" id="tabBtnStudio" role="tab" aria-selected="true">
+          <span class="tab-icon">🎙️</span> Human Recording Studio
+        </button>
+      </div>
+
+      <div class="nav-secondary-cluster" role="tablist" aria-label="Reference Tools">
+        <span class="nav-tools-label">Tools &amp; Reference:</span>
+        <a href="/#catalogueView" class="lab-tab-btn lab-tab-btn-secondary" style="text-decoration: none;">
+          <span class="tab-icon">📚</span> Benchmark Catalogue
+        </a>
+        <a href="/#methodologyView" class="lab-tab-btn lab-tab-btn-secondary" style="text-decoration: none;">
+          <span class="tab-icon">📖</span> Methodology
+        </a>
+        <a href="/#transcribeView" class="lab-tab-btn lab-tab-btn-secondary" style="text-decoration: none;">
+          <span class="tab-icon">🎙️</span> Speech Lab
+        </a>
+      </div>
+    </nav>
+
+    <!-- Studio Hero & Purpose Banner -->
+    <section class="card studio-hero-card">
+      <div class="studio-hero-layout">
+        <div>
+          <span class="eyebrow-badge">ACOUSTIC INGESTION LAB</span>
+          <h2 class="studio-headline">Human Audio Recording Studio</h2>
+          <p class="studio-subtext">
+            Record, standardize, and curate genuine human speech across Hindi, Indian English, and Hinglish.
+            All recordings are preserved raw and converted to standard 16 kHz mono PCM WAV, verified with acoustic diagnostics, and matched into contrastive test pairs for live voice agent crash-testing.
+          </p>
+        </div>
+        <div class="studio-badges-stack">
+          <span class="trust-badge">🔒 100% Local / Zero External API Calls</span>
+          <span class="trust-badge">⏱️ 50-Second Benchmark Standard</span>
+          <span class="trust-badge">📁 Isolated Storage: <code>human_recordings_v1/</code></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Paired Recording Workflow Stepper -->
+    <section class="studio-stepper-card">
+      <div class="studio-stepper-header">
+        <div>
+          <span class="eyebrow-badge" style="margin-bottom: 0.25rem;">PAIRED WORKFLOW JOURNEY</span>
+          <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); margin: 0;">End-to-End Contrast Pair Ingestion</h3>
+        </div>
+        <span class="stepper-progress-pill" id="studioPairsProgressBadge">0 / 50 pairs recorded</span>
+      </div>
+      <div class="studio-stepper-nav" role="tablist" aria-label="Workflow Steps">
+        <div class="stepper-step active" id="stepNav1">
+          <div class="stepper-circle">1</div>
+          <div class="stepper-info">
+            <span class="stepper-label">Step A</span>
+            <span class="stepper-name">Create Pair</span>
+          </div>
+        </div>
+        <div class="stepper-step" id="stepNav2">
+          <div class="stepper-circle">2</div>
+          <div class="stepper-info">
+            <span class="stepper-label">Step B</span>
+            <span class="stepper-name">Record Utterance A</span>
+          </div>
+        </div>
+        <div class="stepper-step" id="stepNav3">
+          <div class="stepper-circle">3</div>
+          <div class="stepper-info">
+            <span class="stepper-label">Step C</span>
+            <span class="stepper-name">Record Utterance B</span>
+          </div>
+        </div>
+        <div class="stepper-step" id="stepNav4">
+          <div class="stepper-circle">4</div>
+          <div class="stepper-info">
+            <span class="stepper-label">Step D</span>
+            <span class="stepper-name">Live Evaluation</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Studio Main Workspace -->
+    <div class="studio-workspace-grid">
+      <!-- Left Column: Audio Recording Console -->
+      <div class="studio-left-col">
+        <!-- Microphone Access Card -->
+        <section class="card studio-mic-card">
+          <div class="card-header-cluster">
+            <h3>1. Microphone Setup</h3>
+            <span class="status-pill status-warning" id="studioMicStatusBadge">
+              <span class="status-dot"></span>
+              <span id="studioMicStatusText">Microphone Initializing...</span>
+            </span>
+          </div>
+          <div class="mic-controls-row">
+            <button type="button" class="btn-primary" id="btnStudioRequestMic">
+              <span>🎤 Enable Microphone</span>
+            </button>
+            <div class="form-group mic-select-group">
+              <label for="studioMicDeviceSelect">Input Device</label>
+              <select id="studioMicDeviceSelect" class="input-select">
+                <option value="">Default Microphone</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <!-- Studio Console & Waveform -->
+        <section class="card studio-console-card">
+          <div class="card-header-cluster">
+            <div>
+              <h3>2. Recording Console</h3>
+              <div style="margin-top: 0.25rem; display: flex; align-items: center; gap: 0.5rem;">
+                <span class="spec-badge badge-a" id="studioCurrentRolePill">Utterance A (Baseline)</span>
+                <span style="font-size: 0.8rem; color: var(--text-muted);" id="studioCurrentPairIndicator">Pair: <code id="studioActivePairIdDisplay">human_qty_001</code></span>
+              </div>
+            </div>
+            <span class="status-pill" id="studioStatePill">MIC REQUIRED</span>
+          </div>
+
+          <!-- Utterance A Reference Comparison Box (Visible when recording Utterance B) -->
+          <div class="banner banner-info" id="studioUttAContrastRefBox" style="display: none; margin-bottom: 1rem; border-color: rgba(99, 102, 241, 0.4); background: rgba(99, 102, 241, 0.08);">
+            <div class="banner-icon">🎯</div>
+            <div class="banner-content">
+              <strong>Utterance A Reference Ground Truth:</strong>
+              <p class="spec-text" id="studioUttAContrastText" style="color: var(--accent-saffron); font-size: 0.95rem; margin-top: 0.25rem;">(No Utterance A recorded yet)</p>
+              <span style="font-size: 0.78rem; color: var(--text-subtle);">Record Utterance B testing a contrasting semantic variable. Transcripts must not be identical.</span>
+            </div>
+          </div>
+
+          <!-- 50-Second Countdown Display & Accessible Progress Bar -->
+          <div class="studio-countdown-display" aria-live="polite">
+            <div class="countdown-main">
+              <span class="countdown-time" id="studioCountdownTimer">50.0s remaining</span>
+              <span class="elapsed-time" id="studioElapsedTimer">0.0s / 50.0s</span>
+            </div>
+            <progress id="studioCountdownProgress" class="studio-progress" value="0" max="50" aria-label="50-second recording timer"></progress>
+          </div>
+
+          <!-- Waveform Visualizer -->
+          <div class="waveform-container">
+            <canvas id="studioWaveformCanvas" width="600" height="100"></canvas>
+            <div class="waveform-overlay" id="studioWaveformOverlay">
+              Click 'Enable Microphone' then 'Start 50s Recording'.
+            </div>
+          </div>
+
+          <!-- Controls Bar -->
+          <div class="studio-controls-bar">
+            <button type="button" class="btn-primary studio-btn-record" id="btnStudioRecord" disabled>
+              <span>🔴 Start 50s Recording</span>
+            </button>
+            <button type="button" class="btn-secondary" id="btnStudioPause" disabled>
+              <span>⏸ Pause</span>
+            </button>
+            <button type="button" class="btn-danger" id="btnStudioStop" disabled>
+              <span>⏹ Stop</span>
+            </button>
+            <button type="button" class="btn-secondary" id="btnStudioRetake" disabled>
+              <span>🔄 Retake</span>
+            </button>
+            <button type="button" class="btn-primary" id="btnStudioSave">
+              <span id="btnStudioSaveText">💾 Save Utterance A</span>
+            </button>
+          </div>
+
+          <!-- Actionable Save Validation Checklist -->
+          <div class="studio-save-action-wrapper">
+            <div class="studio-validation-checklist" id="studioValidationChecklist">
+              <div class="validation-checklist-title">
+                <span>📋 Save Readiness Checklist</span>
+                <span class="badge-pill-source-synth" id="studioReadinessBadge">Needs Audio &amp; Consent</span>
+              </div>
+              <div class="checklist-items-grid">
+                <div class="checklist-item invalid" id="checkItemMic">
+                  <span class="check-icon">✕</span> <span>Microphone active</span>
+                </div>
+                <div class="checklist-item invalid" id="checkItemAudio">
+                  <span class="check-icon">✕</span> <span>Audio captured (&gt; 0s)</span>
+                </div>
+                <div class="checklist-item valid" id="checkItemRef">
+                  <span class="check-icon">✓</span> <span>Intended transcript</span>
+                </div>
+                <div class="checklist-item valid" id="checkItemVer">
+                  <span class="check-icon">✓</span> <span>Verified transcript</span>
+                </div>
+                <div class="checklist-item invalid" id="checkItemConsent">
+                  <span class="check-icon">✕</span> <span>Explicit consent checkbox</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Actionable Error Alert if Save Clicked Prematurely -->
+            <div class="validation-error-alert" id="studioSaveErrorAlert" style="display: none;" role="alert">
+              <span style="font-size: 1.1rem;">⚠️</span>
+              <div id="studioSaveErrorMessage">Explicit recording consent is required before saving. Please review and check the consent box below.</div>
+            </div>
+          </div>
+
+          <!-- Early Stop Warning Banner -->
+          <div class="banner banner-warning studio-early-stop-banner" id="studioEarlyStopWarning" style="display: none; margin-top: 1rem;">
+            <div class="banner-icon">⚠️</div>
+            <div class="banner-content">
+              <strong>Clip Stopped Early — Marked INCOMPLETE</strong>
+              <p class="warning-text">Recording stopped before 50 seconds. This clip will be saved with status 'incomplete_early_stop' and does not count as a valid 50-second recording.</p>
+            </div>
+          </div>
+
+          <!-- Complete 50s Notice Banner -->
+          <div class="banner banner-success studio-complete-banner" id="studioCompleteNotice" style="display: none; margin-top: 1rem;">
+            <div class="banner-icon">✓</div>
+            <div class="banner-content">
+              <strong>Full 50-Second Recording Captured</strong>
+              <p class="notice-text">Benchmark 50-second criterion satisfied. Ready for review and storage.</p>
+            </div>
+          </div>
+
+          <!-- Workflow Transition Banner: A Saved -> Ready for B -->
+          <div class="workflow-transition-banner" id="studioTransitionToBBanner" style="display: none; margin-top: 1.25rem;">
+            <div class="workflow-transition-text">
+              <h4>✓ Utterance A Saved Successfully!</h4>
+              <p>Ready to capture contrasting Utterance B for pair <code><span class="active-pair-label">human_qty_001</span></code>. Pair ID, Speaker, and Category will be reused automatically.</p>
+            </div>
+            <button type="button" class="btn-primary" id="btnStudioProceedToB">
+              <span>🎙️ Record Utterance B for this Pair &rarr;</span>
+            </button>
+          </div>
+
+          <!-- Workflow Transition Banner: Both A & B Saved -> Pair Complete -->
+          <div class="workflow-transition-banner" id="studioPairCompleteBanner" style="display: none; margin-top: 1.25rem; background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(59, 130, 246, 0.15)); border-color: rgba(16, 185, 129, 0.4);">
+            <div class="workflow-transition-text">
+              <h4>🎉 Pair Complete — Ready for Evaluation!</h4>
+              <p>Both Utterance A and Utterance B are recorded, verified, and sealed. You can now execute live evaluation on this contrast pair.</p>
+            </div>
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+              <button type="button" class="btn-primary" id="btnStudioLaunchEval" style="background: linear-gradient(135deg, #d97706, #b45309);">
+                <span>⚡ Evaluate in Run Evaluation &rarr;</span>
+              </button>
+              <button type="button" class="btn-secondary" id="btnStudioCreateNextPair">
+                <span>➕ Create Next Pair</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Review & Playback Section -->
+          <div class="studio-review-section" id="studioReviewSection" style="display: none; margin-top: 1.25rem;">
+            <h4>Playback &amp; Quality Review</h4>
+            <div class="player-wrapper">
+              <audio id="studioReviewPlayer" controls style="width: 100%;"></audio>
+            </div>
+          </div>
+
+          <!-- Upload Progress & Diagnostic Report -->
+          <div class="studio-upload-card" id="studioUploadProgressCard" style="display: none;">
+            <div class="upload-progress-row">
+              <span id="studioUploadStatusText">Processing audio...</span>
+              <progress id="studioUploadProgress" class="studio-progress" value="0" max="100"></progress>
+            </div>
+          </div>
+
+          <div class="studio-diagnostics-card" id="studioDiagnosticsCard" style="display: none;">
+            <h4>Server-Side Acoustic Validation Report</h4>
+            <div id="studioDiagnosticsBody"></div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Right Column: Step 1 Pair Definition & Recording Metadata -->
+      <div class="studio-right-col">
+        <!-- Card: Step 1 Create Contrast Pair -->
+        <section class="card studio-metadata-card" id="studioPairDefCard">
+          <div class="card-header-cluster">
+            <div>
+              <h3>Step 1: Contrast Pair Definition</h3>
+              <p style="font-size: 0.82rem; color: var(--text-muted); margin: 0;">Define the minimal semantic contrast pair before recording.</p>
+            </div>
+            <button type="button" class="btn-secondary btn-sm" id="btnStudioNewPairReset" title="Start a new pair from scratch">
+              <span>➕ New Pair</span>
+            </button>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label for="studioPairId">Unique Pair ID *</label>
+              <div class="input-with-action">
+                <input type="text" id="studioPairId" class="input-text" value="human_qty_001" required>
+                <button type="button" class="btn-secondary btn-sm" id="btnStudioGeneratePairId" title="Auto-generate unique Pair ID">⚡ Next ID</button>
+              </div>
+            </div>
+            <div class="form-group flex-1">
+              <label for="studioCategorySelect">Benchmark Category *</label>
+              <select id="studioCategorySelect" class="input-select" required>
+                <option value="quantities_and_numbers" selected>Quantities &amp; Numbers</option>
+                <option value="negation">Negation</option>
+                <option value="corrections_and_mind_changes">Corrections &amp; Mind Changes</option>
+                <option value="named_entities">Named Entities</option>
+                <option value="command_intent">Command Intent</option>
+                <option value="time_extraction">Time Extraction</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label for="studioSpeakerId">Pseudonymous Speaker ID *</label>
+              <div class="input-with-action">
+                <input type="text" id="studioSpeakerId" class="input-text" value="spk_indian_01" required>
+                <button type="button" class="btn-secondary btn-sm" id="btnStudioRandomSpeaker" title="Generate random speaker identifier">🎲</button>
+              </div>
+            </div>
+            <div class="form-group flex-1">
+              <label for="studioLanguageSelect">Spoken Language *</label>
+              <select id="studioLanguageSelect" class="input-select" required>
+                <option value="hinglish" selected>Hinglish (Code-Mixed / कोड-मिश्रित)</option>
+                <option value="hi-IN">Hindi (हिन्दी)</option>
+                <option value="en-IN">Indian English</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="studioScenarioDescription">Scenario Description *</label>
+            <input type="text" id="studioScenarioDescription" class="input-text" placeholder="e.g. Enterprise procurement item specification contrast" required>
+          </div>
+
+          <div class="form-group">
+            <label for="studioExpectedContrast">Expected Semantic Distinction (A vs B) *</label>
+            <input type="text" id="studioExpectedContrast" class="input-text" placeholder="e.g. Utterance A orders 200 server units vs Utterance B orders 500 server units" required>
+          </div>
+
+          <!-- Quick Scenario Template Loader -->
+          <div class="form-group">
+            <label for="studioScenarioTemplateSelect">Or Load Standard Scenario Reference</label>
+            <select id="studioScenarioTemplateSelect" class="input-select">
+              <option value="">-- Select a Standard Benchmark Scenario --</option>
+              <option value="pair_qty_001">Quantities: "Do packet chahiye" (Part A: Qty 2)</option>
+              <option value="pair_qty_001_b">Quantities: "Teen packet chahiye" (Part B: Qty 3)</option>
+              <option value="pair_neg_001">Negation: "Nahi ride cancel mat karo" (Part A: Retain)</option>
+              <option value="pair_neg_001_b">Negation: "Haan ride cancel kar do" (Part B: Cancel)</option>
+              <option value="pair_cor_001">Corrections: "Book flight to Mumbai, no wait, to Delhi" (Part A)</option>
+              <option value="pair_cor_001_b">Corrections: "Book flight to Mumbai, definitely Mumbai" (Part B)</option>
+              <option value="pair_ent_001">Named Entities: "Rahul Sharma ko paise bhej do" (Part A)</option>
+              <option value="pair_ent_001_b">Named Entities: "Rohit Sharma ko paise bhej do" (Part B)</option>
+              <option value="pair_cmd_001">Command Intent: "Mera account balance check karo" (Part A)</option>
+              <option value="pair_cmd_001_b">Command Intent: "Mera account band kar do" (Part B)</option>
+              <option value="pair_tim_001">Time: "Dopahar ko do baje deliver karna" (Part A: 2 PM)</option>
+              <option value="pair_tim_001_b">Time: "Dopahar ko teen baje deliver karna" (Part B: 3 PM)</option>
+            </select>
+          </div>
+
+          <div style="margin-top: 1rem; display: flex; justify-content: flex-end;">
+            <button type="button" class="btn-secondary btn-sm" id="btnStudioSavePairSpec" style="display: flex; align-items: center; gap: 0.4rem;">
+              <span>💾 Save Pair Specification</span>
+            </button>
+          </div>
+        </section>
+
+        <!-- Card: Step 2 & 3 Utterance Recording Metadata -->
+        <section class="card studio-metadata-card" style="margin-top: 1.5rem;">
+          <div class="card-header-cluster">
+            <div>
+              <h3>Utterance Details &amp; Transcripts</h3>
+              <p style="font-size: 0.82rem; color: var(--text-muted); margin: 0;">Ground truth transcripts for current recording.</p>
+            </div>
+            <span class="spec-badge badge-active" id="studioFormRoleTag">Role: Utterance A</span>
+          </div>
+
+          <form id="studioMetadataForm" onsubmit="return false;">
+            <div class="form-row">
+              <div class="form-group flex-1">
+                <label for="studioUtteranceRoleSelect">Utterance Role *</label>
+                <select id="studioUtteranceRoleSelect" class="input-select">
+                  <option value="utterance_a" selected>Utterance A (Baseline)</option>
+                  <option value="utterance_b">Utterance B (Contrast)</option>
+                  <option value="standalone">Standalone Utterance</option>
+                </select>
+              </div>
+              <div class="form-group flex-1">
+                <label for="studioRecordingId">Recording ID *</label>
+                <div class="input-with-action">
+                  <input type="text" id="studioRecordingId" class="input-text" readonly>
+                  <button type="button" class="btn-secondary btn-sm" id="btnStudioRefreshId" title="Refresh ID">🔄</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Reference and Verified Transcripts -->
+            <div class="form-group">
+              <label for="studioReferenceTranscript">Intended Reference Transcript *</label>
+              <textarea id="studioReferenceTranscript" class="input-textarea" rows="2" placeholder="Text the speaker intends to say (e.g. enterprise business script, multi-sentence order, command)..." required></textarea>
+            </div>
+
+            <div class="form-group">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
+                <label for="studioVerifiedTranscript" style="margin: 0;">Manually Verified Transcript (Spoken Audio Ground Truth) *</label>
+                <button type="button" class="btn-secondary btn-sm" id="btnStudioCopyRefToVer" style="padding: 0.15rem 0.5rem; font-size: 0.75rem;" title="Copy intended reference transcript into verified field as a starting point">📋 Copy Intended</button>
+              </div>
+              <textarea id="studioVerifiedTranscript" class="input-textarea" rows="2" placeholder="Exact ground truth transcript verified after listening to the recording..." required></textarea>
+              <label class="checkbox-label" style="margin-top: 0.5rem;">
+                <input type="checkbox" id="studioTranscriptVerified">
+                <span>Transcript manually verified against spoken audio</span>
+              </label>
+            </div>
+
+            <!-- Mandatory Explicit Consent Confirmation -->
+            <div class="consent-box" id="studioConsentBox">
+              <label class="checkbox-label consent-checkbox-label">
+                <input type="checkbox" id="studioConsentCheckbox" required>
+                <strong>I explicitly consent to record and use this voice sample for evaluation *</strong>
+              </label>
+              <p class="consent-statement" id="studioConsentText">
+                I explicitly consent to record and store this audio sample pseudonymously in the BoliBench dataset. I understand it will be converted into a standardized 16 kHz PCM WAV format and used to benchmark speech recognition performance across Indian languages. No personally identifiable information (PII) is collected, and audio will not be shared with unauthorized third parties.
+              </p>
+            </div>
+          </form>
+        </section>
+      </div>
+    </div>
+
+    <!-- Section 4: Dataset Library & Contrastive Pair Manager -->
+    <section class="card studio-library-section">
+      <div class="library-header-row">
+        <div>
+          <h3>Dataset Library &amp; Contrastive Pair Verification</h3>
+          <p class="text-muted" style="font-size: 0.85rem;">Saved human recordings and contrast pairs stored in <code>human_recordings_v1/</code>.</p>
+        </div>
+        <button type="button" class="btn-secondary btn-sm" id="btnStudioRefreshLibrary">
+          <span>🔄 Refresh Library</span>
+        </button>
+      </div>
+
+      <!-- Contrastive Pairs Manager -->
+      <div class="studio-tabs-bar">
+        <h4>Candidate Contrastive A/B Pairs (Workflow State &amp; Evaluation Link)</h4>
+      </div>
+
+      <div class="table-responsive">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Pair ID</th>
+              <th>Category &amp; Lang</th>
+              <th>Utterance A (Baseline)</th>
+              <th>Utterance B (Contrast)</th>
+              <th>Pair Status</th>
+              <th>Workflow Actions</th>
+            </tr>
+          </thead>
+          <tbody id="studioPairsTableBody">
+            <tr>
+              <td colspan="6" class="text-center" style="padding: 2rem; color: var(--text-muted);">
+                Loading candidate contrast pairs...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="studio-tabs-bar" style="margin-top: 2rem;">
+        <h4>Individual Saved Audio Clips</h4>
+      </div>
+
+      <div class="table-responsive">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Recording ID</th>
+              <th>Speaker</th>
+              <th>Category</th>
+              <th>Pair &amp; Role</th>
+              <th>Duration</th>
+              <th>50s Criterion</th>
+              <th>Transcript</th>
+              <th>Listen</th>
+            </tr>
+          </thead>
+          <tbody id="studioLibraryTableBody">
+            <tr>
+              <td colspan="8" class="text-center" style="padding: 2rem; color: var(--text-muted);">
+                Loading saved human recordings...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Modal for Operator Contrast Pair Verification -->
+    <div class="modal-backdrop" id="studioVerifyPairModal" style="display: none;">
+      <div class="modal-dialog">
+        <div class="dialog-header">
+          <h3 class="dialog-title">Verify &amp; Seal Contrastive Pair</h3>
+          <button type="button" class="dialog-close" onclick="window.BoliStudio.closeVerifyModal()">✕</button>
+        </div>
+        <div class="dialog-body">
+          <p>
+            To maintain dataset integrity, arbitrary recordings cannot be treated as valid contrast pairs without operator confirmation that they test a genuine semantic distinction.
+          </p>
+
+          <div class="dialog-meta-box">
+            <div class="dialog-meta-row">
+              <strong>Pair ID:</strong>
+              <code id="studioVerifyModalPairId"></code>
+            </div>
+            <div class="dialog-meta-row" style="margin-top: 0.5rem;">
+              <strong>Utterance A Transcript:</strong>
+              <span id="studioVerifyModalUttAText" style="color: var(--accent-saffron);"></span>
+            </div>
+            <div class="dialog-meta-row" style="margin-top: 0.5rem;">
+              <strong>Utterance B Transcript:</strong>
+              <span id="studioVerifyModalUttBText" style="color: var(--primary);"></span>
+            </div>
+            <div class="dialog-meta-row" style="margin-top: 0.5rem;">
+              <strong>Distinction Tested:</strong>
+              <span id="studioVerifyModalDistinction"></span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="checkbox-label" style="font-weight: 600;">
+              <input type="checkbox" id="studioVerifyModalCheckbox">
+              <span>I confirm that Utterance A and Utterance B test a genuine semantic distinction (e.g. quantity difference, negation reversal, destination correction).</span>
+            </label>
+          </div>
+
+          <div class="form-group" style="margin-top: 1rem;">
+            <label for="studioVerifyModalNotes">Operator Verification Notes (Optional)</label>
+            <textarea id="studioVerifyModalNotes" class="input-textarea" rows="2" placeholder="e.g. Verified quantity disparity (2 vs 3 packets). Genuine contrast preserved."></textarea>
+          </div>
+        </div>
+        <div class="dialog-actions">
+          <button type="button" class="btn-secondary" id="btnStudioModalCancelVerify">Cancel</button>
+          <button type="button" class="btn-primary" id="btnStudioModalConfirmVerify">Confirm &amp; Seal Pair</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <p>BoliBench — Great Indian AI Internship Challenge by Gnani AI. In-Website Human Audio Recording Studio.</p>
+    </footer>
+  </div>
+
+  <script src="/static/js/audio_converter.js"></script>
+  <script src="/static/js/studio.js"></script>
+</body>
+</html>
