@@ -1325,3 +1325,183 @@ def test_derived_rescore_preserves_source_run_and_is_isolated(tmp_path: Path):
     json_exp = engine.export_derived_json()
     assert "offline_deterministic_rescore" in json_exp
     assert "01a15b46-a360-7cff-9e6d-8fcb69c7da6b" in json_exp
+
+
+def test_five_contrast_scenarios_have_distinct_ids_categories_and_scoring():
+    """Verifies each of the five newly registered scenarios has a unique ID and its correct category."""
+    seed_cases = {tc.id: tc for tc in load_seed_dataset()}
+
+    expected_pairs = {
+        "pair_neg_order_001": (TestCategory.NEGATION, "is_negated"),
+        "pair_corr_qty_001": (TestCategory.CORRECTIONS_AND_MIND_CHANGES, "final_target"),
+        "pair_intent_order_001": (TestCategory.COMMAND_INTENT, "intent"),
+        "pair_ent_deliv_001": (TestCategory.NAMED_ENTITIES, "person_name"),
+        "pair_time_deliv_001": (TestCategory.TIME_EXTRACTION, "delivery_time"),
+    }
+
+    for pid, (cat, dist_field) in expected_pairs.items():
+        assert pid in seed_cases, f"Seed pair '{pid}' missing from seed_pairs.json"
+        tc = seed_cases[pid]
+        assert tc.category == cat, f"{pid} has wrong category {tc.category}, expected {cat}"
+        assert tc.distinction_field == dist_field, f"{pid} has wrong distinction field {tc.distinction_field}"
+        assert tc.utterance_a.reference_transcript != tc.utterance_b.reference_transcript
+
+
+def test_negation_order_contrast_scoring_and_auxiliary_do_suppression():
+    """Proves verbal auxiliary 'कर दो' does not extract quantity 2, and negation distinguishes cancel from keep."""
+    seed_cases = {tc.id: tc for tc in load_seed_dataset()}
+    tc = seed_cases["pair_neg_order_001"]
+
+    # 1. Verbal 'कर दो' should NOT extract quantity: 2
+    fields_a = extract_all_critical_fields("मेरा ऑर्डर कैंसल कर दो।", category=TestCategory.NEGATION)
+    assert "quantity" not in fields_a, "Verbal 'कर दो' must NOT extract quantity: 2!"
+    assert fields_a.get("is_negated") is False
+    assert fields_a.get("action") == "cancel_order"
+
+    fields_b = extract_all_critical_fields("मेरा ऑर्डर कैंसल मत करना।", category=TestCategory.NEGATION)
+    assert fields_b.get("is_negated") is True
+    assert fields_b.get("action") == "keep_order"
+
+    # 2. Score ideal pair
+    res = score_pair(
+        run_id="test_neg_run_01",
+        test_case=tc,
+        transcript_a="मेरा ऑर्डर कैंसल कर दो।",
+        transcript_b="मेरा ऑर्डर कैंसल मत करना।",
+        execution_mode="mock",
+    )
+    assert res.semantic_distinction_preserved is True
+    assert res.task_success is True
+    assert res.primary_failure_category == FailureCategory.NONE
+
+    # 3. Score collapsed negation (both cancel)
+    res_collapsed = score_pair(
+        run_id="test_neg_run_02",
+        test_case=tc,
+        transcript_a="मेरा ऑर्डर कैंसल कर दो।",
+        transcript_b="मेरा ऑर्डर कैंसल कर दो।",
+        execution_mode="mock",
+    )
+    assert res_collapsed.semantic_distinction_preserved is False
+    assert res_collapsed.primary_failure_category == FailureCategory.MISSED_NEGATION
+
+
+def test_correction_quantity_contrast_evaluates_corrected_target():
+    """Proves change-of-mind correction evaluates final corrected target (3), not rejected number (2)."""
+    seed_cases = {tc.id: tc for tc in load_seed_dataset()}
+    tc = seed_cases["pair_corr_qty_001"]
+
+    fields_a = extract_all_critical_fields("मुझे दो पैकेट चाहिए।", category=TestCategory.CORRECTIONS_AND_MIND_CHANGES)
+    assert fields_a.get("final_target") == 2
+
+    # "दो नहीं, तीन पैकेट चाहिए।" must yield final_target: 3, not 2
+    fields_b = extract_all_critical_fields("दो नहीं, तीन पैकेट चाहिए।", category=TestCategory.CORRECTIONS_AND_MIND_CHANGES)
+    assert fields_b.get("final_target") == 3, f"Correction failed: expected final_target 3, got {fields_b.get('final_target')}"
+    assert fields_b.get("correction_detected") is True
+
+    res = score_pair(
+        run_id="test_corr_run_01",
+        test_case=tc,
+        transcript_a="मुझे दो पैकेट चाहिए।",
+        transcript_b="दो नहीं, तीन पैकेट चाहिए।",
+        execution_mode="mock",
+    )
+    assert res.semantic_distinction_preserved is True
+    assert res.task_success is True
+    assert res.primary_failure_category == FailureCategory.NONE
+
+
+def test_command_intent_order_disambiguation():
+    """Proves order return vs order exchange/modification are correctly disambiguated."""
+    seed_cases = {tc.id: tc for tc in load_seed_dataset()}
+    tc = seed_cases["pair_intent_order_001"]
+
+    intent_a = extract_command_intent("मुझे अपना ऑर्डर रिटर्न करना है।")
+    assert intent_a == "RETURN_ORDER", f"Expected RETURN_ORDER, got {intent_a}"
+
+    intent_b = extract_command_intent("मुझे अपना ऑर्डर बदलना है।")
+    assert intent_b == "MODIFY_ORDER", f"Expected MODIFY_ORDER, got {intent_b}"
+
+    res = score_pair(
+        run_id="test_intent_run_01",
+        test_case=tc,
+        transcript_a="मुझे अपना ऑर्डर रिटर्न करना है।",
+        transcript_b="मुझे अपना ऑर्डर बदलना है।",
+        execution_mode="mock",
+    )
+    assert res.semantic_distinction_preserved is True
+    assert res.task_success is True
+    assert res.primary_failure_category == FailureCategory.NONE
+
+
+def test_named_entities_delivery_contrast():
+    """Proves Rahul Sharma vs Rohit Sharma are extracted and not classified as quantities."""
+    seed_cases = {tc.id: tc for tc in load_seed_dataset()}
+    tc = seed_cases["pair_ent_deliv_001"]
+
+    fields_a = extract_all_critical_fields("डिलीवरी राहुल शर्मा के नाम पर है।", category=TestCategory.NAMED_ENTITIES)
+    assert fields_a.get("person_name") == "Rahul Sharma"
+    assert "quantity" not in fields_a
+
+    fields_b = extract_all_critical_fields("डिलीवरी रोहित शर्मा के नाम पर है।", category=TestCategory.NAMED_ENTITIES)
+    assert fields_b.get("person_name") == "Rohit Sharma"
+    assert "quantity" not in fields_b
+
+    res = score_pair(
+        run_id="test_ent_run_01",
+        test_case=tc,
+        transcript_a="डिलीवरी राहुल शर्मा के नाम पर है।",
+        transcript_b="डिलीवरी रोहित शर्मा के नाम पर है।",
+        execution_mode="mock",
+    )
+    assert res.semantic_distinction_preserved is True
+    assert res.task_success is True
+    assert res.primary_failure_category == FailureCategory.NONE
+
+
+def test_time_extraction_does_not_extract_quantities():
+    """Proves delivery times 09:00 and 10:00 extract delivery_time and DO NOT extract purchase quantities."""
+    seed_cases = {tc.id: tc for tc in load_seed_dataset()}
+    tc = seed_cases["pair_time_deliv_001"]
+
+    # Verbal time
+    fields_a = extract_all_critical_fields("डिलीवरी सुबह नौ बजे चाहिए।", category=TestCategory.TIME_EXTRACTION)
+    assert fields_a.get("delivery_time") == "09:00"
+    assert "quantity" not in fields_a, "Time extraction must NOT populate quantity field!"
+
+    fields_b = extract_all_critical_fields("डिलीवरी सुबह दस बजे चाहिए।", category=TestCategory.TIME_EXTRACTION)
+    assert fields_b.get("delivery_time") == "10:00"
+    assert "quantity" not in fields_b, "Time extraction must NOT populate quantity field!"
+
+    # Digital time format
+    fields_dig_a = extract_all_critical_fields("डिलीवरी सुबह 09:00 बजे चाहिए", category=TestCategory.TIME_EXTRACTION)
+    assert fields_dig_a.get("delivery_time") == "09:00"
+    assert "quantity" not in fields_dig_a
+
+    fields_dig_b = extract_all_critical_fields("डिलीवरी सुबह 10:00 बजे चाहिए", category=TestCategory.TIME_EXTRACTION)
+    assert fields_dig_b.get("delivery_time") == "10:00"
+    assert "quantity" not in fields_dig_b
+
+    # Scoring ideal time pair
+    res = score_pair(
+        run_id="test_time_run_01",
+        test_case=tc,
+        transcript_a="डिलीवरी सुबह 09:00 बजे चाहिए",
+        transcript_b="डिलीवरी सुबह 10:00 बजे चाहिए",
+        execution_mode="mock",
+    )
+    assert res.semantic_distinction_preserved is True
+    assert res.task_success is True
+    assert res.primary_failure_category == FailureCategory.NONE
+
+    # Scoring collapsed time pair produces TIME_ERROR, NOT QUANTITY_ERROR!
+    res_collapsed = score_pair(
+        run_id="test_time_run_02",
+        test_case=tc,
+        transcript_a="डिलीवरी सुबह 09:00 बजे चाहिए",
+        transcript_b="डिलीवरी सुबह 09:00 बजे चाहिए",
+        execution_mode="mock",
+    )
+    assert res_collapsed.semantic_distinction_preserved is False
+    assert res_collapsed.primary_failure_category == FailureCategory.TIME_ERROR
+    assert res_collapsed.primary_failure_category != FailureCategory.QUANTITY_ERROR

@@ -1,6 +1,7 @@
 """Route tests for FastAPI application endpoints."""
 
 import io
+from pathlib import Path
 from unittest.mock import patch
 import pytest
 
@@ -289,3 +290,84 @@ async def test_transcribe_missing_credentials_safe_when_env_file_supplies_key(as
             assert result["error_type"] == "MISSING_CREDENTIALS"
             assert "GNANI_API_KEY" in result["remediation"]
             mock_transport.assert_not_called()
+
+
+def test_settings_application_defaults_without_env(monkeypatch):
+    """Proves both application defaults are False when environment variables and .env are absent."""
+    from app.config import Settings
+    monkeypatch.delenv("LIVE_EVALUATION_ENABLED", raising=False)
+    monkeypatch.delenv("LIVE_TRANSCRIPTION_ENABLED", raising=False)
+    settings = Settings(_env_file=None)
+    assert settings.live_evaluation_enabled is False
+    assert settings.live_transcription_enabled is False
+
+
+def test_settings_explicit_env_override_enables_live_evaluation(monkeypatch):
+    """Proves explicit environment override LIVE_EVALUATION_ENABLED=true enables live evaluation,
+    while single-audio transcription remains False unless separately configured.
+    """
+    from app.config import Settings
+    monkeypatch.delenv("LIVE_TRANSCRIPTION_ENABLED", raising=False)
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
+    settings = Settings(_env_file=None)
+    assert settings.live_evaluation_enabled is True
+    assert settings.live_transcription_enabled is False
+
+
+def test_settings_explicit_env_override_enables_live_transcription(monkeypatch):
+    """Proves explicit environment override LIVE_TRANSCRIPTION_ENABLED=true enables transcription,
+    while live evaluation remains False unless separately configured.
+    """
+    from app.config import Settings
+    monkeypatch.delenv("LIVE_EVALUATION_ENABLED", raising=False)
+    monkeypatch.setenv("LIVE_TRANSCRIPTION_ENABLED", "true")
+    settings = Settings(_env_file=None)
+    assert settings.live_evaluation_enabled is False
+    assert settings.live_transcription_enabled is True
+
+
+@pytest.mark.skipif(
+    not Path(".env").exists(),
+    reason="Requires local .env file with operator overrides",
+)
+def test_local_operator_env_override_resolution(monkeypatch):
+    """Proves that loading from the project root .env honors the local operator override:
+    live evaluation is explicitly enabled while live transcription remains strictly disabled.
+    Never exposes or checks the actual Gnani API key value.
+    """
+    from app.config import Settings
+    monkeypatch.delenv("LIVE_EVALUATION_ENABLED", raising=False)
+    monkeypatch.delenv("LIVE_TRANSCRIPTION_ENABLED", raising=False)
+    settings = Settings()
+    assert settings.live_evaluation_enabled is True
+    assert settings.live_transcription_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_live_authorization_route_protected_by_default(async_client, monkeypatch):
+    """Proves POST /api/eval/authorize-live is rejected with 403 Forbidden when live evaluation is disabled by default."""
+    from app.config import get_settings
+    monkeypatch.delenv("LIVE_EVALUATION_ENABLED", raising=False)
+    monkeypatch.delenv("LIVE_TRANSCRIPTION_ENABLED", raising=False)
+    with patch("app.config.Settings.model_config", {"env_file": None, "extra": "ignore"}):
+        get_settings.cache_clear()
+        resp = await async_client.post("/api/eval/authorize-live", json={"test_id": "pair_qty_001"})
+        assert resp.status_code == 403
+        assert "disabled by default to protect programme credits" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_frontend_displays_live_disabled_warning_when_guard_active(async_client, monkeypatch):
+    """Proves frontend template renders the safety warning banner and protected pill when live evaluation is disabled."""
+    from app.config import get_settings
+    monkeypatch.delenv("LIVE_EVALUATION_ENABLED", raising=False)
+    monkeypatch.delenv("LIVE_TRANSCRIPTION_ENABLED", raising=False)
+    with patch("app.config.Settings.model_config", {"env_file": None, "extra": "ignore"}):
+        get_settings.cache_clear()
+        resp = await async_client.get("/")
+        assert resp.status_code == 200
+        html = resp.text
+        assert "Live Guard: Protected (Mock Mode Only)" in html
+        assert 'id="liveDisabledWarning"' in html
+        assert "Live Evaluation Disabled by Safety Policy" in html
+        assert "LIVE_EVALUATION_ENABLED=false" in html

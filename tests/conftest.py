@@ -1,13 +1,25 @@
 """Pytest test configuration and fixtures for BoliBench."""
 
 import io
+import os
+from pathlib import Path
 import struct
+import tempfile
 import wave
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from unittest.mock import patch
+
+# Pre-import safety isolation: Ensure that any module-level singletons (such as
+# engine = EvaluationEngine() in app.routers.evaluation) created during module imports
+# resolve to a temporary session database instead of the real bolibench_evaluation.db.
+_SESSION_TEST_DIR = Path(tempfile.gettempdir()) / "bolibench_pytest_isolated"
+_SESSION_TEST_DIR.mkdir(parents=True, exist_ok=True)
+_SESSION_TEST_DB = _SESSION_TEST_DIR / f"bolibench_session_test_{os.getpid()}.db"
+if "BOLIBENCH_DB_PATH" not in os.environ:
+    os.environ["BOLIBENCH_DB_PATH"] = str(_SESSION_TEST_DB)
 
 from app.config import Settings, get_settings
 from app.main import app
@@ -30,28 +42,64 @@ def isolate_test_environment(monkeypatch):
 def isolate_evaluation_storage(tmp_path, monkeypatch):
     """Guarantees each test runs with a unique, isolated SQLite database in a temp directory.
 
-    Prevents automated tests from polluting the application's root SQLite database
-    (bolibench_evaluation.db) with synthetic mock-provider evaluations or test fixtures.
-    Preserves and restores original engine storage in a finally block.
+    Redirects all StorageManager instances created during tests (both direct construction
+    and module-level singletons) to an isolated temporary database.
     """
     import app.evaluation.storage
     from app.evaluation.storage import StorageManager
-    from app.routers.evaluation import engine
+    import app.routers.evaluation
 
     test_db_path = tmp_path / "test_isolated_evaluation.db"
 
-    # Isolate any default StorageManager() instantiations
+    # 1. Set environment variable so any process/thread/import resolves to this test DB
+    monkeypatch.setenv("BOLIBENCH_DB_PATH", str(test_db_path))
+
+    # 2. Monkeypatch module-level DEFAULT_DB_PATH in storage module
     monkeypatch.setattr(app.evaluation.storage, "DEFAULT_DB_PATH", test_db_path)
 
-    # Swap shared router engine storage to test-isolated storage
-    orig_storage = engine.storage
+    # 3. Create isolated StorageManager instance for this test
     test_storage = StorageManager(db_path=test_db_path)
-    engine.storage = test_storage
+
+    # 4. Redirect module-level singleton engine in app.routers.evaluation
+    orig_engine_storage = getattr(app.routers.evaluation.engine, "storage", None)
+    monkeypatch.setattr(app.routers.evaluation.engine, "storage", test_storage)
 
     try:
         yield test_storage
     finally:
-        engine.storage = orig_storage
+        # Keep engine.storage pointed to an isolated DB; never restore to the production database
+        real_db_path = Path(__file__).resolve().parent.parent / "bolibench_evaluation.db"
+        if orig_engine_storage and Path(orig_engine_storage.db_path).resolve() != real_db_path.resolve():
+            app.routers.evaluation.engine.storage = orig_engine_storage
+        else:
+            app.routers.evaluation.engine.storage = StorageManager(db_path=_SESSION_TEST_DB)
+
+
+@pytest.fixture(autouse=True)
+def isolate_recording_storage(tmp_path, monkeypatch):
+    """Guarantees each test runs with an isolated human_recordings directory in a temp directory.
+
+    Prevents automated tests from polluting the application's real human_recordings_v1/ directory,
+    raw audio, standardized audio, metadata, pairs, or manifest.json with test mock recordings.
+    """
+    import app.services.recording_storage
+    from app.services.recording_storage import RecordingStorage
+    import app.routers.recording
+
+    test_recordings_dir = tmp_path / "test_isolated_human_recordings"
+
+    # 1. Monkeypatch the default recordings directory so all new RecordingStorage() calls use tmp_path
+    monkeypatch.setattr(app.services.recording_storage, "DEFAULT_RECORDINGS_DIR", test_recordings_dir)
+
+    # 2. Swap router's module-level storage instance
+    orig_router_storage = app.routers.recording.storage
+    test_storage = RecordingStorage(base_dir=test_recordings_dir)
+    monkeypatch.setattr(app.routers.recording, "storage", test_storage)
+
+    try:
+        yield test_storage
+    finally:
+        app.routers.recording.storage = orig_router_storage
 
 
 

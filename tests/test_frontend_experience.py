@@ -2,6 +2,8 @@
 
 import io
 from pathlib import Path
+import shutil
+import subprocess
 import pytest
 from app.config import get_settings
 from app.evaluation.dataset import load_seed_dataset
@@ -102,7 +104,7 @@ async def test_catalogue_api_exposes_seed_cases_with_simulation_provenance(async
     resp = await async_client.get("/api/eval/test-cases")
     assert resp.status_code == 200
     cases = resp.json()
-    assert len(cases) == 12
+    assert len(cases) == 17
     for tc in cases:
         assert "id" in tc
         assert "category" in tc
@@ -693,3 +695,205 @@ async def test_derived_rescore_modal_and_showcase_elements_rendered(async_client
 
     # 5. Export links
     assert 'id="modalBtnExportJson"' in html
+
+
+@pytest.mark.asyncio
+async def test_redesigned_product_hero_and_paired_contrast_example(async_client):
+    """Proves the redesigned product-first hero renders eyebrow, headline, CTAs, trust info, and contrast example."""
+    resp = await async_client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+
+    # 1. Hero Eyebrow, Headline, and Supporting Text
+    assert "INDIAN VOICE AI EVALUATION" in html
+    assert "When speech changes, does the action change?" in html
+    assert "Test whether speech recognition preserves critical meaning across Hindi, Indian English, and Hinglish" in html
+
+    # 2. Hero Action Buttons
+    assert 'id="btnHeroRunDemo"' in html
+    assert "Run Demo" in html
+    assert 'id="btnHeroExploreResults"' in html
+    assert "Explore Results" in html
+
+    # 3. Trust and Transparency Information
+    assert "Deterministic mock evaluation available (0 credits, zero external calls)" in html
+    assert "Live Gnani evaluation requires explicit authorization and consumes credits" in html
+    assert "Offline derived re-scoring uses stored transcripts and makes no provider calls" in html
+
+    # 4. Paired-Contrast Concept Example
+    assert "Do packet chahiye" in html
+    assert "Expected quantity: <strong>2</strong>" in html
+    assert "Teen packet chahiye" in html
+    assert "Expected quantity: <strong>3</strong>" in html
+    assert "Did the system preserve the critical difference between two packets and three packets?" in html
+    assert "Preserved Distinction" in html
+    assert "Collapsed Distinction" in html
+    assert "Not a recorded measurement" in html
+
+
+@pytest.mark.asyncio
+async def test_primary_and_secondary_navigation_hierarchy(async_client):
+    """Proves the 3-primary + secondary tools navigation structure renders with all 6 accessible tabs."""
+    resp = await async_client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+
+    # Primary cluster with 3 core workflows
+    assert "nav-primary-cluster" in html
+    assert 'id="tabBtnOverview"' in html
+    assert 'id="tabBtnEvaluate"' in html
+    assert 'id="tabBtnHistory"' in html
+
+    # Secondary cluster with reference and single-clip tools
+    assert "nav-secondary-cluster" in html
+    assert "Tools &amp; Reference:" in html or "Tools & Reference:" in html
+    assert 'id="tabBtnCatalogue"' in html
+    assert 'id="tabBtnMethodology"' in html
+    assert 'id="tabBtnTranscribe"' in html
+
+
+@pytest.mark.asyncio
+async def test_4_step_crash_lab_experiment_architecture(async_client):
+    """Proves the Crash Lab is structured into a 4-step sequence."""
+    resp = await async_client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+
+    assert "STEPS 1 – 3" in html or "STEPS 1 - 3" in html
+    assert "STEP 4" in html
+    assert "Choose a Contrast Test Case" in html
+    assert "Choose Evaluation Mode" in html
+    assert "Enter or Upload Inputs" in html
+    assert "Evaluation Scorecard" in html
+    assert "mode-choice-mock" in html
+    assert "mode-choice-live" in html
+
+
+@pytest.mark.asyncio
+async def test_dynamic_derived_rescore_endpoint_behavior(async_client, tmp_path):
+    """Proves dynamic derived re-score retrieval distinguishes between existing runs, mock runs, and non-existent runs."""
+    test_storage = StorageManager(db_path=tmp_path / "test_dynamic_modal.db")
+    orig_storage = engine.storage
+    engine.storage = test_storage
+
+    try:
+        seed_cases = load_seed_dataset()
+        pair_qty = next(p for p in seed_cases if p.category.value == "quantities_and_numbers")
+
+        # 1. Non-existent run returns 404
+        resp_404 = await async_client.get("/api/eval/runs/eval_nonexistent_12345/derived-rescore")
+        assert resp_404.status_code == 404
+
+        # 2. Save completed live run with Romanized Hindi ref and Devanagari actual
+        live_run = score_pair(
+            run_id="eval_dyn_live_001",
+            test_case=pair_qty,
+            transcript_a="2 पैकेट चाहिए",
+            transcript_b="3 पैकेट चाहिए",
+            execution_mode="live",
+            client_request_elapsed_ms=1850.0,
+            request_id_a="req_dyn_a",
+            request_id_b="req_dyn_b",
+        )
+        test_storage.save_run(live_run)
+
+        # 3. Dynamic derived assessment can be retrieved/generated for this specific run
+        resp_dyn = await async_client.get("/api/eval/runs/eval_dyn_live_001/derived-rescore")
+        assert resp_dyn.status_code == 200
+        data_dyn = resp_dyn.json()
+
+        # Invariants
+        assert data_dyn["source_run_id"] == "eval_dyn_live_001"
+        assert data_dyn["derived_id"].startswith("rescore_eval_dyn_live_001")
+        assert data_dyn["source_run_id"] != data_dyn["derived_id"]
+        assert data_dyn["provider_calls_made"] == 0
+        assert data_dyn["credits_consumed"] == 0
+        assert data_dyn["provenance"] == "offline_deterministic_rescore"
+        assert data_dyn["request_id_a"] == "req_dyn_a"
+        assert data_dyn["request_id_b"] == "req_dyn_b"
+
+        # Cross-script normalized WER was computed
+        assert data_dyn["original_average_raw_wer"] == 1.0  # Raw script mismatch
+        assert data_dyn["average_normalized_wer"] == 0.0     # Mapped
+        assert data_dyn["rescore_semantic_distinction_preserved"] is True
+        assert data_dyn["rescore_task_success"] is True
+
+        # Source record remains immutable
+        source_in_db = test_storage.get_run("eval_dyn_live_001")
+        assert source_in_db is not None
+        assert source_in_db.run_id == "eval_dyn_live_001"
+        assert source_in_db.average_wer == 1.0  # Unchanged!
+
+    finally:
+        engine.storage = orig_storage
+
+
+def test_frontend_dynamic_selection_and_modal_isolation():
+    """Verifies frontend dynamic selection, route guarding, and modal state isolation.
+
+    Executes tests/test_frontend_selection.mjs using Node.js built-in test runner:
+    1. A dynamically rendered history row carries the correct run ID, execution mode, and status.
+    2. Inspecting a selected eligible run uses that row's actual run ID rather than eval_live_758277ca81d8.
+    3. Inspecting a mock, failed, or incomplete run does not request a derived re-score.
+    4. A missing or invalid API response cannot leave stale values from a previously opened modal.
+    5. The correct empty or ineligible state is shown.
+    """
+    node_path = shutil.which("node")
+    assert node_path is not None, "Node.js executable is required to run frontend selection regression tests."
+
+    result = subprocess.run(
+        [node_path, "--test", "tests/test_frontend_selection.mjs"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"Node frontend selection test failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+
+
+def test_audio_converter_node_unit_tests():
+    """Runs the 10 WAV encoder unit tests in tests/test_audio_converter.mjs via Node.js."""
+    node_path = shutil.which("node")
+    assert node_path is not None, "Node.js executable is required to run audio converter unit tests."
+
+    result = subprocess.run(
+        [node_path, "--test", "tests/test_audio_converter.mjs"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"Node audio converter unit tests failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+
+
+@pytest.mark.asyncio
+async def test_audio_conversion_ui_elements(async_client):
+    """Verifies that the HTML template renders the client-side audio conversion elements.
+
+    Checks:
+    1. /static/js/audio_converter.js script tag is included before app.js.
+    2. Explainer notice informs user of automatic local conversion with zero Gnani credit cost.
+    3. File inputs accept .wav, .m4a, .mp3, .ogg, .aac, .flac, .webm, audio/*.
+    4. Feedback containers #conversionFeedbackA and #conversionFeedbackB are present with role="status".
+    5. Spec badges and original file name elements are rendered.
+    """
+    response = await async_client.get("/")
+    assert response.status_code == 200
+    html = response.text
+
+    assert '<script src="/static/js/audio_converter.js"></script>' in html
+    assert '<script src="/static/js/app.js"></script>' in html
+    conv_pos = html.find('<script src="/static/js/audio_converter.js"></script>')
+    app_pos = html.find('<script src="/static/js/app.js"></script>')
+    assert conv_pos != -1 and app_pos != -1
+    assert conv_pos < app_pos, "audio_converter.js must be loaded before app.js"
+
+    static_resp = await async_client.get("/static/js/audio_converter.js")
+    assert static_resp.status_code == 200
+    assert "BoliAudioConverter" in static_resp.text
+
+    assert "Automatic Local Audio-to-WAV Conversion" in html
+    assert "Conversion uses no Gnani credits" in html
+    assert 'id="conversionFeedbackA"' in html
+    assert 'id="conversionFeedbackB"' in html
+    assert 'id="origFileNameA"' in html
+    assert 'id="origFileNameB"' in html
+    assert 'id="audioSpecsA"' in html
+    assert 'id="audioSpecsB"' in html
+    assert 'accept=".wav,.m4a,.mp3,.ogg,.aac,.flac,.webm,audio/*"' in html

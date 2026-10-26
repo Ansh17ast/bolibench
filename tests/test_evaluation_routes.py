@@ -1373,8 +1373,10 @@ async def test_mocked_live_run_persists_only_in_temporary_storage(
     if not prod_db_path.exists():
         pytest.skip("Production database does not exist locally.")
 
-    # Record row count of production database prior to test
-    with sqlite3.connect(str(prod_db_path)) as conn:
+    prod_uri = f"file:{prod_db_path.resolve().as_posix()}?mode=ro"
+
+    # Record row count of production database prior to test using read-only mode
+    with sqlite3.connect(prod_uri, uri=True) as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM evaluation_runs")
         prod_count_before = cursor.fetchone()[0]
@@ -1426,8 +1428,8 @@ async def test_mocked_live_run_persists_only_in_temporary_storage(
         assert test_run.utterance_a.request_id == "req_iso_proof_a_999"
         assert test_run.utterance_b.request_id == "req_iso_proof_b_999"
 
-        # 2. Assert record is NOT present in production database
-        with sqlite3.connect(str(prod_db_path)) as conn:
+        # 2. Assert record is NOT present in production database (using read-only connection)
+        with sqlite3.connect(prod_uri, uri=True) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM evaluation_runs WHERE run_id = ?", (live_run_id,))
             match_count = cursor.fetchone()[0]
@@ -1453,7 +1455,9 @@ async def test_production_database_untouched_during_eval_test(async_client):
     assert Path(engine.storage.db_path).resolve() != prod_db_path.resolve()
     assert "tmp" in str(engine.storage.db_path).lower() or "temp" in str(engine.storage.db_path).lower() or "pytest" in str(engine.storage.db_path).lower()
 
-    with sqlite3.connect(str(prod_db_path)) as conn:
+    prod_uri = f"file:{prod_db_path.resolve().as_posix()}?mode=ro"
+
+    with sqlite3.connect(prod_uri, uri=True) as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM evaluation_runs")
         count_before = cursor.fetchone()[0]
@@ -1466,8 +1470,8 @@ async def test_production_database_untouched_during_eval_test(async_client):
     # Verify mock run is in engine storage
     assert engine.get_run(mock_run_id) is not None
 
-    # Verify production database was untouched
-    with sqlite3.connect(str(prod_db_path)) as conn:
+    # Verify production database was untouched (using read-only connection)
+    with sqlite3.connect(prod_uri, uri=True) as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM evaluation_runs")
         count_after = cursor.fetchone()[0]
@@ -1590,3 +1594,284 @@ async def test_derived_rescore_api_endpoints(async_client):
     # 5. Nonexistent run returns 404
     resp_404 = await async_client.get("/api/eval/runs/nonexistent_fake_run/derived-rescore")
     assert resp_404.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_authorize_live_rejects_category_mismatch(async_client, monkeypatch):
+    """Proves authorize-live rejects mismatched test_id and expected_category with 400 before issuing token."""
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
+    from app.config import get_settings
+    get_settings.cache_clear()
+
+    # Mismatched category: pair_qty_001 is quantities_and_numbers, but client expects negation
+    resp = await async_client.post(
+        "/api/eval/authorize-live",
+        json={"test_id": "pair_qty_001", "expected_category": "negation"},
+        headers={"Origin": "http://127.0.0.1:8000"},
+    )
+    assert resp.status_code == 400
+    assert "Configuration mismatch" in resp.json()["detail"]
+    assert "quantities_and_numbers" in resp.json()["detail"]
+
+    # Matching category succeeds and issues token
+    resp_ok = await async_client.post(
+        "/api/eval/authorize-live",
+        json={"test_id": "pair_qty_001", "expected_category": "quantities_and_numbers"},
+        headers={"Origin": "http://127.0.0.1:8000"},
+    )
+    assert resp_ok.status_code == 200
+    assert resp_ok.json()["status"] == "authorized"
+    assert "confirmation_token" in resp_ok.json()
+
+
+@pytest.mark.asyncio
+async def test_run_live_rejects_category_mismatch_before_file_read_or_provider(async_client, monkeypatch):
+    """Proves run-live rejects category mismatch with 400 before reading audio files or contacting provider."""
+    monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_123")
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
+    from app.config import get_settings
+    from app.services.live_guard import live_guard
+    get_settings.cache_clear()
+
+    # Pre-generate valid token for pair_qty_001 via authorize-live
+    auth_resp = await async_client.post(
+        "/api/eval/authorize-live",
+        json={"test_id": "pair_qty_001", "expected_category": "quantities_and_numbers"},
+        headers={"Origin": "http://127.0.0.1:8000"},
+    )
+    assert auth_resp.status_code == 200
+    token = auth_resp.json()["confirmation_token"]
+
+    # Make request with expected_category = 'time_extraction' (mismatch with pair_qty_001)
+    # Using dummy audio payload; server should reject based on category mismatch before inspecting file bytes
+    files = {
+        "audio_file_a": ("test_a.wav", b"RIFF....dummy", "audio/wav"),
+        "audio_file_b": ("test_b.wav", b"RIFF....dummy", "audio/wav"),
+    }
+    data = {
+        "audio_condition": "clean_recorded",
+        "confirmation_token": token,
+        "expected_category": "time_extraction",
+    }
+    headers = {
+        "Origin": "http://testserver",
+        "Host": "testserver",
+        "X-BoliBench-Confirm-Live": live_guard.EXPECTED_HEADER_VALUE,
+    }
+
+    resp = await async_client.post(
+        "/api/eval/run-live/pair_qty_001",
+        data=data,
+        files=files,
+        headers=headers,
+    )
+    assert resp.status_code == 400
+    assert "Configuration mismatch" in resp.json()["detail"]
+    assert "quantities_and_numbers" in resp.json()["detail"]
+    assert "time_extraction" in resp.json()["detail"]
+
+
+# -----------------------------------------------------------------------------
+# Part G: Automatic Contrast Detection & Credit-Safe Live Offline Tests
+# -----------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_authorize_live_auto_pair_succeeds(async_client, monkeypatch):
+    """Proves authorize-live issues token for test_id='auto' without requiring curated pair selection."""
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
+    from app.config import get_settings
+    get_settings.cache_clear()
+
+    resp = await async_client.post(
+        "/api/eval/authorize-live",
+        json={"test_id": "auto"},
+        headers={"Origin": "http://127.0.0.1:8000"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "authorized"
+    assert "confirmation_token" in data
+
+
+@pytest.mark.asyncio
+async def test_evaluate_auto_transcripts_endpoint_all_categories(async_client):
+    """Proves /api/eval/evaluate-auto-transcripts deterministically classifies and scores all 7 categories."""
+    uncurated_cases = [
+        ("Mujhe do samose chahiye", "Mujhe teen samose chahiye", "quantities_and_numbers", True),
+        ("Mujhe parcel bhejna hai", "Mujhe parcel nahi bhejna hai", "negation", True),
+        ("Two tickets, not two—three tickets", "Two tickets", "corrections_and_mind_changes", True),
+        ("I want to return the product", "I want to modify the product", "command_intent", True),
+        ("Send payment to Rahul Sharma", "Send payment to Rohit Sharma", "named_entities", True),
+        ("Meeting at 09:00 AM", "Meeting at 10:00 AM", "time_extraction", True),
+        ("Good morning to you", "Good evening to everyone", "ambiguous", False),
+    ]
+
+    for t_a, t_b, expected_cat, expected_distinction_preserved in uncurated_cases:
+        resp = await async_client.post(
+            "/api/eval/evaluate-auto-transcripts",
+            json={"transcript_a": t_a, "transcript_b": t_b, "audio_condition": "text_only_simulation"},
+        )
+        assert resp.status_code == 200, f"Failed for {t_a} vs {t_b}: {resp.text}"
+        data = resp.json()
+        assert data["category"] == expected_cat, f"Expected {expected_cat}, got {data['category']} for '{t_a}' vs '{t_b}'"
+        assert data["evaluation_mode"] == "automatic_inference"
+        assert data["is_curated_reference"] is False
+        assert data["utterance_a"]["reference_available"] is False  # Explicitly unavailable
+        assert data["utterance_b"]["reference_available"] is False
+        if expected_cat == "ambiguous":
+            assert data["task_success"] is False
+        else:
+            assert data["semantic_distinction_preserved"] is expected_distinction_preserved
+
+    # Verify separation: if transcripts happen to match a known reference pair, reference mode is recognized
+    resp_curated = await async_client.post(
+        "/api/eval/evaluate-auto-transcripts",
+        json={"transcript_a": "Do packet chahiye", "transcript_b": "Teen packet chahiye", "audio_condition": "text_only_simulation"},
+    )
+    assert resp_curated.status_code == 200
+    data_curated = resp_curated.json()
+    assert data_curated["evaluation_mode"] == "reference_benchmark"
+    assert data_curated["is_curated_reference"] is True
+    assert data_curated["utterance_a"]["reference_available"] is True
+
+
+@pytest.mark.asyncio
+async def test_run_live_auto_pair_with_mocked_provider(async_client, valid_wav_bytes, monkeypatch):
+    """Proves /api/eval/run-live/auto executes exactly two mocked provider calls, infers scenario, and never fabricates WER."""
+    monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_auto")
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
+    from app.config import get_settings
+    get_settings.cache_clear()
+
+    auth_resp = await async_client.post(
+        "/api/eval/authorize-live",
+        json={"test_id": "auto"},
+        headers={"Origin": "http://127.0.0.1:8000"},
+    )
+    assert auth_resp.status_code == 200
+    token = auth_resp.json()["confirmation_token"]
+
+    # Uncurated spontaneous recordings
+    mock_resp_a = {
+        "success": True,
+        "transcript": "Mujhe do samose chahiye",
+        "request_id": "req_auto_mock_a_001",
+        "model": "gnani-prisma-v2.5",
+        "client_request_elapsed_ms": 110.0,
+        "server_timestamp": "20261021_050000.000",
+        "language_code": "hi-IN",
+        "format": "transcribe",
+        "is_mocked": False,
+    }
+    mock_resp_b = {
+        "success": True,
+        "transcript": "Mujhe teen samose chahiye",
+        "request_id": "req_auto_mock_b_001",
+        "model": "gnani-prisma-v2.5",
+        "client_request_elapsed_ms": 115.0,
+        "server_timestamp": "20261021_050001.000",
+        "language_code": "hi-IN",
+        "format": "transcribe",
+        "is_mocked": False,
+    }
+
+    files = {
+        "audio_file_a": ("utterance_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        "audio_file_b": ("utterance_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+    data = {
+        "audio_condition": "clean_recorded",
+        "confirmation_token": token,
+    }
+    headers = {
+        "Origin": "http://testserver",
+        "Host": "testserver",
+        "X-BoliBench-Confirm-Live": live_guard.EXPECTED_HEADER_VALUE,
+    }
+
+    with patch("app.services.gnani_client.GnaniPrismaClient.transcribe", side_effect=[mock_resp_a, mock_resp_b]) as mock_transcribe:
+        response = await async_client.post("/api/eval/run-live/auto", files=files, data=data, headers=headers)
+        assert response.status_code == 200
+        res = response.json()
+
+        # Invariants: Exactly one mocked call per utterance, total 2 calls, no retries
+        assert mock_transcribe.call_count == 2
+        assert res["execution_mode"] == "live"
+        assert res["evaluation_mode"] == "automatic_inference"
+        assert res["is_curated_reference"] is False
+        assert res["utterance_a"]["reference_available"] is False
+        assert res["utterance_b"]["reference_available"] is False
+        assert res["category"] == "quantities_and_numbers"
+        assert res["semantic_distinction_preserved"] is True
+        assert res["distinction_field"] == "quantity"
+        assert res["utterance_a"]["extracted_fields"]["quantity"] == 2
+        assert res["utterance_b"]["extracted_fields"]["quantity"] == 3
+
+
+@pytest.mark.asyncio
+async def test_run_live_auto_pair_no_retry_on_failure(async_client, valid_wav_bytes, monkeypatch):
+    """Proves that if utterance B fails at provider level, the system preserves partial state and does NOT retry."""
+    monkeypatch.setenv("GNANI_API_KEY", "test_mock_secret_key_auto")
+    monkeypatch.setenv("LIVE_EVALUATION_ENABLED", "true")
+    from app.config import get_settings
+    get_settings.cache_clear()
+
+    auth_resp = await async_client.post(
+        "/api/eval/authorize-live",
+        json={"test_id": "auto"},
+        headers={"Origin": "http://127.0.0.1:8000"},
+    )
+    assert auth_resp.status_code == 200
+    token = auth_resp.json()["confirmation_token"]
+
+    mock_resp_a = {
+        "success": True,
+        "transcript": "Mujhe do samose chahiye",
+        "request_id": "req_auto_partial_a",
+        "model": "gnani-prisma-v2.5",
+        "client_request_elapsed_ms": 110.0,
+        "server_timestamp": "20261021_050000.000",
+        "language_code": "hi-IN",
+        "format": "transcribe",
+        "is_mocked": False,
+    }
+    mock_resp_b_err = {
+        "success": False,
+        "error": "Upstream 504 Gateway Timeout",
+        "request_id": "req_auto_partial_b",
+        "client_request_elapsed_ms": 5000.0,
+    }
+
+    files = {
+        "audio_file_a": ("utterance_a.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+        "audio_file_b": ("utterance_b.wav", io.BytesIO(valid_wav_bytes), "audio/wav"),
+    }
+    data = {
+        "audio_condition": "clean_recorded",
+        "confirmation_token": token,
+    }
+    headers = {
+        "Origin": "http://testserver",
+        "Host": "testserver",
+        "X-BoliBench-Confirm-Live": live_guard.EXPECTED_HEADER_VALUE,
+    }
+
+    with patch("app.services.gnani_client.GnaniPrismaClient.transcribe", side_effect=[mock_resp_a, mock_resp_b_err]) as mock_transcribe:
+        response = await async_client.post("/api/eval/run-live/auto", files=files, data=data, headers=headers)
+        # Endpoint returns HTTP 502 to signal provider error to caller
+        assert response.status_code == 502
+        assert "Gnani Prisma API error during paired evaluation" in response.json()["detail"] or "Live paired audio evaluation failed" in response.json()["detail"]
+
+        # Exactly 2 calls made — zero retries!
+        assert mock_transcribe.call_count == 2
+
+        # Incomplete run must be safely preserved in SQLite storage
+        resp_history = await async_client.get("/api/eval/results?status=incomplete")
+        assert resp_history.status_code == 200
+        incomp_runs = resp_history.json()
+        assert len(incomp_runs) > 0
+        latest_incomp = incomp_runs[0]
+        assert latest_incomp["overall_status"] == "incomplete"
+        assert latest_incomp["utterance_a"]["status"] == "completed"
+        assert latest_incomp["utterance_a"]["request_id"] == "req_auto_partial_a"
+        assert latest_incomp["utterance_b"]["status"] == "failed"
