@@ -1,0 +1,180 @@
+{
+  "timestamp": "2026-10-22T01:25:41.615650+00:00",
+  "manifest_file": "benchmark_manifest.json",
+  "manifest_name": "BoliBench 50-Pair Contrast Evaluation Benchmark",
+  "manifest_version": "1.1.0",
+  "total_pairs": 50,
+  "ready_pairs": 50,
+  "planned_provider_requests": 100,
+  "completed_pilot_pairs_count": 4,
+  "completed_pilot_pair_ids": [
+    "bench_qty_001",
+    "bench_neg_001",
+    "bench_cor_001",
+    "bench_cmd_001"
+  ],
+  "untested_pairs_remaining": 46,
+  "planned_new_provider_requests": 92,
+  "invalid_pairs_count": 0,
+  "duplicated_pairs_count": 0,
+  "manual_review_flags_count": 14,
+  "counts_by_category": {
+    "quantities_and_numbers": 9,
+    "negation": 9,
+    "corrections_and_mind_changes": 8,
+    "command_intent": 8,
+    "named_entities": 8,
+    "time_extraction": 8
+  },
+  "counts_by_provenance": {
+    "human_recorded": 5,
+    "tts_synthetic": 43,
+    "acoustic_transformed": 2
+  },
+  "invalid_items": [],
+  "duplicated_items": [],
+  "manual_review_items": [
+    {
+      "pair_id": "bench_qty_002",
+      "category": "quantities_and_numbers",
+      "review_type": "SIMILAR_DURATION",
+      "delta_seconds": 0.0,
+      "note": "Similar audio duration (3.02s vs 3.02s); confirmed distinct PCM samples (3dd2be97 vs a38e83f0)."
+    },
+    {
+      "pair_id": "bench_qty_003",
+      "category": "quantities_and_numbers",
+      "review_type": "SIMILAR_DURATION",
+      "delta_seconds": 0.0,
+      "note": "Similar audio duration (3.14s vs 3.14s); confirmed distinct PCM samples (43250f1c vs df8bfe50)."
+    },
+    {
+      "pair_id": "bench_qty_005",
+      "category": "quantities_and_numbers",
+      "review_type": "HIGH_LEXICAL_OVERLAP",
+      "overlap_ratio": 0.75,
+      "note": "Contrast pair shares 75% words; target distinction verified on 'quantity'."
+    },
+    {
+      "pair_id": "bench_qty_008",
+      "category": "quantities_and_numbers",
+      "review_type": "SIMILAR_DURATION",
+      "delta_seconds": 0.02,
+      "note": "Similar audio duration (2.4s vs 2.38s); confirmed distinct PCM samples (cfebabdb vs 24306d37)."
+    },
+    {
+      "pair_id": "bench_neg_005",
+      "category": "negation",
+      "review_type": "HIGH_LEXICAL_OVERLAP",
+      "overlap_ratio": 0.83,
+      "note": "Contrast pair shares 83% words; target distinction verified on 'is_negated'."
+    },
+    {
+      "pair_id": "bench_neg_007",
+      "category": "negation",
+      "review_type": "HIGH_LEXICAL_OVERLAP",
+      "overlap_ratio": 0.86,
+      "note": "Contrast pair shares 86% words; target distinction verified on 'is_negated'."
+    },
+    {
+      "pair_id": "bench_neg_008",
+      "category": "negation",
+      "review_type": "HIGH_LEXICAL_OVERLAP",
+      "overlap_ratio": 0.8,
+      "note": "Contrast pair shares 80% words; target distinction verified on 'is_negated'."
+    },
+    {
+      "pair_id": "bench_cmd_007",
+      "category": "command_intent",
+      "review_type": "SIMILAR_DURATION",
+      "delta_seconds": 0.0,
+      "note": "Similar audio duration (2.5s vs 2.5s); confirmed distinct PCM samples (fb19f521 vs 42c80b1f)."
+    },
+    {
+      "pair_id": "bench_ent_001_v2",
+      "category": "named_entities",
+      "review_type": "SIMILAR_DURATION",
+      "delta_seconds": 0.03,
+      "note": "Similar audio duration (2.45s vs 2.42s); confirmed distinct PCM samples (3706fbc1 vs 5f321e3d)."
+    },
+    {
+      "pair_id": "bench_ent_002",
+      "category": "named_entities",
+      "review_type": "SIMILAR_DURATION",
+      "delta_seconds": 0.0,
+      "note": "Similar audio duration (3.24s vs 3.24s); confirmed distinct PCM samples (74dcd5f4 vs b273f019)."
+    },
+    {
+      "pair_id": "bench_ent_008",
+      "category": "named_entities",
+      "review_type": "SIMILAR_DURATION",
+      "delta_seconds": 0.0,
+      "note": "Similar audio duration (2.95s vs 2.95s); confirmed distinct PCM samples (abd93660 vs dc8bce66)."
+    },
+    {
+      "pair_id": "bench_tim_004",
+      "category": "time_extraction",
+      "review_type": "SIMILAR_DURATION",
+      "delta_seconds": 0.04,
+      "note": "Similar audio duration (2.98s vs 3.02s); confirmed distinct PCM samples (e121b484 vs 03353e70)."
+    },
+    {
+      "pair_id": "bench_tim_005",
+      "category": "time_extraction",
+      "review_type": "SIMILAR_DURATION",
+      "delta_seconds": 0.02,
+      "note": "Similar audio duration (3.0s vs 2.98s); confirmed distinct PCM samples (25f20297 vs 020d9b84)."
+    },
+    {
+      "pair_id": "bench_tim_008",
+      "category": "time_extraction",
+      "review_type": "HIGH_LEXICAL_OVERLAP",
+      "overlap_ratio": 0.75,
+      "note": "Contrast pair shares 75% words; target distinction verified on 'time'."
+    }
+  ],
+  "is_valid": true,
+  "dry_run_passed": true,
+  "audio_details_sample": {
+    "bench_qty_001": {
+      "path_a": "benchmark_audio/bench_qty_001_a.wav",
+      "size_a": 139342,
+      "duration_a": 4.35,
+      "path_b": "benchmark_audio/bench_qty_001_b.wav",
+      "size_b": 128420,
+      "duration_b": 4.01
+    },
+    "bench_qty_002": {
+      "path_a": "benchmark_audio/bench_qty_002_a.wav",
+      "size_a": 96846,
+      "duration_a": 3.02,
+      "path_b": "benchmark_audio/bench_qty_002_b.wav",
+      "size_b": 96846,
+      "duration_b": 3.02
+    },
+    "bench_qty_003": {
+      "path_a": "benchmark_audio/bench_qty_003_a.wav",
+      "size_a": 100686,
+      "duration_a": 3.14,
+      "path_b": "benchmark_audio/bench_qty_003_b.wav",
+      "size_b": 100686,
+      "duration_b": 3.14
+    },
+    "bench_qty_004": {
+      "path_a": "benchmark_audio/bench_qty_004_a.wav",
+      "size_a": 93006,
+      "duration_a": 2.9,
+      "path_b": "benchmark_audio/bench_qty_004_b.wav",
+      "size_b": 94542,
+      "duration_b": 2.95
+    },
+    "bench_qty_005": {
+      "path_a": "benchmark_audio/bench_qty_005_a.wav",
+      "size_a": 99918,
+      "duration_a": 3.12,
+      "path_b": "benchmark_audio/bench_qty_005_b.wav",
+      "size_b": 91470,
+      "duration_b": 2.86
+    }
+  }
+}

@@ -1,0 +1,152 @@
+{
+  "manifest_version": "1.0.0",
+  "name": "BoliBench Curated 5-Pair Pilot Manifest",
+  "description": "Curated high-stakes paired speech contrast benchmark for Gnani Prisma STT v3 pilot evaluation.",
+  "created_at": "2026-10-21T18:26:03.166301+00:00",
+  "items": [
+    {
+      "pair_id": "pair_neg_order_001",
+      "category": "negation",
+      "language_code": "hi-IN",
+      "audio_condition": "clean_recorded",
+      "source_type": "human_recorded",
+      "audio_path_a": "local_test_audio/negation1_pcm.wav",
+      "audio_path_b": "local_test_audio/negation2_pcm.wav",
+      "reference_transcript_a": "मेरा ऑर्डर कैंसल कर दो।",
+      "reference_transcript_b": "मेरा ऑर्डर कैंसल मत करना।",
+      "expected_critical_fields_a": {
+        "is_negated": false,
+        "action": "cancel_order"
+      },
+      "expected_critical_fields_b": {
+        "is_negated": true,
+        "action": "keep_order"
+      },
+      "expected_intent_a": "CANCEL_ORDER",
+      "expected_intent_b": "CANCEL_ORDER",
+      "expected_action_a": "cancel_order",
+      "expected_action_b": "keep_order",
+      "distinction_field": "is_negated",
+      "description": "Critical negation distinction in order cancellation workflow.",
+      "speaker_metadata": {},
+      "tts_voice_or_source": null,
+      "transformation_params": null,
+      "dataset_version": "1.0.0",
+      "notes": null
+    },
+    {
+      "pair_id": "pair_corr_qty_001",
+      "category": "corrections_and_mind_changes",
+      "language_code": "hi-IN",
+      "audio_condition": "clean_recorded",
+      "source_type": "human_recorded",
+      "audio_path_a": "local_test_audio/correction1_pcm.wav",
+      "audio_path_b": "local_test_audio/correction2_pcm.wav",
+      "reference_transcript_a": "मुझे दो पैकेट चाहिए।",
+      "reference_transcript_b": "दो नहीं, तीन पैकेट चाहिए।",
+      "expected_critical_fields_a": {
+        "correction_detected": false,
+        "final_target": 2
+      },
+      "expected_critical_fields_b": {
+        "correction_detected": true,
+        "final_target": 3
+      },
+      "expected_intent_a": "ORDER_PRODUCT",
+      "expected_intent_b": "ORDER_PRODUCT",
+      "expected_action_a": "order_quantity_2",
+      "expected_action_b": "order_quantity_3",
+      "distinction_field": "final_target",
+      "description": "Mid-sentence correction altering ordered product quantity.",
+      "speaker_metadata": {},
+      "tts_voice_or_source": null,
+      "transformation_params": null,
+      "dataset_version": "1.0.0",
+      "notes": null
+    },
+    {
+      "pair_id": "pair_intent_order_001",
+      "category": "command_intent",
+      "language_code": "hi-IN",
+      "audio_condition": "clean_recorded",
+      "source_type": "human_recorded",
+      "audio_path_a": "local_test_audio/intent_confusion1_pcm.wav",
+      "audio_path_b": "local_test_audio/intent_confusion2_pcm.wav",
+      "reference_transcript_a": "मुझे अपना ऑर्डर रिटर्न करना है।",
+      "reference_transcript_b": "मुझे अपना ऑर्डर बदलना है।",
+      "expected_critical_fields_a": {
+        "intent": "RETURN_ORDER"
+      },
+      "expected_critical_fields_b": {
+        "intent": "MODIFY_ORDER"
+      },
+      "expected_intent_a": "RETURN_ORDER",
+      "expected_intent_b": "MODIFY_ORDER",
+      "expected_action_a": "initiate_return",
+      "expected_action_b": "modify_order",
+      "distinction_field": "intent",
+      "description": "Phonetically adjacent command intent contrast (Return vs Modify).",
+      "speaker_metadata": {},
+      "tts_voice_or_source": null,
+      "transformation_params": null,
+      "dataset_version": "1.0.0",
+      "notes": null
+    },
+    {
+      "pair_id": "pair_ent_deliv_001",
+      "category": "named_entities",
+      "language_code": "hi-IN",
+      "audio_condition": "clean_recorded",
+      "source_type": "human_recorded",
+      "audio_path_a": "local_test_audio/named_entities1_pcm.wav",
+      "audio_path_b": "local_test_audio/named_entities2_pcm.wav",
+      "reference_transcript_a": "डिलीवरी राहुल शर्मा के नाम पर है।",
+      "reference_transcript_b": "डिलीवरी रोहित शर्मा के नाम पर है।",
+      "expected_critical_fields_a": {
+        "person_name": "Rahul Sharma"
+      },
+      "expected_critical_fields_b": {
+        "person_name": "Rohit Sharma"
+      },
+      "expected_intent_a": "VERIFY_RECIPIENT",
+      "expected_intent_b": "VERIFY_RECIPIENT",
+      "expected_action_a": "verify_rahul_sharma",
+      "expected_action_b": "verify_rohit_sharma",
+      "distinction_field": "person_name",
+      "description": "Indian personal name disambiguation (Rahul vs Rohit).",
+      "speaker_metadata": {},
+      "tts_voice_or_source": null,
+      "transformation_params": null,
+      "dataset_version": "1.0.0",
+      "notes": null
+    },
+    {
+      "pair_id": "pair_time_deliv_001",
+      "category": "time_extraction",
+      "language_code": "hi-IN",
+      "audio_condition": "clean_recorded",
+      "source_type": "human_recorded",
+      "audio_path_a": "local_test_audio/time_extraction1_pcm.wav",
+      "audio_path_b": "local_test_audio/time_extraction2_pcm.wav",
+      "reference_transcript_a": "डिलीवरी सुबह नौ बजे चाहिए।",
+      "reference_transcript_b": "डिलीवरी सुबह दस बजे चाहिए।",
+      "expected_critical_fields_a": {
+        "delivery_time": "09:00"
+      },
+      "expected_critical_fields_b": {
+        "delivery_time": "10:00"
+      },
+      "expected_intent_a": "SCHEDULE_DELIVERY",
+      "expected_intent_b": "SCHEDULE_DELIVERY",
+      "expected_action_a": "schedule_0900",
+      "expected_action_b": "schedule_1000",
+      "distinction_field": "delivery_time",
+      "description": "Time slot disambiguation in Hindi (9 AM vs 10 AM).",
+      "speaker_metadata": {},
+      "tts_voice_or_source": null,
+      "transformation_params": null,
+      "dataset_version": "1.0.0",
+      "notes": null
+    }
+  ]
+}
