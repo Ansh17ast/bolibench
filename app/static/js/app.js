@@ -4,17 +4,17 @@
  * Multi-view Developer Tool for the Great Indian AI Internship Challenge.
  *
  * Implements:
- * 1. 6-Tab Navigation (Overview Dashboard, Paired Crash Lab, Catalogue, History, Methodology, Single-Clip Lab)
- * 2. Strict metric separation between mock demonstrations and live Gnani evaluations
- * 3. Audio upload validation, in-browser playback previews for Utterance A & B
- * 4. Transparent latency telemetry separating client round-trip from provider-reported processing
- * 5. Full audit history with status filtering (all, completed, failed, incomplete)
- * 6. Benchmark catalogue browsing with text-only simulation labeling
+ * 1. 3-Primary Navigation + Secondary Reference Tools
+ * 2. Product-First Hero with Paired-Contrast Concept Example & CTAs
+ * 3. 4-Step Paired-Contrast Crash Lab Workflow with In-Browser WAV Previews
+ * 4. Transparent Latency Telemetry & Strict Mode Metric Separation
+ * 5. Dynamic Live-vs-Derived Audit Modal per selected history row
+ * 6. Accessible Modal Focus Management, Keyboard Navigation, and Reduced-Motion Support
  */
 
 document.addEventListener("DOMContentLoaded", () => {
   // ===========================================================================
-  // 1. Tab Navigation
+  // 1. Navigation & View Routing
   // ===========================================================================
   const tabs = {
     overviewView: document.getElementById("tabBtnOverview"),
@@ -57,13 +57,14 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
 
-    // Tab-specific data loading
+    // Tab-specific asynchronous refresh
     if (targetKey === "overviewView") {
       loadBenchmarkMetrics();
     } else if (targetKey === "evaluateView") {
       loadBenchmarkMetrics();
       loadEvaluationHistory();
       updateSelectedTestCaseSpecs();
+      checkHumanPairHandoff();
     } else if (targetKey === "catalogueView") {
       loadBenchmarkCatalogue();
     } else if (targetKey === "historyView") {
@@ -77,6 +78,33 @@ document.addEventListener("DOMContentLoaded", () => {
       btn.addEventListener("click", () => switchTab(key));
     }
   });
+
+  // Hero CTAs
+  const btnHeroRunDemo = document.getElementById("btnHeroRunDemo");
+  if (btnHeroRunDemo) {
+    btnHeroRunDemo.addEventListener("click", () => {
+      if (evalTestCaseSelect) {
+        evalTestCaseSelect.value = "pair_qty_001";
+        updateSelectedTestCaseSpecs();
+      }
+      switchTab("evaluateView");
+      const evalSection = document.getElementById("evaluateView");
+      if (evalSection) {
+        evalSection.scrollIntoView({ behavior: "smooth" });
+      }
+    });
+  }
+
+  const btnHeroExploreResults = document.getElementById("btnHeroExploreResults");
+  if (btnHeroExploreResults) {
+    btnHeroExploreResults.addEventListener("click", () => {
+      switchTab("historyView");
+      const histSection = document.getElementById("historyView");
+      if (histSection) {
+        histSection.scrollIntoView({ behavior: "smooth" });
+      }
+    });
+  }
 
   // ===========================================================================
   // 2. Overview Dashboard & Metric Separation
@@ -141,6 +169,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const labLiveWer = document.getElementById("labLiveWer");
   const labLiveEmptyState = document.getElementById("labLiveEmptyState");
   const labLiveStatsGrid = document.getElementById("labLiveStatsGrid");
+
+  let latestLiveRunId = null;
 
   async function loadBenchmarkMetrics() {
     try {
@@ -311,7 +341,7 @@ document.addEventListener("DOMContentLoaded", () => {
       tbody.innerHTML = `
         <tr>
           <td colspan="7" class="table-empty-cell">
-            ${isLive ? "No live Gnani evaluations recorded yet." : "No mock demonstrations recorded yet."}
+            ${isLive ? "No completed live evaluations recorded yet." : "No mock demonstrations recorded yet."}
           </td>
         </tr>
       `;
@@ -325,13 +355,13 @@ document.addEventListener("DOMContentLoaded", () => {
       const row = catData[cat];
       const distStr = row.distinction_rate != null
         ? `${row.distinction_rate.toFixed(1)}%`
-        : '<span class="val-unavailable" style="color: var(--text-subtle); font-style: italic;">Unavailable</span>';
+        : '<span class="val-unavailable">Unavailable</span>';
       const taskStr = row.task_success_rate != null
         ? `${row.task_success_rate.toFixed(1)}%`
-        : '<span class="val-unavailable" style="color: var(--text-subtle); font-style: italic;">Unavailable</span>';
+        : '<span class="val-unavailable">Unavailable</span>';
       const werStr = row.average_wer != null
         ? `${(row.average_wer * 100).toFixed(1)}%`
-        : '<span class="val-unavailable" style="color: var(--text-subtle); font-style: italic;">Unavailable</span>';
+        : '<span class="val-unavailable">Unavailable</span>';
       const failedCount = (row.failed || 0) + (row.incomplete || 0);
 
       return `
@@ -390,16 +420,34 @@ document.addEventListener("DOMContentLoaded", () => {
   const fileNameB = document.getElementById("fileNameB");
   const fileSizeA = document.getElementById("fileSizeA");
   const fileSizeB = document.getElementById("fileSizeB");
+  const conversionFeedbackA = document.getElementById("conversionFeedbackA");
+  const conversionFeedbackB = document.getElementById("conversionFeedbackB");
+  const origFileNameA = document.getElementById("origFileNameA");
+  const origFileNameB = document.getElementById("origFileNameB");
+  const audioSpecsA = document.getElementById("audioSpecsA");
+  const audioSpecsB = document.getElementById("audioSpecsB");
 
   const confirmLiveCreditUsage = document.getElementById("confirmLiveCreditUsage");
   const btnExecuteLiveEval = document.getElementById("btnExecuteLiveEval");
   const btnLiveEvalText = document.getElementById("btnLiveEvalText");
   const btnLiveSpinner = document.getElementById("btnLiveSpinner");
+  const liveEvalBtnHint = document.getElementById("liveEvalBtnHint");
+  const liveEvalInlineError = document.getElementById("liveEvalInlineError");
+  const curatedBenchmarkDrawer = document.getElementById("curatedBenchmarkDrawer");
+
+  const liveCreditAuthModal = document.getElementById("liveCreditAuthModal");
+  const modalCloseBtn = document.getElementById("modalCloseBtn") || document.getElementById("btnCloseLiveModal");
+  const modalCancelBtn = document.getElementById("btnCancelLiveModal") || document.getElementById("modalCancelBtn");
+  const modalConfirmBtn = document.getElementById("btnConfirmLiveModal") || document.getElementById("modalConfirmBtn");
+  const modalClipNameA = document.getElementById("modalAuthFileA") || document.getElementById("modalClipNameA");
+  const modalClipNameB = document.getElementById("modalAuthFileB") || document.getElementById("modalClipNameB");
+  const modalTargetScenario = document.getElementById("modalAuthEvalMode") || document.getElementById("modalTargetScenario");
 
   const customTranscriptDrawer = document.getElementById("customTranscriptDrawer");
   const customTranscriptA = document.getElementById("customTranscriptA");
   const customTranscriptB = document.getElementById("customTranscriptB");
   const btnScoreCustomTranscripts = document.getElementById("btnScoreCustomTranscripts");
+  const btnScoreAutoTranscripts = document.getElementById("btnScoreAutoTranscripts");
 
   const evalStatusBadge = document.getElementById("evalStatusBadge");
   const evalResultsPlaceholder = document.getElementById("evalResultsPlaceholder");
@@ -427,6 +475,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
   let currentLiveAudioUrlA = null;
   let currentLiveAudioUrlB = null;
+  let currentConvertedFileA = null;
+  let currentConvertedFileB = null;
+  let isConvertingA = false;
+  let isConvertingB = false;
+  let conversionSeqA = 0;
+  let conversionSeqB = 0;
 
   function formatSize(bytes) {
     if (!bytes || bytes <= 0) return "0 KB";
@@ -437,61 +491,339 @@ document.addEventListener("DOMContentLoaded", () => {
     return `${kb} KB`;
   }
 
-  // Audio Playback Previews for Utterance A & B
-  if (liveAudioInputA) {
-    liveAudioInputA.addEventListener("change", (e) => {
-      const file = e.target.files && e.target.files[0];
+  function showConversionStatus(which, status, message) {
+    const feedbackEl = which === "A" ? conversionFeedbackA : conversionFeedbackB;
+    if (!feedbackEl) return;
+
+    feedbackEl.className = "conversion-feedback";
+    if (status === "clear") {
+      feedbackEl.style.display = "none";
+      feedbackEl.textContent = "";
+      return;
+    }
+
+    if (status === "converting") {
+      feedbackEl.classList.add("status-converting");
+      feedbackEl.innerHTML = `<span class="conv-spinner-mini"></span> Converting audio locally to 16 kHz WAV...`;
+      feedbackEl.style.display = "flex";
+    } else if (status === "success") {
+      feedbackEl.classList.add("status-success");
+      feedbackEl.textContent = message || "Converted successfully — WAV, 16 kHz, mono, PCM 16-bit.";
+      feedbackEl.style.display = "flex";
+    } else if (status === "error") {
+      feedbackEl.classList.add("status-error");
+      feedbackEl.textContent = message || "Audio conversion failed.";
+      feedbackEl.style.display = "flex";
+    }
+  }
+
+  async function handleAudioSelection(which, file) {
+    const isA = which === "A";
+    const previewContainer = isA ? previewContainerA : previewContainerB;
+    const previewAudio = isA ? liveAudioPreviewA : liveAudioPreviewB;
+    const origFileNameEl = isA ? origFileNameA : origFileNameB;
+    const fileNameEl = isA ? fileNameA : fileNameB;
+    const fileSizeEl = isA ? fileSizeA : fileSizeB;
+    const audioSpecsEl = isA ? audioSpecsA : audioSpecsB;
+
+    // Increment sequence number to prevent stale async conversions from overwriting newer selections
+    const seq = isA ? ++conversionSeqA : ++conversionSeqB;
+
+    // Revoke previous object URL
+    if (isA) {
       if (currentLiveAudioUrlA) {
         URL.revokeObjectURL(currentLiveAudioUrlA);
         currentLiveAudioUrlA = null;
       }
-
-      if (file) {
-        fileNameA.textContent = file.name;
-        fileSizeA.textContent = formatSize(file.size);
-        currentLiveAudioUrlA = URL.createObjectURL(file);
-        liveAudioPreviewA.src = currentLiveAudioUrlA;
-        previewContainerA.style.display = "flex";
-      } else {
-        previewContainerA.style.display = "none";
-        liveAudioPreviewA.removeAttribute("src");
+      currentConvertedFileA = null;
+      isConvertingA = false;
+    } else {
+      if (currentLiveAudioUrlB) {
+        URL.revokeObjectURL(currentLiveAudioUrlB);
+        currentLiveAudioUrlB = null;
       }
+      currentConvertedFileB = null;
+      isConvertingB = false;
+    }
+
+    // If no file was selected (user cleared selection)
+    if (!file) {
+      showConversionStatus(which, "clear");
+      if (origFileNameEl) origFileNameEl.style.display = "none";
+      if (previewContainer) previewContainer.style.display = "none";
+      if (previewAudio) previewAudio.removeAttribute("src");
       checkLiveEvalFormValidity();
+      return;
+    }
+
+    // Set converting state
+    if (isA) {
+      isConvertingA = true;
+    } else {
+      isConvertingB = true;
+    }
+    checkLiveEvalFormValidity();
+
+    // Show initial UI
+    if (origFileNameEl) {
+      origFileNameEl.textContent = `Source: ${file.name}`;
+      origFileNameEl.style.display = "inline";
+    }
+    showConversionStatus(which, "converting");
+    if (previewContainer) previewContainer.style.display = "none";
+    if (previewAudio) previewAudio.removeAttribute("src");
+
+    try {
+      const converter =
+        (typeof BoliAudioConverter !== "undefined" && BoliAudioConverter) ||
+        (typeof BoliBenchAudioConverter !== "undefined" && BoliBenchAudioConverter) ||
+        (typeof window !== "undefined" && (window.BoliAudioConverter || window.BoliBenchAudioConverter));
+
+      if (!converter || typeof converter.convertAudioFile !== "function") {
+        throw new Error("Audio conversion engine is not available.");
+      }
+
+      const result = await converter.convertAudioFile(file);
+
+      // Check if sequence is still current (prevent stale async resolution)
+      const currentSeq = isA ? conversionSeqA : conversionSeqB;
+      if (seq !== currentSeq) {
+        return;
+      }
+
+      const convertedFile = result.convertedFile || result.file;
+      if (!convertedFile) {
+        throw new Error("Audio conversion engine did not produce a converted WAV file.");
+      }
+
+      const duration =
+        typeof result.duration === "number"
+          ? result.duration
+          : (result.metadata && typeof result.metadata.duration === "number" ? result.metadata.duration : 0);
+      const fileSize =
+        typeof result.fileSize === "number"
+          ? result.fileSize
+          : (result.metadata && typeof result.metadata.fileSize === "number" ? result.metadata.fileSize : convertedFile.size);
+
+      if (isA) {
+        currentConvertedFileA = convertedFile;
+        isConvertingA = false;
+      } else {
+        currentConvertedFileB = convertedFile;
+        isConvertingB = false;
+      }
+
+      // Update UI with converted specs
+      if (fileNameEl) fileNameEl.textContent = convertedFile.name;
+      if (fileSizeEl) fileSizeEl.textContent = formatSize(fileSize);
+      if (audioSpecsEl) {
+        audioSpecsEl.textContent = `WAV • 16 kHz • Mono • 16-bit • ${duration.toFixed(2)}s`;
+      }
+
+      // Set playback preview with converted WAV
+      const newUrl = URL.createObjectURL(convertedFile);
+      if (isA) {
+        currentLiveAudioUrlA = newUrl;
+      } else {
+        currentLiveAudioUrlB = newUrl;
+      }
+      if (previewAudio) {
+        previewAudio.src = newUrl;
+      }
+      if (previewContainer) {
+        previewContainer.style.display = "flex";
+      }
+
+      showConversionStatus(which, "success", `Converted successfully — WAV, 16 kHz, mono, PCM 16-bit.`);
+      checkLiveEvalFormValidity();
+    } catch (err) {
+      const currentSeq = isA ? conversionSeqA : conversionSeqB;
+      if (seq !== currentSeq) return;
+
+      if (isA) {
+        currentConvertedFileA = null;
+        isConvertingA = false;
+      } else {
+        currentConvertedFileB = null;
+        isConvertingB = false;
+      }
+
+      let errorMsg = err.message || "Conversion failed.";
+      if (errorMsg === "Audio conversion engine is not available.") {
+        errorMsg = "Audio conversion engine is not available. Please ensure audio_converter.js is loaded.";
+      } else if (errorMsg.includes("duration") || errorMsg.includes("60 seconds")) {
+        errorMsg = "Audio exceeds the permitted duration (maximum 60 seconds).";
+      } else if (errorMsg.includes("decode") || errorMsg.includes("codec")) {
+        errorMsg = "Conversion failed — this browser could not decode the selected audio format. Try exporting the recording to a supported format.";
+      } else if (errorMsg.includes("size limit")) {
+        errorMsg = "Selected file exceeds the maximum input size limit.";
+      }
+
+      showConversionStatus(which, "error", errorMsg);
+      if (previewContainer) previewContainer.style.display = "none";
+      if (previewAudio) previewAudio.removeAttribute("src");
+      checkLiveEvalFormValidity();
+    }
+  }
+
+  // Audio Playback Previews and Automatic Conversion for Utterance A & B
+  if (liveAudioInputA) {
+    liveAudioInputA.addEventListener("change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      handleAudioSelection("A", file);
     });
   }
 
   if (liveAudioInputB) {
     liveAudioInputB.addEventListener("change", (e) => {
       const file = e.target.files && e.target.files[0];
-      if (currentLiveAudioUrlB) {
-        URL.revokeObjectURL(currentLiveAudioUrlB);
-        currentLiveAudioUrlB = null;
+      handleAudioSelection("B", file);
+    });
+  }
+
+  function showLiveInlineError(msg) {
+    if (!liveEvalInlineError) return;
+    if (!msg) {
+      liveEvalInlineError.style.display = "none";
+      liveEvalInlineError.textContent = "";
+      return;
+    }
+    liveEvalInlineError.style.display = "flex";
+    liveEvalInlineError.textContent = msg;
+  }
+
+  function requestCreditAuthorization(scenarioName, clipNameA, clipNameB) {
+    return new Promise((resolve) => {
+      if (!liveCreditAuthModal || typeof liveCreditAuthModal.showModal !== "function") {
+        const userConfirmed = window.confirm(
+          "LIVE EVALUATION CREDIT AUTHORIZATION\n\n" +
+          `Target Scenario: ${scenarioName}\n` +
+          `Recording A: ${clipNameA}\n` +
+          `Recording B: ${clipNameB}\n\n` +
+          "Evaluating this pair makes 2 real requests to Gnani Prisma STT v3 and consumes account credits.\n\n" +
+          "Duration policy: Each clip must be a valid WAV file strictly <= 60 seconds.\n\n" +
+          "Do you authorize this paired live execution?"
+        );
+        resolve(userConfirmed);
+        return;
       }
 
-      if (file) {
-        fileNameB.textContent = file.name;
-        fileSizeB.textContent = formatSize(file.size);
-        currentLiveAudioUrlB = URL.createObjectURL(file);
-        liveAudioPreviewB.src = currentLiveAudioUrlB;
-        previewContainerB.style.display = "flex";
-      } else {
-        previewContainerB.style.display = "none";
-        liveAudioPreviewB.removeAttribute("src");
-      }
-      checkLiveEvalFormValidity();
+      const clipAEl = document.getElementById("modalAuthFileA") || document.getElementById("modalClipNameA");
+      const clipBEl = document.getElementById("modalAuthFileB") || document.getElementById("modalClipNameB");
+      const scenarioEl = document.getElementById("modalAuthEvalMode") || document.getElementById("modalTargetScenario");
+
+      if (clipAEl) clipAEl.textContent = clipNameA || "Recording A";
+      if (clipBEl) clipBEl.textContent = clipNameB || "Recording B";
+      if (scenarioEl) scenarioEl.textContent = scenarioName || "Automatic Semantic Contrast (Uncurated Pair)";
+
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (liveCreditAuthModal.open) {
+          liveCreditAuthModal.close();
+        }
+        resolve(result);
+      };
+
+      const handleConfirm = (e) => {
+        if (e && typeof e.preventDefault === "function") e.preventDefault();
+        finish(true);
+      };
+
+      const handleCancel = (e) => {
+        if (e && typeof e.preventDefault === "function") e.preventDefault();
+        finish(false);
+      };
+
+      const handleDialogClose = () => {
+        const isConfirmed = liveCreditAuthModal.returnValue === "confirm";
+        finish(isConfirmed);
+      };
+
+      const confirmBtn = document.getElementById("btnConfirmLiveModal") || document.getElementById("modalConfirmBtn");
+      const cancelBtn = document.getElementById("btnCancelLiveModal") || document.getElementById("modalCancelBtn");
+      const closeBtn = document.getElementById("modalCloseBtn") || document.getElementById("btnCloseLiveModal");
+
+      const cleanup = () => {
+        if (confirmBtn) confirmBtn.removeEventListener("click", handleConfirm);
+        if (cancelBtn) cancelBtn.removeEventListener("click", handleCancel);
+        if (closeBtn) closeBtn.removeEventListener("click", handleCancel);
+        liveCreditAuthModal.removeEventListener("close", handleDialogClose);
+        liveCreditAuthModal.removeEventListener("cancel", handleCancel);
+      };
+
+      if (confirmBtn) confirmBtn.addEventListener("click", handleConfirm, { once: true });
+      if (cancelBtn) cancelBtn.addEventListener("click", handleCancel, { once: true });
+      if (closeBtn) closeBtn.addEventListener("click", handleCancel, { once: true });
+      liveCreditAuthModal.addEventListener("close", handleDialogClose, { once: true });
+      liveCreditAuthModal.addEventListener("cancel", handleCancel, { once: true });
+
+      liveCreditAuthModal.returnValue = "";
+      liveCreditAuthModal.showModal();
     });
   }
 
   function checkLiveEvalFormValidity() {
     if (!btnExecuteLiveEval) return;
-    const hasA = liveAudioInputA && liveAudioInputA.files && liveAudioInputA.files.length > 0;
-    const hasB = liveAudioInputB && liveAudioInputB.files && liveAudioInputB.files.length > 0;
-    const isConfirmed = confirmLiveCreditUsage && confirmLiveCreditUsage.checked;
-    btnExecuteLiveEval.disabled = !(hasA && hasB && isConfirmed);
+    const hasA = Boolean(currentConvertedFileA);
+    const hasB = Boolean(currentConvertedFileB);
+    const converting = isConvertingA || isConvertingB;
+    const isConfirmed = Boolean(confirmLiveCreditUsage && confirmLiveCreditUsage.checked);
+
+    // Dynamic hint text explaining the missing requirements right beside the control
+    if (liveEvalBtnHint) {
+      if (converting) {
+        liveEvalBtnHint.textContent = "Converting audio locally to 16 kHz WAV...";
+        liveEvalBtnHint.style.color = "#f59e0b";
+      } else if (!hasA && !hasB) {
+        liveEvalBtnHint.textContent = "Upload both Recording A & B above to enable analysis.";
+        liveEvalBtnHint.style.color = "#94a3b8";
+      } else if (!hasA) {
+        liveEvalBtnHint.textContent = "Upload Recording A above to enable analysis.";
+        liveEvalBtnHint.style.color = "#94a3b8";
+      } else if (!hasB) {
+        liveEvalBtnHint.textContent = "Upload Recording B above to enable analysis.";
+        liveEvalBtnHint.style.color = "#94a3b8";
+      } else if (!isConfirmed) {
+        liveEvalBtnHint.textContent = "Check credit authorization box to enable analysis.";
+        liveEvalBtnHint.style.color = "#f59e0b";
+      } else {
+        liveEvalBtnHint.textContent = "Ready to analyze paired recordings.";
+        liveEvalBtnHint.style.color = "#34d399";
+      }
+    }
+
+    btnExecuteLiveEval.disabled = !hasA || !hasB || converting || !isConfirmed;
+
+    const isSpinning = Boolean(btnLiveSpinner && btnLiveSpinner.style && btnLiveSpinner.style.display && btnLiveSpinner.style.display.includes("inline"));
+    if (btnLiveEvalText && !isSpinning) {
+      if (isConvertingA && isConvertingB) {
+        btnLiveEvalText.textContent = "Converting Both Recordings...";
+      } else if (isConvertingA) {
+        btnLiveEvalText.textContent = "Utterance A is Converting...";
+      } else if (isConvertingB) {
+        btnLiveEvalText.textContent = "Utterance B is Converting...";
+      } else {
+        btnLiveEvalText.textContent = "Analyze Paired Recordings";
+      }
+    }
+  }
+
+  function resetLiveAudioSelection() {
+    if (liveAudioInputA) liveAudioInputA.value = "";
+    if (liveAudioInputB) liveAudioInputB.value = "";
+    handleAudioSelection("A", null);
+    handleAudioSelection("B", null);
+    showLiveInlineError(null);
   }
 
   if (confirmLiveCreditUsage) {
-    confirmLiveCreditUsage.addEventListener("change", checkLiveEvalFormValidity);
+    confirmLiveCreditUsage.addEventListener("change", () => {
+      showLiveInlineError(null);
+      checkLiveEvalFormValidity();
+    });
   }
 
   async function updateSelectedTestCaseSpecs() {
@@ -525,6 +857,19 @@ document.addEventListener("DOMContentLoaded", () => {
       if (liveRefPromptA) liveRefPromptA.textContent = tc.utterance_a.reference_transcript;
       if (liveRefPromptB) liveRefPromptB.textContent = tc.utterance_b.reference_transcript;
 
+      // Update Active Scenario indicator in Live Audio Drawer
+      const liveDrawerCategoryBadge = document.getElementById("liveDrawerCategoryBadge");
+      const liveDrawerTestTitle = document.getElementById("liveDrawerTestTitle");
+      const liveDrawerDescription = document.getElementById("liveDrawerDescription");
+      const liveDrawerPromptA = document.getElementById("liveDrawerPromptA");
+      const liveDrawerPromptB = document.getElementById("liveDrawerPromptB");
+
+      if (liveDrawerCategoryBadge) liveDrawerCategoryBadge.textContent = tc.category;
+      if (liveDrawerTestTitle) liveDrawerTestTitle.textContent = tc.id;
+      if (liveDrawerDescription) liveDrawerDescription.textContent = tc.description;
+      if (liveDrawerPromptA) liveDrawerPromptA.textContent = `"${tc.utterance_a.reference_transcript}"`;
+      if (liveDrawerPromptB) liveDrawerPromptB.textContent = `"${tc.utterance_b.reference_transcript}"`;
+
       // Populate custom inputs as starting template
       if (customTranscriptA) customTranscriptA.value = tc.utterance_a.reference_transcript;
       if (customTranscriptB) customTranscriptB.value = tc.utterance_b.reference_transcript;
@@ -534,7 +879,10 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   if (evalTestCaseSelect) {
-    evalTestCaseSelect.addEventListener("change", updateSelectedTestCaseSpecs);
+    evalTestCaseSelect.addEventListener("change", () => {
+      resetLiveAudioSelection();
+      updateSelectedTestCaseSpecs();
+    });
   }
 
   if (btnToggleCustomInputs) {
@@ -544,7 +892,7 @@ document.addEventListener("DOMContentLoaded", () => {
       btnToggleCustomInputs.textContent = isHidden ? "Hide Custom Inputs" : "Custom Transcript Test";
       if (isHidden && liveEvalDrawer) {
         liveEvalDrawer.style.display = "none";
-        btnToggleLiveEval.textContent = "🎙️ Live Audio Pair (WAV • Consumes Credits)";
+        btnToggleLiveEval.textContent = "🎙️ Configure Live Audio Pair (WAV)";
       }
     });
   }
@@ -553,7 +901,7 @@ document.addEventListener("DOMContentLoaded", () => {
     btnToggleLiveEval.addEventListener("click", () => {
       const isHidden = liveEvalDrawer.style.display === "none";
       liveEvalDrawer.style.display = isHidden ? "flex" : "none";
-      btnToggleLiveEval.textContent = isHidden ? "Hide Live Audio Pair" : "🎙️ Live Audio Pair (WAV • Consumes Credits)";
+      btnToggleLiveEval.textContent = isHidden ? "Hide Live Audio Pair" : "🎙️ Configure Live Audio Pair (WAV)";
       if (isHidden && customTranscriptDrawer) {
         customTranscriptDrawer.style.display = "none";
         btnToggleCustomInputs.textContent = "Custom Transcript Test";
@@ -565,6 +913,9 @@ document.addEventListener("DOMContentLoaded", () => {
   async function executeMockScenario(scenario) {
     const testId = evalTestCaseSelect.value;
     if (!testId) return;
+
+    if (btnRunMockIdeal) btnRunMockIdeal.disabled = true;
+    if (btnRunMockCrashed) btnRunMockCrashed.disabled = true;
 
     evalStatusBadge.className = "status-badge status-running";
     evalStatusBadge.textContent = "Executing Mock Evaluation...";
@@ -582,11 +933,18 @@ document.addEventListener("DOMContentLoaded", () => {
       displayEvaluationScorecard(result);
       loadBenchmarkMetrics();
       loadEvaluationHistory();
+
+      const scorecard = document.getElementById("evalScorecardSection");
+      if (scorecard) {
+        scorecard.scrollIntoView({ behavior: "smooth" });
+      }
     } catch (err) {
       console.error("Mock evaluation error:", err);
       evalStatusBadge.className = "status-badge status-error";
       evalStatusBadge.textContent = "Execution Error";
-      alert(`Mock evaluation error: ${err.message}`);
+    } finally {
+      if (btnRunMockIdeal) btnRunMockIdeal.disabled = false;
+      if (btnRunMockCrashed) btnRunMockCrashed.disabled = false;
     }
   }
 
@@ -610,6 +968,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
+      btnScoreCustomTranscripts.disabled = true;
       evalStatusBadge.className = "status-badge status-running";
       evalStatusBadge.textContent = "Scoring Transcripts...";
 
@@ -634,38 +993,98 @@ document.addEventListener("DOMContentLoaded", () => {
         displayEvaluationScorecard(result);
         loadBenchmarkMetrics();
         loadEvaluationHistory();
+
+        const scorecard = document.getElementById("evalScorecardSection");
+        if (scorecard) {
+          scorecard.scrollIntoView({ behavior: "smooth" });
+        }
       } catch (err) {
         console.error("Custom transcript evaluation error:", err);
         evalStatusBadge.className = "status-badge status-error";
         evalStatusBadge.textContent = "Scoring Error";
+      } finally {
+        btnScoreCustomTranscripts.disabled = false;
       }
     });
   }
 
-  // Live Paired Evaluation Execution with Strict Safeguards
+  // Automatic Transcript Evaluation Handler
+  if (btnScoreAutoTranscripts) {
+    btnScoreAutoTranscripts.addEventListener("click", async () => {
+      const txtA = customTranscriptA.value.trim();
+      const txtB = customTranscriptB.value.trim();
+
+      if (!txtA || !txtB) {
+        alert("Please provide transcripts for both Utterance A and Utterance B.");
+        return;
+      }
+
+      btnScoreAutoTranscripts.disabled = true;
+      evalStatusBadge.className = "status-badge status-running";
+      evalStatusBadge.textContent = "Auto-Detecting Contrast...";
+
+      try {
+        const response = await fetch("/api/eval/evaluate-auto-transcripts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            transcript_a: txtA,
+            transcript_b: txtB,
+            audio_condition: "text_only_simulation",
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error("Automatic evaluation request failed");
+        }
+
+        const result = await response.json();
+        displayEvaluationScorecard(result);
+        loadBenchmarkMetrics();
+        loadEvaluationHistory();
+
+        const scorecard = document.getElementById("evalScorecardSection");
+        if (scorecard) {
+          scorecard.scrollIntoView({ behavior: "smooth" });
+        }
+      } catch (err) {
+        console.error("Automatic transcript evaluation error:", err);
+        evalStatusBadge.className = "status-badge status-error";
+        evalStatusBadge.textContent = "Scoring Error";
+      } finally {
+        btnScoreAutoTranscripts.disabled = false;
+      }
+    });
+  }
+
+  // Live Paired Evaluation Execution with Strict Safeguards & Automatic Scenario Detection
   if (btnExecuteLiveEval) {
     btnExecuteLiveEval.addEventListener("click", async () => {
-      const testId = evalTestCaseSelect.value;
-      if (!testId) return;
+      showLiveInlineError(null);
 
-      if (!confirmLiveCreditUsage.checked) {
-        alert("Please confirm the credit usage authorization before executing live evaluation.");
+      if (!currentConvertedFileA || !currentConvertedFileB) {
+        showLiveInlineError("Missing audio recordings: Please select and convert both Recording A and Recording B before analyzing.");
         return;
       }
 
-      if (!liveAudioInputA.files || !liveAudioInputA.files[0] || !liveAudioInputB.files || !liveAudioInputB.files[0]) {
-        alert("Please select WAV audio recordings for both Utterance A and Utterance B.");
+      if (!confirmLiveCreditUsage || !confirmLiveCreditUsage.checked) {
+        showLiveInlineError("Credit Authorization Required: Please check the credit authorization box above before executing.");
         return;
       }
 
-      // Explicit confirmation protecting programme credits
-      const userConfirmed = window.confirm(
-        "Live Evaluation Credit Authorization:\n\n" +
-        "Evaluating this pair makes 2 real requests to Gnani Prisma STT v3 and consumes account credits.\n\n" +
-        "Duration policy: Each clip must be a valid WAV file strictly <= 60 seconds.\n\n" +
-        "Do you authorize 2 live requests for Utterance A and Utterance B?"
-      );
-      if (!userConfirmed) return;
+      // Check whether a curated test is selected or if we use automatic scenario detection
+      const isCurated = Boolean(evalTestCaseSelect && evalTestCaseSelect.value && evalTestCaseSelect.value !== "auto");
+      const testId = isCurated ? evalTestCaseSelect.value : "auto";
+
+      const selectedOption = isCurated && evalTestCaseSelect.options ? evalTestCaseSelect.options[evalTestCaseSelect.selectedIndex] : null;
+      const selectedCategory = selectedOption ? selectedOption.getAttribute("data-category") : (isCurated && testCategoryBadge ? testCategoryBadge.textContent.trim() : null);
+
+      const scenarioLabel = isCurated
+        ? `Curated Pair Benchmark: [${selectedCategory || 'curated'}] ${testId}`
+        : "Automatic Scenario Contrast Detection (Uncurated Pair)";
+
+      const confirmed = await requestCreditAuthorization(scenarioLabel, currentConvertedFileA.name, currentConvertedFileB.name);
+      if (!confirmed) return;
 
       btnExecuteLiveEval.disabled = true;
       btnLiveSpinner.style.display = "inline-block";
@@ -681,7 +1100,10 @@ document.addEventListener("DOMContentLoaded", () => {
             "Content-Type": "application/json",
             "X-Requested-With": "XMLHttpRequest",
           },
-          body: JSON.stringify({ test_id: testId }),
+          body: JSON.stringify({
+            test_id: testId,
+            expected_category: selectedCategory,
+          }),
         });
 
         if (!authResp.ok) {
@@ -697,12 +1119,15 @@ document.addEventListener("DOMContentLoaded", () => {
         const selectedCondition = liveAudioConditionSelect ? liveAudioConditionSelect.value : "clean_recorded";
 
         const formData = new FormData();
-        formData.append("audio_file_a", liveAudioInputA.files[0]);
-        formData.append("audio_file_b", liveAudioInputB.files[0]);
+        formData.append("audio_file_a", currentConvertedFileA, currentConvertedFileA.name);
+        formData.append("audio_file_b", currentConvertedFileB, currentConvertedFileB.name);
         formData.append("audio_condition", selectedCondition);
         formData.append("confirmation_token", authToken);
+        if (selectedCategory) {
+          formData.append("expected_category", selectedCategory);
+        }
 
-        btnLiveEvalText.textContent = "Sending Audio A to Gnani Prisma...";
+        btnLiveEvalText.textContent = "Transcribing Recording A & B with Provider...";
         evalStatusBadge.textContent = "Running Live STT Evaluation...";
 
         const confirmHeader = authData.required_header || REQUIRED_CONFIRM_HEADER;
@@ -723,20 +1148,26 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         const evalResult = await evalResp.json();
+        latestLiveRunId = evalResult.run_id;
         displayEvaluationScorecard(evalResult);
         loadBenchmarkMetrics();
         loadEvaluationHistory();
+
+        const scorecard = document.getElementById("evalScorecardSection");
+        if (scorecard) {
+          scorecard.scrollIntoView({ behavior: "smooth" });
+        }
       } catch (err) {
         console.error("Live paired evaluation failed:", err);
         evalStatusBadge.className = "status-badge status-error";
         evalStatusBadge.textContent = "Live Evaluation Failed";
-        alert(`Live Evaluation Error:\n\n${err.message}`);
+        showLiveInlineError(`Live Evaluation Error: ${err.message}`);
         loadBenchmarkMetrics();
         loadEvaluationHistory();
       } finally {
         btnExecuteLiveEval.disabled = false;
         btnLiveSpinner.style.display = "none";
-        btnLiveEvalText.textContent = "Execute Paired Live Evaluation";
+        btnLiveEvalText.textContent = "Analyze Paired Recordings";
         checkLiveEvalFormValidity();
       }
     });
@@ -751,10 +1182,17 @@ document.addEventListener("DOMContentLoaded", () => {
     evalResultsPlaceholder.style.display = "none";
     evalResultsContainer.style.display = "block";
 
-    // Mode Pill
     const isLive = res.execution_mode === "live";
-    evalExecModePill.textContent = isLive ? "LIVE GNANI EVALUATION" : "MOCK EVALUATION";
-    evalExecModePill.className = isLive ? "exec-mode-pill badge-live" : "exec-mode-pill badge-mock";
+    const isAuto = res.evaluation_mode === "automatic_inference" || res.is_curated_reference === false;
+
+    // Mode Pill
+    if (isAuto) {
+      evalExecModePill.textContent = isLive ? "LIVE GNANI — AUTO INFERRED" : "MOCK — AUTO INFERRED";
+      evalExecModePill.className = isLive ? "exec-mode-pill badge-live" : "exec-mode-pill badge-mock";
+    } else {
+      evalExecModePill.textContent = isLive ? "LIVE GNANI EVALUATION" : "MOCK EVALUATION";
+      evalExecModePill.className = isLive ? "exec-mode-pill badge-live" : "exec-mode-pill badge-mock";
+    }
 
     // Status Banner
     if (res.overall_status === "failed") {
@@ -769,21 +1207,29 @@ document.addEventListener("DOMContentLoaded", () => {
       evalOutcomeTitle.textContent = "PARTIAL LIVE FAILURE (INCOMPLETE RUN)";
       evalStatusBadge.className = "status-badge status-warning";
       evalStatusBadge.textContent = "Incomplete Run";
+    } else if (res.category === "unknown" || res.category === "ambiguous") {
+      evalOutcomeBanner.className = "outcome-banner outcome-crashed";
+      evalOutcomeIcon.textContent = "❓";
+      evalOutcomeTitle.textContent = "AMBIGUOUS / UNKNOWN SCENARIO CONTRAST";
+      evalStatusBadge.className = "status-badge status-warning";
+      evalStatusBadge.textContent = "Ambiguous Result";
     } else if (res.semantic_distinction_preserved && res.task_success) {
       evalOutcomeBanner.className = "outcome-banner outcome-success";
       evalOutcomeIcon.textContent = "✅";
-      evalOutcomeTitle.textContent = "CRITICAL DISTINCTION PRESERVED";
+      evalOutcomeTitle.textContent = isAuto
+        ? `AUTOMATIC SCENARIO DETECTED: [${(res.category || '').toUpperCase()}] CRITICAL DISTINCTION PRESERVED`
+        : "CRITICAL DISTINCTION PRESERVED";
       evalStatusBadge.className = "status-badge status-success";
       evalStatusBadge.textContent = "Passed (Preserved)";
     } else {
       evalOutcomeBanner.className = "outcome-banner outcome-crashed";
       evalOutcomeIcon.textContent = "🚨";
-      evalOutcomeTitle.textContent = `DISTINCTION COLLAPSED (${res.primary_failure_category.toUpperCase()})`;
+      evalOutcomeTitle.textContent = `DISTINCTION COLLAPSED (${res.primary_failure_category ? res.primary_failure_category.toUpperCase() : 'CRASH'})`;
       evalStatusBadge.className = "status-badge status-error";
       evalStatusBadge.textContent = "Action Crashed";
     }
 
-    evalOutcomeExplanation.textContent = res.failure_explanation;
+    evalOutcomeExplanation.textContent = res.failure_explanation || "";
 
     // Metrics Row
     if (res.overall_status !== "completed") {
@@ -791,6 +1237,11 @@ document.addEventListener("DOMContentLoaded", () => {
       metricTaskSuccessDisplay.innerHTML = `<span class="val-unavailable">Unavailable</span>`;
       metricMeanWerDisplay.innerHTML = `<span class="val-unavailable">Unavailable</span>`;
       metricFieldAccDisplay.innerHTML = `<span class="val-unavailable">Unavailable</span>`;
+    } else if (res.category === "unknown" || res.category === "ambiguous") {
+      metricDistinctionDisplay.innerHTML = `<span style="color: #f59e0b;">AMBIGUOUS</span>`;
+      metricTaskSuccessDisplay.innerHTML = `<span class="val-unavailable">Indeterminate</span>`;
+      metricMeanWerDisplay.innerHTML = `<span class="val-unavailable" title="Reference-free upload">N/A (Reference-Free)</span>`;
+      metricFieldAccDisplay.innerHTML = `<span class="val-unavailable">N/A</span>`;
     } else {
       metricDistinctionDisplay.innerHTML = res.semantic_distinction_preserved
         ? `<span style="color: #34d399;">PRESERVED</span>`
@@ -800,34 +1251,48 @@ document.addEventListener("DOMContentLoaded", () => {
         ? `<span style="color: #34d399;">SUCCESS</span>`
         : `<span style="color: #f87171;">FAILED</span>`;
 
-      metricMeanWerDisplay.textContent = `${(res.average_wer * 100).toFixed(1)}%`;
-      metricFieldAccDisplay.textContent = `${(res.critical_field_accuracy * 100).toFixed(0)}%`;
+      if (isAuto) {
+        metricMeanWerDisplay.innerHTML = `<span class="val-unavailable" title="Reference-free upload: Ground-truth reference unavailable">N/A (Reference-Free)</span>`;
+        metricFieldAccDisplay.textContent = res.critical_field_accuracy != null ? `${(res.critical_field_accuracy * 100).toFixed(0)}%` : "—";
+      } else {
+        metricMeanWerDisplay.textContent = res.average_wer != null ? `${(res.average_wer * 100).toFixed(1)}%` : "—";
+        metricFieldAccDisplay.textContent = res.critical_field_accuracy != null ? `${(res.critical_field_accuracy * 100).toFixed(0)}%` : "—";
+      }
     }
 
     // Comparison Table
+    const refA = isAuto ? '<em style="color: var(--text-muted);">N/A (Reference-Free Upload)</em>' : `<code>${escapeHtml(res.utterance_a?.reference_transcript || '')}</code>`;
+    const refB = isAuto ? '<em style="color: var(--text-muted);">N/A (Reference-Free Upload)</em>' : `<code>${escapeHtml(res.utterance_b?.reference_transcript || '')}</code>`;
+    const werA = isAuto
+      ? `<span class="val-unavailable">N/A (No Ground-Truth)</span>`
+      : (res.utterance_a?.status === 'completed' ? `${(res.utterance_a.wer * 100).toFixed(1)}% (Raw: S:${res.utterance_a.substitutions}/D:${res.utterance_a.deletions}/I:${res.utterance_a.insertions})${res.utterance_a.normalized_wer != null ? `<br><small style="color: #60a5fa; font-weight: 500;">Normalized WER: ${(res.utterance_a.normalized_wer * 100).toFixed(1)}%</small>` : ''}` : `<span class="val-unavailable">${res.utterance_a?.status || '—'}</span>`);
+    const werB = isAuto
+      ? `<span class="val-unavailable">N/A (No Ground-Truth)</span>`
+      : (res.utterance_b?.status === 'completed' ? `${(res.utterance_b.wer * 100).toFixed(1)}% (Raw: S:${res.utterance_b.substitutions}/D:${res.utterance_b.deletions}/I:${res.utterance_b.insertions})${res.utterance_b.normalized_wer != null ? `<br><small style="color: #60a5fa; font-weight: 500;">Normalized WER: ${(res.utterance_b.normalized_wer * 100).toFixed(1)}%</small>` : ''}` : `<span class="val-unavailable">${res.utterance_b?.status || '—'}</span>`);
+
     evalComparisonTableBody.innerHTML = `
       <tr>
-        <td><span class="spec-badge badge-a">Utterance A</span></td>
-        <td><code>${escapeHtml(res.utterance_a.reference_transcript)}</code></td>
-        <td><strong>${escapeHtml(res.utterance_a.actual_transcript || '—')}</strong></td>
-        <td>${res.utterance_a.status === 'completed' ? `${(res.utterance_a.wer * 100).toFixed(1)}% (Raw: S:${res.utterance_a.substitutions}/D:${res.utterance_a.deletions}/I:${res.utterance_a.insertions})${res.utterance_a.normalized_wer != null ? `<br><small style="color: #60a5fa; font-weight: 500;">Normalized WER: ${(res.utterance_a.normalized_wer * 100).toFixed(1)}%</small>` : ''}` : `<span class="val-unavailable">${res.utterance_a.status}</span>`}</td>
-        <td><code>${escapeHtml(JSON.stringify(res.utterance_a.extracted_fields))}</code></td>
-        <td>${res.utterance_a.status === 'completed' ? (res.utterance_a.task_success ? '🟢 Correct' : '🔴 Wrong Action') : `<span class="val-unavailable">${res.utterance_a.status}</span>`}</td>
+        <td><span class="spec-badge badge-a">Recording A</span></td>
+        <td>${refA}</td>
+        <td><strong>${escapeHtml(res.utterance_a?.actual_transcript || '—')}</strong></td>
+        <td>${werA}</td>
+        <td><code>${escapeHtml(JSON.stringify(res.utterance_a?.extracted_fields || {}))}</code></td>
+        <td>${res.utterance_a?.status === 'completed' ? (res.utterance_a.task_success ? '🟢 Correct' : '🔴 Wrong Action') : `<span class="val-unavailable">${res.utterance_a?.status || '—'}</span>`}</td>
       </tr>
       <tr>
-        <td><span class="spec-badge badge-b">Utterance B</span></td>
-        <td><code>${escapeHtml(res.utterance_b.reference_transcript)}</code></td>
-        <td><strong>${escapeHtml(res.utterance_b.actual_transcript || '—')}</strong></td>
-        <td>${res.utterance_b.status === 'completed' ? `${(res.utterance_b.wer * 100).toFixed(1)}% (Raw: S:${res.utterance_b.substitutions}/D:${res.utterance_b.deletions}/I:${res.utterance_b.insertions})${res.utterance_b.normalized_wer != null ? `<br><small style="color: #60a5fa; font-weight: 500;">Normalized WER: ${(res.utterance_b.normalized_wer * 100).toFixed(1)}%</small>` : ''}` : `<span class="val-unavailable">${res.utterance_b.status}</span>`}</td>
-        <td><code>${escapeHtml(JSON.stringify(res.utterance_b.extracted_fields))}</code></td>
-        <td>${res.utterance_b.status === 'completed' ? (res.utterance_b.task_success ? '🟢 Correct' : '🔴 Wrong Action') : `<span class="val-unavailable">${res.utterance_b.status}</span>`}</td>
+        <td><span class="spec-badge badge-b">Recording B</span></td>
+        <td>${refB}</td>
+        <td><strong>${escapeHtml(res.utterance_b?.actual_transcript || '—')}</strong></td>
+        <td>${werB}</td>
+        <td><code>${escapeHtml(JSON.stringify(res.utterance_b?.extracted_fields || {}))}</code></td>
+        <td>${res.utterance_b?.status === 'completed' ? (res.utterance_b.task_success ? '🟢 Correct' : '🔴 Wrong Action') : `<span class="val-unavailable">${res.utterance_b?.status || '—'}</span>`}</td>
       </tr>
     `;
 
     // Script & Transliteration check
     if (transliterationNote) {
-      const hasDevanagariHyp = /[\u0900-\u097F]/.test(res.utterance_a.actual_transcript || "") || /[\u0900-\u097F]/.test(res.utterance_b.actual_transcript || "");
-      const hasLatinRef = /^[A-Za-z0-9\s.,?!'"-]+$/.test(res.utterance_a.reference_transcript);
+      const hasDevanagariHyp = /[\u0900-\u097F]/.test(res.utterance_a?.actual_transcript || "") || /[\u0900-\u097F]/.test(res.utterance_b?.actual_transcript || "");
+      const hasLatinRef = !isAuto && /^[A-Za-z0-9\s.,?!'"-]+$/.test(res.utterance_a?.reference_transcript || "");
       if (hasDevanagariHyp && hasLatinRef) {
         transliterationNote.style.display = "flex";
       } else {
@@ -835,14 +1300,17 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
-    // Crash Impact Description
-    crashImpactDescription.textContent = res.failure_explanation;
+    // Crash Impact Description & Metadata Tags
+    crashImpactDescription.textContent = res.failure_explanation || "Semantic comparison evaluated across paired utterances.";
     crashFieldTags.innerHTML = `
-      <span class="code-pill">Category: ${res.category}</span>
-      <span class="code-pill">Audio Condition: ${res.audio_condition}</span>
-      <span class="code-pill">Status: ${res.overall_status.toUpperCase()}</span>
-      ${res.overall_status === 'completed' ? `<span class="code-pill">Mean Raw WER: ${(res.average_wer * 100).toFixed(1)}%</span>` : ''}
-      ${res.average_normalized_wer != null ? `<span class="code-pill" style="color: #60a5fa;">Cross-Script WER: ${(res.average_normalized_wer * 100).toFixed(1)}%</span>` : ''}
+      <span class="code-pill">Category: ${escapeHtml(res.category || 'unknown')}</span>
+      <span class="code-pill" style="color: ${isAuto ? '#a78bfa' : '#60a5fa'};">Mode: ${isAuto ? 'Automatic Semantic Inference' : 'Curated Reference Benchmark'}</span>
+      <span class="code-pill">Audio Condition: ${escapeHtml(res.audio_condition || '')}</span>
+      <span class="code-pill">Status: ${escapeHtml((res.overall_status || '').toUpperCase())}</span>
+      ${res.distinction_field ? `<span class="code-pill">Distinction Field: ${escapeHtml(res.distinction_field)}</span>` : ''}
+      ${res.detection_confidence != null ? `<span class="code-pill" style="color: #34d399;">Detection Confidence: ${typeof res.detection_confidence === 'number' ? (res.detection_confidence * 100).toFixed(0) + '%' : escapeHtml(String(res.detection_confidence).toUpperCase())}</span>` : ''}
+      ${!isAuto && res.overall_status === 'completed' && res.average_wer != null ? `<span class="code-pill">Mean Raw WER: ${(res.average_wer * 100).toFixed(1)}%</span>` : ''}
+      ${!isAuto && res.average_normalized_wer != null ? `<span class="code-pill" style="color: #60a5fa;">Cross-Script WER: ${(res.average_normalized_wer * 100).toFixed(1)}%</span>` : ''}
     `;
 
     // Latency & Telemetry Separation
@@ -918,9 +1386,9 @@ document.addEventListener("DOMContentLoaded", () => {
     catalogueGrid.innerHTML = filtered.map((tc) => `
       <div class="catalogue-card-item">
         <div class="cat-header">
-          <span class="cat-id">${tc.id}</span>
+          <span class="cat-id">${escapeHtml(tc.id)}</span>
           <div class="cat-tag-row">
-            <span class="lang-tag">${tc.language_code}</span>
+            <span class="lang-tag">${escapeHtml(tc.language_code)}</span>
             <span class="sim-badge" title="Hand-authored minimal contrast pair for semantic crash testing; not an observed speech error">TEXT-ONLY SIMULATION</span>
           </div>
         </div>
@@ -929,20 +1397,20 @@ document.addEventListener("DOMContentLoaded", () => {
           <div class="cat-utt">
             <span class="cat-utt-label">Utterance A</span>
             <span class="cat-utt-ref">"${escapeHtml(tc.utterance_a.reference_transcript)}"</span>
-            <code style="font-size: 0.72rem; color: #93c5fd;">Action: ${tc.utterance_a.expected_action}</code>
+            <code style="font-size: 0.72rem; color: #93c5fd;">Action: ${escapeHtml(tc.utterance_a.expected_action)}</code>
           </div>
           <div class="cat-utt">
             <span class="cat-utt-label">Utterance B (Contrast)</span>
             <span class="cat-utt-ref">"${escapeHtml(tc.utterance_b.reference_transcript)}"</span>
-            <code style="font-size: 0.72rem; color: #93c5fd;">Action: ${tc.utterance_b.expected_action}</code>
+            <code style="font-size: 0.72rem; color: #93c5fd;">Action: ${escapeHtml(tc.utterance_b.expected_action)}</code>
           </div>
         </div>
         <div class="cat-distinction">
-          <strong>Distinction (${tc.distinction_field}):</strong> ${escapeHtml(tc.expected_distinction)}
+          <strong>Distinction (${escapeHtml(tc.distinction_field)}):</strong> ${escapeHtml(tc.expected_distinction)}
         </div>
         <div class="cat-footer">
-          <span class="provenance-tag">${tc.provenance || 'hand_authored_text_simulation'}</span>
-          <button type="button" class="btn-cat-test" data-test-id="${tc.id}">Test in Crash Lab ⚡</button>
+          <span class="provenance-tag">${escapeHtml(tc.provenance || 'hand_authored_text_simulation')}</span>
+          <button type="button" class="btn-cat-test" data-test-id="${escapeHtml(tc.id)}">Test in Crash Lab ⚡</button>
         </div>
       </div>
     `).join("");
@@ -953,6 +1421,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const targetId = btn.getAttribute("data-test-id");
         if (evalTestCaseSelect) {
           evalTestCaseSelect.value = targetId;
+          resetLiveAudioSelection();
+          updateSelectedTestCaseSpecs();
         }
         switchTab("evaluateView");
       });
@@ -978,26 +1448,49 @@ document.addEventListener("DOMContentLoaded", () => {
   const countFilterFailed = document.getElementById("countFilterFailed");
   const countFilterIncomplete = document.getElementById("countFilterIncomplete");
 
+  let currentSourceFilter = "all";
+
   const statusFilterBtns = document.querySelectorAll(".status-filter-btn");
   statusFilterBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
       statusFilterBtns.forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       currentStatusFilter = btn.getAttribute("data-status");
-      loadFullHistory(currentStatusFilter);
+      loadFullHistory(currentStatusFilter, currentSourceFilter);
     });
   });
 
-  async function loadFullHistory(statusFilter = "all") {
+  const datasetFilterBtns = document.querySelectorAll(".dataset-filter-btn");
+  datasetFilterBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      datasetFilterBtns.forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentSourceFilter = btn.getAttribute("data-source") || "all";
+      loadFullHistory(currentStatusFilter, currentSourceFilter);
+    });
+  });
+
+  async function loadFullHistory(statusFilter = "all", sourceFilter = "all") {
     if (!historyFullTableBody && !historyTableBody) return;
     try {
-      const url = statusFilter && statusFilter !== "all"
-        ? `/api/eval/results?limit=100&status=${encodeURIComponent(statusFilter)}`
-        : `/api/eval/results?limit=100`;
+      const params = new URLSearchParams({ limit: "100" });
+      if (statusFilter && statusFilter !== "all") {
+        params.append("status", statusFilter);
+      }
+      if (sourceFilter && sourceFilter !== "all") {
+        params.append("dataset_source", sourceFilter);
+      }
+      const url = `/api/eval/results?${params.toString()}`;
 
       const response = await fetch(url);
       if (!response.ok) return;
       const runs = await response.json();
+
+      // Track most recent live run for the header shortcut
+      const liveRuns = runs.filter((r) => r.execution_mode === "live" && r.overall_status === "completed");
+      if (liveRuns.length > 0) {
+        latestLiveRunId = liveRuns[0].run_id;
+      }
 
       // Fetch overall counts for pills if viewing all
       if (statusFilter === "all") {
@@ -1036,7 +1529,7 @@ document.addEventListener("DOMContentLoaded", () => {
       tbody.innerHTML = `
         <tr>
           <td colspan="${isFullView ? 10 : 11}" class="table-empty-cell">
-            No evaluation runs found matching status filter '${currentStatusFilter}'.
+            No evaluation runs found matching status filter '${escapeHtml(currentStatusFilter)}'.
           </td>
         </tr>
       `;
@@ -1064,7 +1557,7 @@ document.addEventListener("DOMContentLoaded", () => {
         taskHtml = r.task_success
           ? `<span class="badge-pill-success">SUCCESS</span>`
           : `<span class="badge-pill-danger">FAILED</span>`;
-        werHtml = `${(r.average_wer * 100).toFixed(1)}%`;
+        werHtml = r.average_wer != null ? `${(r.average_wer * 100).toFixed(1)}%` : "—";
       }
 
       const modeBadge = r.execution_mode === "live"
@@ -1082,39 +1575,43 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const dateStr = r.timestamp ? (r.timestamp.split("T")[0] + " " + (r.timestamp.split("T")[1]?.substring(0, 8) || "")) : "—";
 
-      const inspectBtn = (r.execution_mode === "live" || r.run_id === "eval_live_758277ca81d8")
-        ? ` <button type="button" class="btn-row-inspect" data-run-id="${escapeHtml(r.run_id)}" title="Inspect side-by-side contrast & offline derived re-score">🔍 Re-score</button>`
-        : "";
+      // Dataset source badge
+      const sourceBadge = r.dataset_source === "human_recording"
+        ? `<span class="badge-pill-source-human">HUMAN</span>`
+        : `<span class="badge-pill-source-synth">SYNTHETIC</span>`;
+
+      // Dynamic inspect button for every row
+      const inspectBtn = ` <button type="button" class="btn-row-inspect" data-run-id="${escapeHtml(r.run_id)}" data-mode="${escapeHtml(r.execution_mode || 'mock')}" data-status="${escapeHtml(status)}" title="Inspect side-by-side contrast & offline derived re-score">🔍 Inspect</button>`;
 
       if (isFullView) {
         return `
           <tr>
-            <td><code style="font-size: 0.75rem;">${r.run_id}</code>${inspectBtn}</td>
-            <td><strong>${escapeHtml(r.test_case_id)}</strong></td>
+            <td><code style="font-size: 0.75rem;">${escapeHtml(r.run_id)}</code>${inspectBtn}</td>
+            <td><strong>${escapeHtml(r.test_case_id)}</strong> ${sourceBadge}</td>
             <td>${statusBadge}</td>
             <td>${modeBadge}</td>
             <td>${distinctionHtml}</td>
             <td>${taskHtml}</td>
             <td>${werHtml}</td>
-            <td><code style="font-size: 0.72rem;">${r.primary_failure_category}</code></td>
+            <td><code style="font-size: 0.72rem;">${escapeHtml(r.primary_failure_category || '')}</code></td>
             <td>${opDetails}</td>
-            <td style="font-size: 0.72rem; color: var(--text-muted);">${dateStr}</td>
+            <td style="font-size: 0.72rem; color: var(--text-muted);">${escapeHtml(dateStr)}</td>
           </tr>
         `;
       } else {
         return `
           <tr>
-            <td><code style="font-size: 0.75rem;">${r.run_id}</code>${inspectBtn}</td>
-            <td><strong>${escapeHtml(r.test_case_id)}</strong></td>
+            <td><code style="font-size: 0.75rem;">${escapeHtml(r.run_id)}</code>${inspectBtn}</td>
+            <td><strong>${escapeHtml(r.test_case_id)}</strong> ${sourceBadge}</td>
             <td>${statusBadge}</td>
-            <td>${r.category}</td>
-            <td>${r.language_code}</td>
+            <td>${escapeHtml(r.category || '')}</td>
+            <td>${escapeHtml(r.language_code || '')}</td>
             <td>${distinctionHtml}</td>
             <td>${taskHtml}</td>
             <td>${werHtml}</td>
-            <td><code style="font-size: 0.72rem;">${r.primary_failure_category}</code></td>
+            <td><code style="font-size: 0.72rem;">${escapeHtml(r.primary_failure_category || '')}</code></td>
             <td>${modeBadge}</td>
-            <td style="font-size: 0.72rem; color: var(--text-muted);">${dateStr}</td>
+            <td style="font-size: 0.72rem; color: var(--text-muted);">${escapeHtml(dateStr)}</td>
           </tr>
         `;
       }
@@ -1126,7 +1623,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ===========================================================================
-  // 7. Single Clip Audio Transcription Lab (Existing Working Functionality)
+  // 7. Single Clip Audio Transcription Lab
   // ===========================================================================
   const dropzone = document.getElementById("dropzone");
   const audioFileInput = document.getElementById("audioFileInput");
@@ -1355,14 +1852,14 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function escapeHtml(text) {
-    if (!text) return "";
+    if (text === null || text === undefined) return "";
     const div = document.createElement("div");
-    div.textContent = text;
+    div.textContent = String(text);
     return div.innerHTML;
   }
 
   // ===========================================================================
-  // 7. Judge-Facing Derived Re-Score Contrast Modal
+  // 8. Dynamic Live vs. Derived Re-Score Audit Modal
   // ===========================================================================
   const rescoreCompareModal = document.getElementById("rescoreCompareModal");
   const btnModalClose = document.getElementById("btnModalClose");
@@ -1370,8 +1867,65 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnOverviewOpenCompare = document.getElementById("btnOverviewOpenCompare");
   const btnHistoryOpenCompare = document.getElementById("btnHistoryOpenCompare");
 
+  // Modal Context Elements
+  const modalTestCaseId = document.getElementById("modalTestCaseId");
+  const modalAudioCondition = document.getElementById("modalAudioCondition");
+  const modalLangCode = document.getElementById("modalLangCode");
+
+  // Source Run Elements (Left Column)
+  const modalLiveRunId = document.getElementById("modalLiveRunId");
+  const modalLiveExecMode = document.getElementById("modalLiveExecMode");
+  const modalLiveReqA = document.getElementById("modalLiveReqA");
+  const modalLiveReqB = document.getElementById("modalLiveReqB");
+  const modalLiveClientLatency = document.getElementById("modalLiveClientLatency");
+  const modalLiveUttLatency = document.getElementById("modalLiveUttLatency");
+  const modalLiveProvProcLatency = document.getElementById("modalLiveProvProcLatency");
+  const modalLiveActualA = document.getElementById("modalLiveActualA");
+  const modalLiveActualB = document.getElementById("modalLiveActualB");
+  const modalLiveRefA = document.getElementById("modalLiveRefA");
+  const modalLiveRefB = document.getElementById("modalLiveRefB");
+  const modalLiveWerA = document.getElementById("modalLiveWerA");
+  const modalLiveWerB = document.getElementById("modalLiveWerB");
+  const modalLiveAvgWer = document.getElementById("modalLiveAvgWer");
+  const modalLiveFields = document.getElementById("modalLiveFields");
+  const modalLiveIntent = document.getElementById("modalLiveIntent");
+  const modalLiveTaskSuccess = document.getElementById("modalLiveTaskSuccess");
+  const modalLiveFailCat = document.getElementById("modalLiveFailCat");
+  const modalLiveFailExp = document.getElementById("modalLiveFailExp");
+
+  // Derived Assessment Elements (Right Column)
+  const modalDerivedId = document.getElementById("modalDerivedId");
+  const modalDerivedSrcId = document.getElementById("modalDerivedSrcId");
+  const modalDerivedTime = document.getElementById("modalDerivedTime");
+  const modalDerivedActualA = document.getElementById("modalDerivedActualA");
+  const modalDerivedActualB = document.getElementById("modalDerivedActualB");
+  const modalDerivedRefA = document.getElementById("modalDerivedRefA");
+  const modalDerivedRefB = document.getElementById("modalDerivedRefB");
+  const modalDerivedNormWerA = document.getElementById("modalDerivedNormWerA");
+  const modalDerivedNormWerB = document.getElementById("modalDerivedNormWerB");
+  const modalDerivedAvgWer = document.getElementById("modalDerivedAvgWer");
+  const modalDerivedFields = document.getElementById("modalDerivedFields");
+  const modalDerivedIntent = document.getElementById("modalDerivedIntent");
+  const modalDerivedTaskSuccess = document.getElementById("modalDerivedTaskSuccess");
+  const modalDerivedFailCat = document.getElementById("modalDerivedFailCat");
+  const modalDerivedFailExp = document.getElementById("modalDerivedFailExp");
+  const modalBtnExportJson = document.getElementById("modalBtnExportJson");
+
+  // Unavailable & Compute Containers
+  const modalDerivedUnavailable = document.getElementById("modalDerivedUnavailable");
+  const modalDerivedUnavailableMsg = document.getElementById("modalDerivedUnavailableMsg");
+  const modalComputeRescoreArea = document.getElementById("modalComputeRescoreArea");
+  const modalDerivedContent = document.getElementById("modalDerivedContent");
+
+  let lastFocusedElement = null;
+
   function closeCompareModal() {
-    if (rescoreCompareModal) rescoreCompareModal.style.display = "none";
+    if (rescoreCompareModal) {
+      rescoreCompareModal.style.display = "none";
+      if (lastFocusedElement && typeof lastFocusedElement.focus === "function") {
+        lastFocusedElement.focus();
+      }
+    }
   }
 
   if (btnModalClose) btnModalClose.addEventListener("click", closeCompareModal);
@@ -1381,116 +1935,817 @@ document.addEventListener("DOMContentLoaded", () => {
       if (e.target === rescoreCompareModal) closeCompareModal();
     });
   }
+
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && rescoreCompareModal && rescoreCompareModal.style.display !== "none") {
       closeCompareModal();
     }
   });
 
-  async function openRescoreCompareModal(runId = "eval_live_758277ca81d8") {
+  function resetModalFields() {
+    // Reset Context Pills
+    if (modalTestCaseId) modalTestCaseId.textContent = "Loading...";
+    if (modalAudioCondition) modalAudioCondition.textContent = "—";
+    if (modalLangCode) modalLangCode.textContent = "—";
+
+    // Reset Source Column Fields
+    if (modalLiveRunId) modalLiveRunId.textContent = "—";
+    if (modalLiveExecMode) modalLiveExecMode.textContent = "—";
+    if (modalLiveReqA) modalLiveReqA.textContent = "—";
+    if (modalLiveReqB) modalLiveReqB.textContent = "—";
+    if (modalLiveClientLatency) modalLiveClientLatency.textContent = "—";
+    if (modalLiveUttLatency) modalLiveUttLatency.textContent = "—";
+    if (modalLiveProvProcLatency) modalLiveProvProcLatency.textContent = "Not reported";
+    if (modalLiveRefA) modalLiveRefA.textContent = "—";
+    if (modalLiveRefB) modalLiveRefB.textContent = "—";
+    if (modalLiveActualA) modalLiveActualA.textContent = "—";
+    if (modalLiveActualB) modalLiveActualB.textContent = "—";
+    if (modalLiveWerA) modalLiveWerA.textContent = "Raw WER: —";
+    if (modalLiveWerB) modalLiveWerB.textContent = "Raw WER: —";
+    if (modalLiveAvgWer) modalLiveAvgWer.textContent = "—";
+    if (modalLiveFields) modalLiveFields.textContent = "—";
+    if (modalLiveIntent) modalLiveIntent.textContent = "—";
+    if (modalLiveTaskSuccess) {
+      modalLiveTaskSuccess.textContent = "—";
+      modalLiveTaskSuccess.className = "badge-pill-neutral";
+    }
+    if (modalLiveFailCat) modalLiveFailCat.textContent = "—";
+    if (modalLiveFailExp) modalLiveFailExp.textContent = "—";
+
+    // Reset Derived Column Fields
+    if (modalDerivedId) modalDerivedId.textContent = "—";
+    if (modalDerivedSrcId) modalDerivedSrcId.textContent = "—";
+    if (modalDerivedTime) modalDerivedTime.textContent = "—";
+    if (modalDerivedRefA) modalDerivedRefA.textContent = "—";
+    if (modalDerivedRefB) modalDerivedRefB.textContent = "—";
+    if (modalDerivedActualA) modalDerivedActualA.textContent = "—";
+    if (modalDerivedActualB) modalDerivedActualB.textContent = "—";
+    if (modalDerivedNormWerA) modalDerivedNormWerA.textContent = "Normalized WER: —";
+    if (modalDerivedNormWerB) modalDerivedNormWerB.textContent = "Normalized WER: —";
+    if (modalDerivedAvgWer) modalDerivedAvgWer.textContent = "—";
+    if (modalDerivedFields) modalDerivedFields.textContent = "—";
+    if (modalDerivedIntent) modalDerivedIntent.textContent = "—";
+    if (modalDerivedTaskSuccess) {
+      modalDerivedTaskSuccess.textContent = "—";
+      modalDerivedTaskSuccess.className = "badge-pill-neutral";
+    }
+    if (modalDerivedFailCat) modalDerivedFailCat.textContent = "—";
+    if (modalDerivedFailExp) modalDerivedFailExp.textContent = "—";
+    if (modalBtnExportJson) {
+      modalBtnExportJson.removeAttribute("href");
+      modalBtnExportJson.href = "";
+      modalBtnExportJson.style.display = "none";
+    }
+
+    // Hide derived content and compute action until verified
+    if (modalDerivedContent) modalDerivedContent.style.display = "none";
+    if (modalComputeRescoreArea) modalComputeRescoreArea.style.display = "none";
+    if (modalDerivedUnavailable) {
+      modalDerivedUnavailable.style.display = "block";
+      if (modalDerivedUnavailableMsg) modalDerivedUnavailableMsg.textContent = "Loading evaluation data...";
+    }
+  }
+
+  function renderDerivedAssessment(d) {
+    if (modalDerivedUnavailable) modalDerivedUnavailable.style.display = "none";
+    if (modalComputeRescoreArea) modalComputeRescoreArea.style.display = "none";
+    if (modalDerivedContent) modalDerivedContent.style.display = "flex";
+
+    if (modalDerivedId) modalDerivedId.textContent = d.derived_id;
+    if (modalDerivedSrcId) modalDerivedSrcId.textContent = d.source_run_id;
+    if (modalDerivedTime) modalDerivedTime.textContent = d.created_at || "—";
+    if (modalDerivedRefA) modalDerivedRefA.textContent = d.reference_a || "—";
+    if (modalDerivedRefB) modalDerivedRefB.textContent = d.reference_b || "—";
+    if (modalDerivedActualA) modalDerivedActualA.textContent = d.actual_transcript_a || "—";
+    if (modalDerivedActualB) modalDerivedActualB.textContent = d.actual_transcript_b || "—";
+    if (modalDerivedNormWerA) modalDerivedNormWerA.textContent = `Normalized WER: ${(d.normalized_wer_a * 100).toFixed(1)}%`;
+    if (modalDerivedNormWerB) modalDerivedNormWerB.textContent = `Normalized WER: ${(d.normalized_wer_b * 100).toFixed(1)}%`;
+    if (modalDerivedAvgWer) modalDerivedAvgWer.textContent = `${(d.average_normalized_wer * 100).toFixed(1)}%`;
+    if (modalDerivedFields) modalDerivedFields.textContent = "Preserved";
+    if (modalDerivedIntent) modalDerivedIntent.textContent = d.rescore_detected_intent_a || "ORDER_PRODUCT";
+    if (modalDerivedTaskSuccess) {
+      modalDerivedTaskSuccess.textContent = d.rescore_task_success ? "SUCCESS" : "FAILED";
+      modalDerivedTaskSuccess.className = d.rescore_task_success ? "badge-pill-success" : "badge-pill-danger";
+    }
+    if (modalDerivedFailCat) modalDerivedFailCat.textContent = d.rescore_primary_failure_category || "none";
+    if (modalDerivedFailExp) modalDerivedFailExp.textContent = d.rescore_failure_explanation || "Downstream order intent recognized; actions valid.";
+    if (modalBtnExportJson) {
+      modalBtnExportJson.href = `/api/eval/runs/${encodeURIComponent(d.source_run_id)}/derived-rescore`;
+      modalBtnExportJson.style.display = "inline-flex";
+    }
+  }
+
+  async function openRescoreCompareModal(runId = null, mode = null, status = null) {
     if (!rescoreCompareModal) return;
+    lastFocusedElement = document.activeElement;
+
+    // Reset previous record's state completely
+    resetModalFields();
+
+    const targetRunId = runId || latestLiveRunId;
+    if (modalLiveRunId && targetRunId) {
+      modalLiveRunId.textContent = targetRunId;
+    }
+    if (modalLiveExecMode && mode) {
+      modalLiveExecMode.textContent = mode.toUpperCase();
+    }
+
+    rescoreCompareModal.style.display = "flex";
+    if (btnModalClose) btnModalClose.focus();
+
+    if (!targetRunId) {
+      if (modalTestCaseId) modalTestCaseId.textContent = "—";
+      if (modalDerivedUnavailableMsg) {
+        modalDerivedUnavailableMsg.textContent = "No completed live evaluation run found or selected.";
+      }
+      return;
+    }
+
     try {
-      const resp = await fetch(`/api/eval/runs/${encodeURIComponent(runId)}/derived-rescore`);
-      if (!resp.ok) {
-        alert(`No offline derived re-score found for run: ${runId}`);
+      // Step 1: Always fetch the selected source record using its actual run ID
+      const runResp = await fetch(`/api/eval/results/${encodeURIComponent(targetRunId)}`);
+      if (!runResp.ok) {
+        if (modalTestCaseId) modalTestCaseId.textContent = "—";
+        if (modalDerivedUnavailableMsg) {
+          modalDerivedUnavailableMsg.textContent = `Evaluation run '${targetRunId}' not found in active database.`;
+        }
         return;
       }
-      const d = await resp.json();
 
-      // Populate Context
-      const modalTestCaseId = document.getElementById("modalTestCaseId");
-      const modalAudioCondition = document.getElementById("modalAudioCondition");
-      const modalLangCode = document.getElementById("modalLangCode");
-      if (modalTestCaseId) modalTestCaseId.textContent = d.test_case_id || "pair_qty_001";
-      if (modalAudioCondition) modalAudioCondition.textContent = "clean_recorded";
-      if (modalLangCode) modalLangCode.textContent = d.language_code || "hi-IN";
+      const run = await runResp.json();
 
-      // Populate Live Column
-      const modalLiveRunId = document.getElementById("modalLiveRunId");
-      const modalLiveReqA = document.getElementById("modalLiveReqA");
-      const modalLiveReqB = document.getElementById("modalLiveReqB");
-      const modalLiveClientLatency = document.getElementById("modalLiveClientLatency");
-      const modalLiveUttLatency = document.getElementById("modalLiveUttLatency");
-      const modalLiveActualA = document.getElementById("modalLiveActualA");
-      const modalLiveActualB = document.getElementById("modalLiveActualB");
-      const modalLiveAvgWer = document.getElementById("modalLiveAvgWer");
-      const modalLiveIntent = document.getElementById("modalLiveIntent");
-      const modalLiveTaskSuccess = document.getElementById("modalLiveTaskSuccess");
-      const modalLiveFailCat = document.getElementById("modalLiveFailCat");
-      const modalLiveFailExp = document.getElementById("modalLiveFailExp");
+      // Step 2: Populate source run column strictly from API response
+      if (modalTestCaseId) modalTestCaseId.textContent = run.test_case_id || "—";
+      if (modalAudioCondition) modalAudioCondition.textContent = run.audio_condition || "—";
+      if (modalLangCode) modalLangCode.textContent = run.language_code || "—";
 
-      if (modalLiveRunId) modalLiveRunId.textContent = d.source_run_id;
-      if (modalLiveReqA) modalLiveReqA.textContent = d.request_id_a || "Not reported";
-      if (modalLiveReqB) modalLiveReqB.textContent = d.request_id_b || "Not reported";
-      if (modalLiveClientLatency) modalLiveClientLatency.textContent = d.client_request_elapsed_ms != null ? `${d.client_request_elapsed_ms} ms` : "2027.77 ms";
-      if (modalLiveUttLatency) modalLiveUttLatency.textContent = `A: ${d.latency_a_ms != null ? d.latency_a_ms : '—'} ms | B: ${d.latency_b_ms != null ? d.latency_b_ms : '—'} ms`;
-      if (modalLiveActualA) modalLiveActualA.textContent = d.actual_transcript_a || "—";
-      if (modalLiveActualB) modalLiveActualB.textContent = d.actual_transcript_b || "—";
-      if (modalLiveAvgWer) modalLiveAvgWer.textContent = `${(d.original_average_raw_wer * 100).toFixed(1)}%`;
-      if (modalLiveIntent) modalLiveIntent.textContent = d.original_detected_intent_a || "UNKNOWN_INTENT";
+      if (modalLiveRunId) modalLiveRunId.textContent = run.run_id;
+      if (modalLiveExecMode) modalLiveExecMode.textContent = (run.execution_mode || "mock").toUpperCase();
+      if (modalLiveReqA) modalLiveReqA.textContent = run.utterance_a?.request_id || "Not reported";
+      if (modalLiveReqB) modalLiveReqB.textContent = run.utterance_b?.request_id || "Not reported";
+      if (modalLiveClientLatency) modalLiveClientLatency.textContent = run.client_request_elapsed_ms != null ? `${run.client_request_elapsed_ms} ms` : "Not reported";
+      if (modalLiveUttLatency) {
+        const latA = run.utterance_a?.latency_ms != null ? `${run.utterance_a.latency_ms} ms` : "—";
+        const latB = run.utterance_b?.latency_ms != null ? `${run.utterance_b.latency_ms} ms` : "—";
+        modalLiveUttLatency.textContent = `A: ${latA} | B: ${latB}`;
+      }
+      if (modalLiveProvProcLatency) {
+        modalLiveProvProcLatency.textContent = run.provider_processing_time_ms != null ? `${run.provider_processing_time_ms} ms` : "Not reported";
+      }
+      if (modalLiveRefA) modalLiveRefA.textContent = run.utterance_a?.reference_transcript || "—";
+      if (modalLiveRefB) modalLiveRefB.textContent = run.utterance_b?.reference_transcript || "—";
+      if (modalLiveActualA) modalLiveActualA.textContent = run.utterance_a?.actual_transcript || "—";
+      if (modalLiveActualB) modalLiveActualB.textContent = run.utterance_b?.actual_transcript || "—";
+      if (modalLiveWerA) {
+        modalLiveWerA.textContent = run.utterance_a?.wer != null
+          ? `Raw WER: ${(run.utterance_a.wer * 100).toFixed(1)}% (S:${run.utterance_a.substitutions ?? 0}/D:${run.utterance_a.deletions ?? 0}/I:${run.utterance_a.insertions ?? 0})`
+          : "Unavailable";
+      }
+      if (modalLiveWerB) {
+        modalLiveWerB.textContent = run.utterance_b?.wer != null
+          ? `Raw WER: ${(run.utterance_b.wer * 100).toFixed(1)}% (S:${run.utterance_b.substitutions ?? 0}/D:${run.utterance_b.deletions ?? 0}/I:${run.utterance_b.insertions ?? 0})`
+          : "Unavailable";
+      }
+      if (modalLiveAvgWer) {
+        modalLiveAvgWer.textContent = run.average_wer != null ? `${(run.average_wer * 100).toFixed(1)}%` : "Unavailable";
+      }
+      if (modalLiveFields) {
+        modalLiveFields.textContent = JSON.stringify(run.utterance_a?.extracted_fields || {});
+      }
+      if (modalLiveIntent) modalLiveIntent.textContent = run.utterance_a?.detected_intent || "UNKNOWN";
       if (modalLiveTaskSuccess) {
-        modalLiveTaskSuccess.textContent = d.original_task_success ? "SUCCESS" : "FAILED";
-        modalLiveTaskSuccess.className = d.original_task_success ? "badge-pill-success" : "badge-pill-danger";
+        modalLiveTaskSuccess.textContent = run.task_success ? "SUCCESS" : "FAILED";
+        modalLiveTaskSuccess.className = run.task_success ? "badge-pill-success" : "badge-pill-danger";
       }
-      if (modalLiveFailCat) modalLiveFailCat.textContent = d.original_primary_failure_category || "intent_error";
-      if (modalLiveFailExp) modalLiveFailExp.textContent = d.original_failure_explanation || "";
+      if (modalLiveFailCat) modalLiveFailCat.textContent = run.primary_failure_category || "none";
+      if (modalLiveFailExp) modalLiveFailExp.textContent = run.failure_explanation || "No failure explanation.";
 
-      // Populate Derived Column
-      const modalDerivedId = document.getElementById("modalDerivedId");
-      const modalDerivedSrcId = document.getElementById("modalDerivedSrcId");
-      const modalDerivedTime = document.getElementById("modalDerivedTime");
-      const modalDerivedActualA = document.getElementById("modalDerivedActualA");
-      const modalDerivedActualB = document.getElementById("modalDerivedActualB");
-      const modalDerivedAvgWer = document.getElementById("modalDerivedAvgWer");
-      const modalDerivedIntent = document.getElementById("modalDerivedIntent");
-      const modalDerivedTaskSuccess = document.getElementById("modalDerivedTaskSuccess");
-      const modalDerivedFailCat = document.getElementById("modalDerivedFailCat");
-      const modalDerivedFailExp = document.getElementById("modalDerivedFailExp");
-      const modalBtnExportJson = document.getElementById("modalBtnExportJson");
+      // Step 3: Check eligibility for offline derived re-score
+      const execMode = run.execution_mode || "mock";
+      const overallStatus = run.overall_status || "completed";
+      const hasTranscripts = Boolean(run.utterance_a?.actual_transcript && run.utterance_b?.actual_transcript);
 
-      if (modalDerivedId) modalDerivedId.textContent = d.derived_id;
-      if (modalDerivedSrcId) modalDerivedSrcId.textContent = d.source_run_id;
-      if (modalDerivedTime) modalDerivedTime.textContent = d.created_at;
-      if (modalDerivedActualA) modalDerivedActualA.textContent = d.actual_transcript_a || "—";
-      if (modalDerivedActualB) modalDerivedActualB.textContent = d.actual_transcript_b || "—";
-      if (modalDerivedAvgWer) modalDerivedAvgWer.textContent = `${(d.average_normalized_wer * 100).toFixed(1)}%`;
-      if (modalDerivedIntent) modalDerivedIntent.textContent = d.rescore_detected_intent_a || "ORDER_PRODUCT";
-      if (modalDerivedTaskSuccess) {
-        modalDerivedTaskSuccess.textContent = d.rescore_task_success ? "SUCCESS" : "FAILED";
-        modalDerivedTaskSuccess.className = d.rescore_task_success ? "badge-pill-success" : "badge-pill-danger";
+      if (execMode !== "live") {
+        // Ineligible: Deterministic mock simulation (never call /derived-rescore)
+        if (modalDerivedContent) modalDerivedContent.style.display = "none";
+        if (modalDerivedUnavailable) {
+          modalDerivedUnavailable.style.display = "block";
+          if (modalDerivedUnavailableMsg) {
+            modalDerivedUnavailableMsg.textContent = "Deterministic Mock Simulation (0 credits consumed, 0 network calls). Offline cross-script re-scoring is designed for upstream provider evaluations.";
+          }
+        }
+        if (modalComputeRescoreArea) modalComputeRescoreArea.style.display = "none";
+        return;
       }
-      if (modalDerivedFailCat) modalDerivedFailCat.textContent = d.rescore_primary_failure_category || "none";
-      if (modalDerivedFailExp) modalDerivedFailExp.textContent = d.rescore_failure_explanation || "Downstream order intent recognized from Devanagari 'चाहिए'; order placement valid.";
-      if (modalBtnExportJson) modalBtnExportJson.href = `/api/eval/runs/${encodeURIComponent(d.source_run_id)}/derived-rescore`;
 
-      rescoreCompareModal.style.display = "flex";
+      if (overallStatus !== "completed" || !hasTranscripts) {
+        // Ineligible: Operational error or incomplete run (never call /derived-rescore)
+        if (modalDerivedContent) modalDerivedContent.style.display = "none";
+        if (modalDerivedUnavailable) {
+          modalDerivedUnavailable.style.display = "block";
+          if (modalDerivedUnavailableMsg) {
+            modalDerivedUnavailableMsg.textContent = "Operational Provider Error / Incomplete Run. Offline re-scoring is unavailable because complete paired transcripts were not returned by the upstream provider.";
+          }
+        }
+        if (modalComputeRescoreArea) modalComputeRescoreArea.style.display = "none";
+        return;
+      }
+
+      // Step 4: Eligible completed live run! Check if a derived assessment ALREADY exists (read-only query)
+      let existingDerived = null;
+      try {
+        const derivedListResp = await fetch("/api/eval/derived-assessments?limit=500");
+        if (derivedListResp.ok) {
+          const derivedList = await derivedListResp.json();
+          existingDerived = derivedList.find((d) => d.source_run_id === targetRunId);
+        }
+      } catch (err) {
+        console.warn("Could not list derived assessments:", err);
+      }
+
+      if (existingDerived) {
+        // Existing derived assessment found: render it directly without side effects
+        renderDerivedAssessment(existingDerived);
+      } else {
+        // Eligible live run without a saved derived assessment:
+        // Do NOT silently invoke /derived-rescore. Display explanatory notice and provide an explicit button.
+        if (modalDerivedContent) modalDerivedContent.style.display = "none";
+        if (modalDerivedUnavailable) {
+          modalDerivedUnavailable.style.display = "block";
+          if (modalDerivedUnavailableMsg) {
+            modalDerivedUnavailableMsg.textContent = "No saved offline derived re-score recorded yet for this completed live run.";
+          }
+        }
+        if (modalComputeRescoreArea) {
+          modalComputeRescoreArea.style.display = "block";
+          const btnCompute = document.getElementById("btnComputeDerivedRescore");
+          if (btnCompute) {
+            btnCompute.disabled = false;
+            btnCompute.innerHTML = "<span>⚡ Compute &amp; Save Offline Derived Re-Score</span>";
+            btnCompute.onclick = async () => {
+              btnCompute.disabled = true;
+              btnCompute.innerHTML = "<span>⏳ Computing &amp; saving derived re-score...</span>";
+              try {
+                const rescoreResp = await fetch(`/api/eval/runs/${encodeURIComponent(targetRunId)}/derived-rescore`);
+                if (rescoreResp.ok) {
+                  const created = await rescoreResp.json();
+                  renderDerivedAssessment(created);
+                } else {
+                  const errData = await rescoreResp.json().catch(() => ({}));
+                  if (modalDerivedUnavailableMsg) {
+                    modalDerivedUnavailableMsg.textContent = `Error generating derived re-score: ${errData.detail || 'Request failed'}`;
+                  }
+                  btnCompute.disabled = false;
+                  btnCompute.innerHTML = "<span>⚡ Compute &amp; Save Offline Derived Re-Score</span>";
+                }
+              } catch (err) {
+                if (modalDerivedUnavailableMsg) {
+                  modalDerivedUnavailableMsg.textContent = `Network error generating derived re-score: ${err.message}`;
+                }
+                btnCompute.disabled = false;
+                btnCompute.innerHTML = "<span>⚡ Compute &amp; Save Offline Derived Re-Score</span>";
+              }
+            };
+          }
+        }
+      }
     } catch (err) {
-      console.error("Failed to fetch derived re-score:", err);
-      alert("Error loading derived re-score comparison.");
+      console.error("Failed to load audit modal:", err);
+      if (modalDerivedContent) modalDerivedContent.style.display = "none";
+      if (modalDerivedUnavailable) {
+        modalDerivedUnavailable.style.display = "block";
+        if (modalDerivedUnavailableMsg) {
+          modalDerivedUnavailableMsg.textContent = "Network error loading evaluation record.";
+        }
+      }
     }
   }
 
   if (btnOverviewOpenCompare) {
-    btnOverviewOpenCompare.addEventListener("click", () => openRescoreCompareModal("eval_live_758277ca81d8"));
+    btnOverviewOpenCompare.addEventListener("click", () => openRescoreCompareModal());
   }
   if (btnHistoryOpenCompare) {
-    btnHistoryOpenCompare.addEventListener("click", () => openRescoreCompareModal("eval_live_758277ca81d8"));
+    btnHistoryOpenCompare.addEventListener("click", () => openRescoreCompareModal());
   }
 
-  // Delegate clicks on .btn-row-inspect in history tables
+  // Delegated handler for inspect buttons on history table rows
   document.addEventListener("click", (e) => {
     const btn = e.target.closest(".btn-row-inspect");
     if (btn) {
-      const runId = btn.getAttribute("data-run-id") || "eval_live_758277ca81d8";
-      openRescoreCompareModal(runId);
+      const runId = btn.getAttribute("data-run-id");
+      const mode = btn.getAttribute("data-mode");
+      const status = btn.getAttribute("data-status");
+      openRescoreCompareModal(runId, mode, status);
     }
   });
 
+  // Expose methods for automated headless testing
+  if (typeof window !== "undefined") {
+    window.__bolibench = {
+      renderHistoryRows,
+      openRescoreCompareModal,
+      resetModalFields,
+      renderDerivedAssessment,
+      handleAudioSelection,
+      resetLiveAudioSelection,
+      checkLiveEvalFormValidity,
+      showConversionStatus,
+      requestCreditAuthorization,
+      getCurrentConvertedFiles: () => ({ a: currentConvertedFileA, b: currentConvertedFileB }),
+      getConversionStates: () => ({ isConvertingA, isConvertingB }),
+    };
+  }
+
+
   // ===========================================================================
-  // Initial Boot
+  // EVALUATION DATASET SOURCE SELECTOR & HUMAN PAIR RUNNER
+  // ===========================================================================
+
+  let activeEvaluationSource = "synthetic_benchmark";
+  let currentSelectedHumanPair = null;
+
+  const sourceToggleSynthetic = document.getElementById("sourceToggleSynthetic");
+  const sourceToggleHuman = document.getElementById("sourceToggleHuman");
+  const syntheticEvalContainer = document.getElementById("syntheticEvalContainer");
+  const humanEvalContainer = document.getElementById("humanEvalContainer");
+
+  const humanEvalCategoryFilter = document.getElementById("humanEvalCategoryFilter");
+  const humanEvalLanguageFilter = document.getElementById("humanEvalLanguageFilter");
+  const humanEvalStatusFilter = document.getElementById("humanEvalStatusFilter");
+  const btnRefreshHumanPairs = document.getElementById("btnRefreshHumanPairs");
+  const humanPairsTableBody = document.getElementById("humanPairsTableBody");
+
+  // Inspector Elements
+  const inspectHumanPairTitle = document.getElementById("inspectHumanPairTitle");
+  const inspectHumanPairBadge = document.getElementById("inspectHumanPairBadge");
+  const inspectHumanRefA = document.getElementById("inspectHumanRefA");
+  const inspectHumanRefB = document.getElementById("inspectHumanRefB");
+  const inspectHumanAudioA = document.getElementById("inspectHumanAudioA");
+  const inspectHumanAudioB = document.getElementById("inspectHumanAudioB");
+  const inspectHumanDistinctionText = document.getElementById("inspectHumanDistinctionText");
+  const confirmLiveHumanCreditUsage = document.getElementById("confirmLiveHumanCreditUsage");
+  const btnExecuteHumanLiveEval = document.getElementById("btnExecuteHumanLiveEval");
+  const btnExecuteHumanMockEval = document.getElementById("btnExecuteHumanMockEval");
+  const humanEvalInlineNotice = document.getElementById("humanEvalInlineNotice");
+  const humanEvalResultCard = document.getElementById("humanEvalResultCard");
+  const humanResultTitle = document.getElementById("humanResultTitle");
+  const humanResultDistinctionBadge = document.getElementById("humanResultDistinctionBadge");
+  const humanResultBody = document.getElementById("humanResultBody");
+
+  function setEvaluationSource(source) {
+    activeEvaluationSource = source;
+    if (source === "human_recording") {
+      if (sourceToggleHuman) {
+        sourceToggleHuman.classList.add("active");
+        sourceToggleHuman.setAttribute("aria-checked", "true");
+      }
+      if (sourceToggleSynthetic) {
+        sourceToggleSynthetic.classList.remove("active");
+        sourceToggleSynthetic.setAttribute("aria-checked", "false");
+      }
+      if (syntheticEvalContainer) syntheticEvalContainer.style.display = "none";
+      if (humanEvalContainer) humanEvalContainer.style.display = "block";
+      loadHumanPairsForEvaluation();
+    } else {
+      if (sourceToggleSynthetic) {
+        sourceToggleSynthetic.classList.add("active");
+        sourceToggleSynthetic.setAttribute("aria-checked", "true");
+      }
+      if (sourceToggleHuman) {
+        sourceToggleHuman.classList.remove("active");
+        sourceToggleHuman.setAttribute("aria-checked", "false");
+      }
+      if (syntheticEvalContainer) syntheticEvalContainer.style.display = "block";
+      if (humanEvalContainer) humanEvalContainer.style.display = "none";
+    }
+  }
+
+  if (sourceToggleSynthetic) {
+    sourceToggleSynthetic.addEventListener("click", () => setEvaluationSource("synthetic_benchmark"));
+  }
+  if (sourceToggleHuman) {
+    sourceToggleHuman.addEventListener("click", () => setEvaluationSource("human_recording"));
+  }
+
+  async function loadHumanPairsForEvaluation() {
+    if (!humanPairsTableBody) return;
+    try {
+      const category = humanEvalCategoryFilter ? humanEvalCategoryFilter.value : "all";
+      const language = humanEvalLanguageFilter ? humanEvalLanguageFilter.value : "all";
+      const status = humanEvalStatusFilter ? humanEvalStatusFilter.value : "all";
+
+      // Check if sessionStorage specified a pair
+      const handoffPairId = (typeof sessionStorage !== "undefined" && sessionStorage && sessionStorage.getItem)
+        ? sessionStorage.getItem("bolibench_selected_human_pair")
+        : null;
+
+      const params = new URLSearchParams();
+      if (!handoffPairId) {
+        if (category && category !== "all") params.append("category", category);
+        if (language && language !== "all") params.append("language", language);
+        if (status && status !== "all") params.append("status", status);
+      } else {
+        if (humanEvalStatusFilter) humanEvalStatusFilter.value = "all";
+        if (humanEvalCategoryFilter) humanEvalCategoryFilter.value = "all";
+        if (humanEvalLanguageFilter) humanEvalLanguageFilter.value = "all";
+      }
+
+      const resp = await fetch(`/api/eval/human-pairs?${params.toString()}`);
+      if (!resp.ok) return;
+      const pairs = await resp.json();
+
+      if (pairs.length === 0) {
+        humanPairsTableBody.innerHTML = `
+          <tr>
+            <td colspan="6" class="text-center" style="padding: 2rem; color: var(--text-muted);">
+              No saved human contrast pairs matching criteria. Record pairs in the <a href="/studio" style="color: var(--primary);">Human Recording Studio</a>.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      humanPairsTableBody.innerHTML = pairs.map((p, idx) => {
+        const isEligible = Boolean(p.utterance_a && p.utterance_b);
+        const isSelected = handoffPairId ? (p.pair_id === handoffPairId) : (idx === 0);
+
+        let statusBadge = '<span class="status-pill status-guard">Incomplete</span>';
+        if (p.status === "completed") {
+          statusBadge = '<span class="status-pill status-active">✓ Completed</span>';
+        } else if (p.status === "ready_for_evaluation") {
+          statusBadge = '<span class="status-pill status-active" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24;">⚡ Ready</span>';
+        } else if (p.status === "awaiting_verification") {
+          statusBadge = '<span class="status-pill status-warning">Awaiting Verification</span>';
+        } else if (p.status === "provider_failure") {
+          statusBadge = '<span class="status-pill status-error">Provider Failure</span>';
+        }
+
+        const transcriptA = p.utterance_a ? (p.utterance_a.verified_transcript || p.utterance_a.reference_transcript || '') : '';
+        const transcriptB = p.utterance_b ? (p.utterance_b.verified_transcript || p.utterance_b.reference_transcript || '') : '';
+
+        const uttAText = p.utterance_a
+          ? `<strong>"${escapeHtml(transcriptA)}"</strong> <span style="font-size: 0.75rem; color: var(--text-muted);">(${(p.utterance_a.duration_seconds || 0).toFixed(1)}s)</span>`
+          : '<span class="text-muted">—</span>';
+
+        const uttBText = p.utterance_b
+          ? `<strong>"${escapeHtml(transcriptB)}"</strong> <span style="font-size: 0.75rem; color: var(--text-muted);">(${(p.utterance_b.duration_seconds || 0).toFixed(1)}s)</span>`
+          : '<span class="text-muted">—</span>';
+
+        return `
+          <tr class="human-pair-row ${isSelected ? 'row-selected' : ''}" data-pair-id="${escapeHtml(p.pair_id)}" style="cursor: pointer;">
+            <td style="text-align: center;">
+              <input type="radio" name="selectedHumanPairRadio" value="${escapeHtml(p.pair_id)}" ${isSelected ? 'checked' : ''} ${!isEligible ? 'disabled' : ''}>
+            </td>
+            <td><code>${escapeHtml(p.pair_id)}</code></td>
+            <td><span class="category-pill">${escapeHtml(p.category || '')}</span> <span class="lang-pill">${escapeHtml(p.language || '')}</span></td>
+            <td>${uttAText}</td>
+            <td>${uttBText}</td>
+            <td>${statusBadge}</td>
+          </tr>
+        `;
+      }).join("");
+
+      // Bind row clicks
+      const rows = humanPairsTableBody.querySelectorAll(".human-pair-row");
+      rows.forEach((row) => {
+        row.addEventListener("click", () => {
+          const pId = row.getAttribute("data-pair-id");
+          const pairObj = pairs.find((item) => item.pair_id === pId);
+          if (pairObj) {
+            rows.forEach((r) => r.classList.remove("row-selected"));
+            row.classList.add("row-selected");
+            const radio = row.querySelector("input[type=radio]");
+            if (radio) radio.checked = true;
+            selectHumanPair(pairObj);
+          }
+        });
+      });
+
+      // Initial selection
+      const activePair = handoffPairId
+        ? pairs.find((item) => item.pair_id === handoffPairId) || pairs[0]
+        : pairs[0];
+
+      if (activePair) {
+        selectHumanPair(activePair);
+      }
+
+      if (handoffPairId) {
+        sessionStorage.removeItem("bolibench_selected_human_pair");
+      }
+    } catch (err) {
+      console.error("Failed to load human pairs for evaluation:", err);
+    }
+  }
+
+  function selectHumanPair(pair) {
+    currentSelectedHumanPair = pair;
+    if (!pair) return;
+
+    if (inspectHumanPairTitle) {
+      inspectHumanPairTitle.textContent = `${pair.pair_id} (${pair.category || 'Contrast Pair'})`;
+    }
+
+    const hasBoth = Boolean(pair.utterance_a && pair.utterance_b);
+    if (inspectHumanPairBadge) {
+      inspectHumanPairBadge.textContent = hasBoth ? "1 Pair Selected (2 Planned STT Requests)" : "Incomplete Pair";
+    }
+
+    const transcriptA = pair.utterance_a ? (pair.utterance_a.verified_transcript || pair.utterance_a.reference_transcript || '') : '';
+    const transcriptB = pair.utterance_b ? (pair.utterance_b.verified_transcript || pair.utterance_b.reference_transcript || '') : '';
+
+    if (inspectHumanRefA && pair.utterance_a) {
+      inspectHumanRefA.textContent = `"${transcriptA}" (${(pair.utterance_a.duration_seconds || 0).toFixed(1)}s)`;
+    }
+    if (inspectHumanAudioA && pair.utterance_a) {
+      inspectHumanAudioA.src = pair.utterance_a.audio_url || `/api/studio/recordings/${encodeURIComponent(pair.utterance_a.recording_id)}/audio`;
+    }
+
+    if (inspectHumanRefB && pair.utterance_b) {
+      inspectHumanRefB.textContent = `"${transcriptB}" (${(pair.utterance_b.duration_seconds || 0).toFixed(1)}s)`;
+    }
+    if (inspectHumanAudioB && pair.utterance_b) {
+      inspectHumanAudioB.src = pair.utterance_b.audio_url || `/api/studio/recordings/${encodeURIComponent(pair.utterance_b.recording_id)}/audio`;
+    }
+
+    if (inspectHumanDistinctionText) {
+      inspectHumanDistinctionText.textContent = pair.expected_distinction_desc || pair.expected_contrast || pair.scenario_description || `Tests semantic distinction in ${pair.category}.`;
+    }
+
+    updateHumanEvaluationButtonStates();
+  }
+
+  function updateHumanEvaluationButtonStates() {
+    const hasPair = Boolean(currentSelectedHumanPair && currentSelectedHumanPair.utterance_a && currentSelectedHumanPair.utterance_b);
+    const hasConsent = confirmLiveHumanCreditUsage ? confirmLiveHumanCreditUsage.checked : false;
+
+    if (btnExecuteHumanLiveEval) {
+      btnExecuteHumanLiveEval.disabled = !(hasPair && hasConsent);
+    }
+    if (btnExecuteHumanMockEval) {
+      btnExecuteHumanMockEval.disabled = !hasPair;
+    }
+
+    const hint = document.getElementById("humanEvalBtnHint");
+    if (hint) {
+      if (!hasPair) {
+        hint.textContent = "Please select an eligible pair with both Utterance A & B.";
+        hint.style.color = "var(--text-muted)";
+      } else if (!hasConsent) {
+        hint.textContent = "Please authorize live credit deduction checkbox above to enable live evaluation.";
+        hint.style.color = "#fcd34d";
+      } else {
+        hint.textContent = "✓ 2 STT requests authorized. Ready for live evaluation.";
+        hint.style.color = "#6ee7b7";
+      }
+    }
+  }
+
+  if (confirmLiveHumanCreditUsage) {
+    confirmLiveHumanCreditUsage.addEventListener("change", updateHumanEvaluationButtonStates);
+  }
+
+  if (humanEvalCategoryFilter) humanEvalCategoryFilter.addEventListener("change", loadHumanPairsForEvaluation);
+  if (humanEvalLanguageFilter) humanEvalLanguageFilter.addEventListener("change", loadHumanPairsForEvaluation);
+  if (humanEvalStatusFilter) humanEvalStatusFilter.addEventListener("change", loadHumanPairsForEvaluation);
+  if (btnRefreshHumanPairs) btnRefreshHumanPairs.addEventListener("click", loadHumanPairsForEvaluation);
+
+  // Live Human Evaluation Trigger
+  if (btnExecuteHumanLiveEval) {
+    btnExecuteHumanLiveEval.addEventListener("click", async () => {
+      if (!currentSelectedHumanPair) return;
+
+      if (!confirmLiveHumanCreditUsage || !confirmLiveHumanCreditUsage.checked) {
+        alert("Please authorize the live credit usage checkbox before executing live STT requests.");
+        return;
+      }
+
+      btnExecuteHumanLiveEval.disabled = true;
+      if (btnExecuteHumanMockEval) btnExecuteHumanMockEval.disabled = true;
+      const textSpan = document.getElementById("btnHumanLiveText");
+      if (textSpan) textSpan.textContent = "⏳ Running Live Gnani STT (2 requests)...";
+
+      try {
+        // Step 1: Request live authorization token from server-side credit guard
+        const authResp = await fetch("/api/eval/authorize-live", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          body: JSON.stringify({
+            test_id: currentSelectedHumanPair.pair_id,
+          }),
+        });
+
+        if (!authResp.ok) {
+          const authErr = await authResp.json().catch(() => ({}));
+          throw new Error(authErr.detail || `Live evaluation authorization rejected (HTTP ${authResp.status})`);
+        }
+
+        const authData = await authResp.json();
+        const confirmHeader = authData.required_header || REQUIRED_CONFIRM_HEADER;
+        const confirmValue = authData.required_header_value || EXPECTED_CONFIRM_HEADER_VALUE;
+
+        // Step 2: Execute Live Evaluation with issued token and CSRF header
+        const resp = await fetch(`/api/eval/run-human-pair-live/${encodeURIComponent(currentSelectedHumanPair.pair_id)}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            [confirmHeader]: confirmValue,
+          },
+          body: JSON.stringify({
+            confirmation_token: authData.confirmation_token,
+            audio_condition: "clean_recorded",
+          }),
+        });
+
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.detail || `Server error (${resp.status})`);
+        }
+
+        const result = await resp.json();
+        renderHumanEvaluationScorecard(result);
+        await loadHumanPairsForEvaluation();
+        loadBenchmarkMetrics();
+        loadFullHistory(currentStatusFilter, currentSourceFilter);
+      } catch (err) {
+        console.error("Live human evaluation failed:", err);
+        if (humanEvalInlineNotice) {
+          humanEvalInlineNotice.style.display = "block";
+          humanEvalInlineNotice.textContent = `Evaluation execution failed: ${err.message}`;
+        }
+      } finally {
+        if (textSpan) textSpan.textContent = "⚡ Run Live Evaluation (Gnani Prisma)";
+        updateHumanEvaluationButtonStates();
+      }
+    });
+  }
+
+  // Mock Human Evaluation Trigger
+  if (btnExecuteHumanMockEval) {
+    btnExecuteHumanMockEval.addEventListener("click", async () => {
+      if (!currentSelectedHumanPair) return;
+
+      btnExecuteHumanMockEval.disabled = true;
+      try {
+        const resp = await fetch(`/api/eval/run-human-pair-mock/${encodeURIComponent(currentSelectedHumanPair.pair_id)}`, {
+          method: "POST",
+        });
+
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.detail || `Server error (${resp.status})`);
+        }
+
+        const result = await resp.json();
+        renderHumanEvaluationScorecard(result);
+        await loadHumanPairsForEvaluation();
+        loadBenchmarkMetrics();
+        loadFullHistory(currentStatusFilter, currentSourceFilter);
+      } catch (err) {
+        console.error("Mock human evaluation failed:", err);
+        if (humanEvalInlineNotice) {
+          humanEvalInlineNotice.style.display = "block";
+          humanEvalInlineNotice.textContent = `Mock evaluation failed: ${err.message}`;
+        }
+      } finally {
+        updateHumanEvaluationButtonStates();
+      }
+    });
+  }
+
+  function renderHumanEvaluationScorecard(result) {
+    if (!humanEvalResultCard || !humanResultBody) return;
+    humanEvalResultCard.style.display = "block";
+
+    const isPreserved = result.semantic_distinction_preserved;
+    if (humanResultTitle) {
+      humanResultTitle.textContent = `Evaluation Result: ${result.test_case_id} (${result.execution_mode.toUpperCase()})`;
+    }
+
+    if (humanResultDistinctionBadge) {
+      if (isPreserved) {
+        humanResultDistinctionBadge.textContent = "✓ DISTINCTION PRESERVED";
+        humanResultDistinctionBadge.className = "status-pill status-active";
+      } else {
+        humanResultDistinctionBadge.textContent = "❌ DISTINCTION COLLAPSED";
+        humanResultDistinctionBadge.className = "status-pill status-error";
+      }
+    }
+
+    const meanWer = result.average_wer != null ? `${(result.average_wer * 100).toFixed(1)}%` : "N/A";
+    const meanNormWer = result.average_normalized_wer != null ? `${(result.average_normalized_wer * 100).toFixed(1)}%` : "N/A";
+
+    const uttA = result.utterance_a || {};
+    const uttB = result.utterance_b || {};
+
+    humanResultBody.innerHTML = `
+      <div class="stat-box">
+        <span class="stat-number">${meanWer}</span>
+        <span class="stat-title">Raw Mean WER</span>
+      </div>
+      <div class="stat-box highlight-stat">
+        <span class="stat-number" style="color: #60a5fa;">${meanNormWer}</span>
+        <span class="stat-title">Normalized WER</span>
+      </div>
+      <div class="stat-box">
+        <span class="stat-number" style="color: ${isPreserved ? '#34d399' : '#f87171'};">${isPreserved ? 'PRESERVED' : 'COLLAPSED'}</span>
+        <span class="stat-title">Semantic Preservation</span>
+      </div>
+      <div class="stat-box">
+        <span class="stat-number">${(result.total_latency_seconds || 0).toFixed(2)}s</span>
+        <span class="stat-title">Pair Latency</span>
+      </div>
+      <div class="stat-box" style="grid-column: 1 / -1; text-align: left; background: rgba(255,255,255,0.03); padding: 0.85rem;">
+        <div style="margin-bottom: 0.35rem;">
+          <span class="spec-badge badge-a">Utterance A</span>
+          Ref: <code>${escapeHtml(uttA.reference_transcript || '')}</code> &bull;
+          STT: <strong>${escapeHtml(uttA.actual_transcript || 'Error')}</strong>
+          ${uttA.error_message ? `<span style="color: #f87171;">(Error: ${escapeHtml(uttA.error_message)})</span>` : ''}
+        </div>
+        <div>
+          <span class="spec-badge badge-b">Utterance B</span>
+          Ref: <code>${escapeHtml(uttB.reference_transcript || '')}</code> &bull;
+          STT: <strong>${escapeHtml(uttB.actual_transcript || 'Error')}</strong>
+          ${uttB.error_message ? `<span style="color: #f87171;">(Error: ${escapeHtml(uttB.error_message)})</span>` : ''}
+        </div>
+      </div>
+    `;
+
+    humanEvalResultCard.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  function checkHumanPairHandoff() {
+    try {
+      if (typeof window !== "undefined" && typeof sessionStorage !== "undefined" && sessionStorage && sessionStorage.getItem) {
+        const pairId = sessionStorage.getItem("bolibench_selected_human_pair");
+        if (pairId) {
+          setEvaluationSource("human_recording");
+        }
+      }
+    } catch (e) {
+      // Ignore in non-browser or mock environments
+    }
+  }
+
+  // Handle URL hash routing on initial boot and window hashchange
+  function handleUrlHashRouting() {
+    try {
+      if (typeof window !== "undefined" && window && window.location && window.location.hash) {
+        const targetHash = window.location.hash.replace(/^#/, "");
+        if (targetHash && panes[targetHash]) {
+          switchTab(targetHash);
+          return true;
+        }
+      }
+    } catch (e) {
+      // Ignore in non-browser or mock environments
+    }
+    return false;
+  }
+
+  if (typeof window !== "undefined" && window && typeof window.addEventListener === "function") {
+    window.addEventListener("hashchange", () => {
+      handleUrlHashRouting();
+    });
+  }
+
+  // Also check on initial page load if hash points to a tab pane or handoff exists
+  let initialTabRouted = false;
+  try {
+    initialTabRouted = handleUrlHashRouting();
+    if (!initialTabRouted && typeof sessionStorage !== "undefined" && sessionStorage && sessionStorage.getItem && sessionStorage.getItem("bolibench_selected_human_pair")) {
+      switchTab("evaluateView");
+      initialTabRouted = true;
+    }
+  } catch (e) {
+    // Ignore in non-browser or mock environments
+  }
+
+
+  // ===========================================================================
+  // 9. Initial Boot
   // ===========================================================================
   updateSelectedTestCaseSpecs();
   loadBenchmarkMetrics();
   loadBenchmarkCatalogue();
   loadFullHistory("all");
+
+  // Augment window.__bolibench for headless regression testing
+  if (typeof window !== "undefined" && window.__bolibench) {
+    Object.assign(window.__bolibench, {
+      switchTab,
+      handleUrlHashRouting,
+      checkHumanPairHandoff,
+      setEvaluationSource,
+      getActiveTabKey: () => activeTabKey,
+      getActiveEvaluationSource: () => activeEvaluationSource,
+      getCurrentSelectedHumanPair: () => currentSelectedHumanPair,
+      panes,
+      tabs,
+    });
+  }
 });
