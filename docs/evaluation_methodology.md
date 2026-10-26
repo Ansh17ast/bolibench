@@ -284,7 +284,7 @@ BoliBench establishes a strict separation across three distinct evaluation artif
    - Default disabled live evaluation deployment safety guard (`LIVE_EVALUATION_ENABLED=false`).
    - Live paired audio REST API (`POST /api/eval/run-live/{test_id}`) with strict acoustic condition enum validation and format restriction to WAV (verifiably $\le 60$s).
    - Backward-compatible SQLite migration and metric aggregation isolation ensuring operational errors and derived re-scores never contaminate benchmark performance averages.
-   - Comprehensive test suite (**122 tests passing with 0 network calls and 0 credits consumed**).
+   - Comprehensive test suite (**128 tests passing with 0 network calls and 0 credits consumed**).
 2. **Pending Acoustic Research (`pending_acoustic`):**
    - Calibrated acoustic noise testing with multi-speaker recordings under measured signal-to-noise ratios (street noise, cafeteria babble, reverberation).
    - Crowdsourced audio dataset recording all 24 seed utterances across diverse regional Indian accents.
