@@ -155,6 +155,7 @@ function setupEnvironment(fetchHandler, customConverter) {
     clearTimeout: (id) => clearTimeout(id),
     performance: mockWindow.performance,
     URL: mockWindow.URL,
+    URLSearchParams: globalThis.URLSearchParams || URLSearchParams,
     FormData: MockFormData,
     BoliAudioConverter: defaultConverter,
   });
@@ -951,6 +952,7 @@ test("14. Script loading chain: audio_converter.js exposes window.BoliAudioConve
     clearTimeout: (id) => clearTimeout(id),
     performance: mockWindow.performance,
     URL: mockWindow.URL,
+    URLSearchParams: globalThis.URLSearchParams || URLSearchParams,
     File: mockWindow.File,
     FormData: class { append() {} get() {} has() {} },
   });

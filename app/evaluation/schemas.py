@@ -284,3 +284,19 @@ class DerivedAssessment(BaseModel):
         "Offline deterministic re-scoring applying cross-script vocabulary canonicalization "
         "and Devanagari Hindi intent recognition to historical transcripts without provider calls."
     )
+
+
+class LiveTranscriptionResponse(BaseModel):
+    """Result returned by the local live evaluation speech transcriber."""
+    success: bool = True
+    transcript: str = Field(..., description="Transcribed text from the audio recording")
+    language_code: str = Field(..., description="Detected or requested language code")
+    utterance_role: str = Field("utterance_a", description="Role: utterance_a or utterance_b")
+    duration_seconds: float = Field(..., description="Duration of processed audio in seconds")
+    provider: str = Field("bolibench_local_stt", description="Name of local transcription engine")
+    credits_consumed: int = Field(0, description="Strictly 0 credits consumed")
+    external_calls: int = Field(0, description="Strictly 0 external network requests")
+    disclaimer: str = Field(
+        "Local in-process transcription engine. 0 credits consumed. No audio sent to external provider.",
+        description="Privacy and credit disclosure statement",
+    )

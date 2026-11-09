@@ -182,21 +182,59 @@ def test_audio_processor_standardization_and_validation(tmp_path):
     assert diag.is_clipped is False
 
 
-def test_early_stop_marked_incomplete_per_benchmark_rules(tmp_path):
-    """Proves that clips stopped early (< 50s) are flagged incomplete and do NOT count as valid 50s clips."""
+def test_too_short_marked_incomplete(tmp_path):
+    """Proves that clips under minimum duration (< 0.5s) are flagged incomplete."""
     processor = HumanAudioProcessor()
 
-    # Create a 12.5-second clip (stopped early by user)
-    input_wav = tmp_path / "early_stop.wav"
-    input_wav.write_bytes(create_pcm_wav_bytes(duration_seconds=12.5, sample_rate=16000))
+    # Create a 0.2-second clip (too short for acoustic analysis)
+    input_wav = tmp_path / "too_short.wav"
+    input_wav.write_bytes(create_pcm_wav_bytes(duration_seconds=0.2, sample_rate=16000))
 
-    output_wav = tmp_path / "std_early_stop.wav"
+    output_wav = tmp_path / "std_too_short.wav"
     processor.convert_to_standard_wav(input_wav, output_wav)
 
     diag, status = processor.analyze_standard_wav(output_wav)
     assert diag.is_complete_50s is False
     assert status == ValidationStatus.INCOMPLETE_EARLY_STOP
-    assert diag.duration_seconds == pytest.approx(12.5, rel=1e-2)
+    assert diag.duration_seconds < 0.5
+
+
+def test_manual_stop_11_7s_and_5s_valid(tmp_path):
+    """Proves that short clips stopped manually (e.g. 11.7s or 5.0s) are valid and NOT marked incomplete."""
+    processor = HumanAudioProcessor()
+
+    # 11.7s clip
+    input_11_7 = tmp_path / "clip_11_7s.wav"
+    input_11_7.write_bytes(create_pcm_wav_bytes(duration_seconds=11.7, sample_rate=16000))
+    out_11_7 = tmp_path / "std_11_7s.wav"
+    processor.convert_to_standard_wav(input_11_7, out_11_7)
+    diag_11_7, status_11_7 = processor.analyze_standard_wav(out_11_7)
+    assert diag_11_7.is_complete_50s is True
+    assert status_11_7 == ValidationStatus.VALID_50S
+    assert diag_11_7.duration_seconds == pytest.approx(11.7, rel=1e-2)
+
+    # 5.0s clip
+    input_5s = tmp_path / "clip_5s.wav"
+    input_5s.write_bytes(create_pcm_wav_bytes(duration_seconds=5.0, sample_rate=16000))
+    out_5s = tmp_path / "std_5s.wav"
+    processor.convert_to_standard_wav(input_5s, out_5s)
+    diag_5s, status_5s = processor.analyze_standard_wav(out_5s)
+    assert diag_5s.is_complete_50s is True
+    assert status_5s == ValidationStatus.VALID_50S
+    assert diag_5s.duration_seconds == pytest.approx(5.0, rel=1e-2)
+
+
+def test_duration_exceeded_over_600s(tmp_path):
+    """Proves that clips exceeding 600s safety limit are flagged as DURATION_EXCEEDED."""
+    processor = HumanAudioProcessor()
+
+    input_long = tmp_path / "long.wav"
+    input_long.write_bytes(create_pcm_wav_bytes(duration_seconds=605.0, sample_rate=16000))
+    out_long = tmp_path / "std_long.wav"
+    processor.convert_to_standard_wav(input_long, out_long)
+    diag_long, status_long = processor.analyze_standard_wav(out_long)
+    assert diag_long.is_complete_50s is False
+    assert status_long == ValidationStatus.DURATION_EXCEEDED
 
 
 def test_silence_detection(tmp_path):
@@ -541,7 +579,8 @@ async def test_api_studio_config():
         data = resp.json()
         assert len(data["supported_categories"]) == 6
         assert len(data["supported_languages"]) == 3
-        assert data["target_duration_seconds"] == 50.0
+        assert data["target_duration_seconds"] == 600.0
+        assert data["max_duration_seconds"] == 600.0
         assert data["storage_directory"] == "human_recordings_v1"
         assert len(data["scenario_templates"]) >= 6
 
@@ -646,19 +685,28 @@ async def test_isolated_from_evaluations_and_no_external_api_calls():
 
 @pytest.mark.asyncio
 async def test_audio_duration_discrepancy_validation(tmp_path):
-    """Proves server detects duration discrepancy between reported client seconds and actual decoded audio frames."""
+    """Proves server detects duration discrepancy when client claims long duration but audio is under minimum (<0.5s)."""
     processor = HumanAudioProcessor()
-    # Create actual 3.0 second audio
-    short_wav = create_pcm_wav_bytes(duration_seconds=3.0)
+    # Create actual 0.2 second audio (under minimum duration)
+    short_wav = create_pcm_wav_bytes(duration_seconds=0.2)
     wav_path = tmp_path / "discrepancy_sample.wav"
     wav_path.write_bytes(short_wav)
 
-    # Client deceptively reports 50.0 seconds
-    diag, status = processor.analyze_standard_wav(wav_path, client_duration=50.0)
+    # Client deceptively reports 600.0 seconds
+    diag, status = processor.analyze_standard_wav(wav_path, client_duration=600.0)
 
     assert diag.is_complete_50s is False
     assert status == ValidationStatus.INCOMPLETE_EARLY_STOP
-    assert diag.duration_seconds < 5.0
+    assert diag.duration_seconds < 0.5
+
+    # Conversely, a valid manually stopped 11.7s clip is accepted and marked valid
+    valid_wav = create_pcm_wav_bytes(duration_seconds=11.7)
+    valid_path = tmp_path / "valid_sample.wav"
+    valid_path.write_bytes(valid_wav)
+    diag_valid, status_valid = processor.analyze_standard_wav(valid_path, client_duration=11.7)
+    assert diag_valid.is_complete_50s is True
+    assert status_valid == ValidationStatus.VALID_50S
+    assert diag_valid.duration_seconds == pytest.approx(11.7, rel=1e-2)
 
 
 @pytest.mark.asyncio
@@ -1047,9 +1095,9 @@ async def test_complete_business_script_paired_acceptance_workflow():
         history_runs = history_resp.json()
         assert any(r["human_pair_id"] == pair_id for r in history_runs)
 
-        # Step 6: Verify a 3-second audio file cannot be marked as valid 50s merely because client claims 50s
-        fake_50s_wav = create_pcm_wav_bytes(duration_seconds=3.0)
-        short_rec_id = f"rec_short_fake50_{uid}"
+        # Step 6: Verify a 0.2-second audio file cannot be marked as valid merely because client claims 600s
+        fake_short_wav = create_pcm_wav_bytes(duration_seconds=0.2)
+        short_rec_id = f"rec_short_fake600_{uid}"
         short_resp = await client.post("/api/studio/upload", data={
             "recording_id": short_rec_id,
             "pair_id": f"human_test_short_{uid}",
@@ -1062,10 +1110,158 @@ async def test_complete_business_script_paired_acceptance_workflow():
             "is_transcript_verified": "true",
             "consent_given": "true",
             "consent_statement": "Consent.",
-            "client_duration_seconds": "50.0",  # Deceptive client claim
-        }, files={"audio_file": ("short.wav", fake_50s_wav, "audio/wav")})
+            "client_duration_seconds": "600.0",  # Deceptive client claim
+        }, files={"audio_file": ("short.wav", fake_short_wav, "audio/wav")})
         assert short_resp.status_code == 200
         short_data = short_resp.json()
         assert short_data["diagnostics"]["is_complete_50s"] is False
         assert short_data["validation_status"] == "incomplete_early_stop"
-        assert short_data["diagnostics"]["duration_seconds"] < 5.0
+        assert short_data["diagnostics"]["duration_seconds"] < 0.5
+
+        # Step 7: Verify a 11.7-second manually stopped recording is accepted as valid (not marked incomplete)
+        valid_11_7_wav = create_pcm_wav_bytes(duration_seconds=11.7)
+        rec_11_7_id = f"rec_11_7_{uid}"
+        resp_11_7 = await client.post("/api/studio/upload", data={
+            "recording_id": rec_11_7_id,
+            "pair_id": f"human_test_11_7_{uid}",
+            "utterance_role": "utterance_a",
+            "speaker_id": speaker_id,
+            "language": "hinglish",
+            "category": "quantities_and_numbers",
+            "reference_transcript": "Do plate momos pack kar do",
+            "verified_transcript": "Do plate momos pack kar do",
+            "is_transcript_verified": "true",
+            "consent_given": "true",
+            "consent_statement": "Consent confirmed.",
+            "client_duration_seconds": "11.7",
+        }, files={"audio_file": ("rec_11_7.wav", valid_11_7_wav, "audio/wav")})
+        assert resp_11_7.status_code == 200
+        data_11_7 = resp_11_7.json()
+        assert data_11_7["diagnostics"]["is_complete_50s"] is True
+        assert data_11_7["validation_status"] == "valid_50s"
+        assert data_11_7["diagnostics"]["duration_seconds"] == pytest.approx(11.7, rel=1e-2)
+
+
+def test_short_recording_5s_ingestion_and_validation(temp_studio_storage):
+    """Proves backend accepts and validates short recordings (e.g. 5 seconds) when manually stopped.
+
+    Verifies:
+    1. A 5-second PCM WAV is successfully converted to standardized 16kHz mono 16-bit PCM WAV.
+    2. Diagnostics accurately capture 5.0s duration and report decoding success.
+    3. Storage saves the metadata, raw file, standardized file, and updates manifest.
+    4. Dataset classification marks it as human_verified when transcript is verified and consent is given.
+    5. Empty or corrupted audio bytes (< 64 bytes) are properly rejected by storage validation.
+    """
+    storage = temp_studio_storage
+    storage.register_trusted_speaker("spk_short_human_01")
+    raw_5s_wav = create_pcm_wav_bytes(duration_seconds=5.0)
+
+    # Ingest 5-second recording
+    meta = storage.save_recording(
+        raw_bytes=raw_5s_wav,
+        original_filename="manual_stop_5s.wav",
+        speaker_id="spk_short_human_01",
+        language="hinglish",
+        category="quantities_and_numbers",
+        reference_transcript="Do plate momos",
+        verified_transcript="Do plate momos",
+        is_transcript_verified=True,
+        consent_given=True,
+        consent_statement="Consent given.",
+        client_duration_seconds=5.0,
+        pair_id="pair_short_5s_01",
+        utterance_role="utterance_a",
+    )
+
+    assert meta is not None
+    assert meta.recording_id.startswith("rec_")
+    assert meta.classification == "human_verified"
+    assert meta.diagnostics.decoding_successful is True
+    assert 4.8 <= meta.diagnostics.duration_seconds <= 5.2
+    assert meta.diagnostics.sample_rate_hz == 16000
+    assert meta.diagnostics.channels == 1
+    assert meta.client_duration_seconds == 5.0
+
+    # Verify standardized audio file exists and is valid 16kHz mono WAV
+    std_path = storage.base_dir / meta.standardized_audio_path
+    assert std_path.exists()
+    assert std_path.stat().st_size > 1000
+
+    # Verify empty or invalid audio (< 64 bytes) is rejected
+    with pytest.raises(StorageValidationError, match="Audio payload is empty or too short"):
+        storage.save_recording(
+            raw_bytes=b"",
+            original_filename="empty.wav",
+            speaker_id="spk_short_human_01",
+            language="hinglish",
+            category="quantities_and_numbers",
+            reference_transcript="Empty",
+            consent_given=True,
+            consent_statement="Consent given.",
+        )
+
+    with pytest.raises(StorageValidationError, match="Audio payload is empty or too short"):
+        storage.save_recording(
+            raw_bytes=b"RIFF" + b"\x00" * 20,
+            original_filename="corrupted.wav",
+            speaker_id="spk_short_human_01",
+            language="hinglish",
+            category="quantities_and_numbers",
+            reference_transcript="Corrupted",
+            consent_given=True,
+            consent_statement="Consent given.",
+        )
+
+
+@pytest.mark.asyncio
+async def test_short_recording_5s_api_upload_and_empty_rejection(temp_studio_storage, monkeypatch):
+    """Proves the /api/studio/upload endpoint accepts 5s audio and rejects empty audio."""
+    import app.routers.recording as rec_router
+    from app.main import app as web_app
+
+    monkeypatch.setattr(rec_router, "storage", temp_studio_storage)
+    temp_studio_storage.register_trusted_speaker("spk_short_api_01")
+
+    transport = ASGITransport(app=web_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. Successful 5s recording upload
+        raw_5s_wav = create_pcm_wav_bytes(duration_seconds=5.0)
+        resp = await client.post(
+            "/api/studio/upload",
+            data={
+                "recording_id": "rec_short_5s_test",
+                "pair_id": "pair_short_5s_api",
+                "utterance_role": "utterance_a",
+                "speaker_id": "spk_short_api_01",
+                "language": "hi-IN",
+                "category": "quantities_and_numbers",
+                "reference_transcript": "Paanch rupaye",
+                "verified_transcript": "Paanch rupaye",
+                "is_transcript_verified": "true",
+                "consent_given": "true",
+                "consent_statement": "Consent given.",
+                "client_duration_seconds": "5.0",
+            },
+            files={"audio_file": ("test_5s.wav", raw_5s_wav, "audio/wav")},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["recording_id"] == "rec_short_5s_test"
+        assert 4.8 <= data["diagnostics"]["duration_seconds"] <= 5.2
+        assert data["classification"] == "human_verified"
+
+        # 2. Reject empty audio file
+        empty_resp = await client.post(
+            "/api/studio/upload",
+            data={
+                "speaker_id": "spk_short_api_01",
+                "language": "hi-IN",
+                "category": "quantities_and_numbers",
+                "reference_transcript": "Empty test",
+                "consent_given": "true",
+                "consent_statement": "Consent given.",
+            },
+            files={"audio_file": ("empty.wav", b"", "audio/wav")},
+        )
+        assert empty_resp.status_code == 400
+        assert "Audio payload is empty or too short" in empty_resp.json()["detail"]

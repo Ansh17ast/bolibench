@@ -226,39 +226,73 @@ async def test_acceptance_criteria_1_to_5_end_to_end_pair_workflow():
 
 
 @pytest.mark.asyncio
-async def test_acceptance_criterion_6_short_audio_cannot_be_marked_50s_valid():
-    """Acceptance Criterion 6:
-    Verify that an actual 3-second audio file cannot be marked as a valid 50-second recording
-    merely because the client reports 50 seconds (or countdown reaches zero).
+async def test_acceptance_criterion_6_short_audio_under_minimum_marked_incomplete():
+    """Acceptance Criterion:
+    Verify that an actual 0.2-second audio file (below 0.5s minimum) cannot be marked as valid
+    merely because the client reports 600 seconds.
     """
     uid = uuid.uuid4().hex[:6]
     rec_id = f"rec_short_spoof_{uid}"
 
-    # Generate a true 3.0-second WAV file
-    short_wav = generate_pcm_wav(duration_sec=3.0, sample_rate=16000)
+    # Generate a true 0.2-second WAV file
+    short_wav = generate_pcm_wav(duration_sec=0.2, sample_rate=16000)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        # Client falsely claims client_duration_seconds = 50.0
+        # Client falsely claims client_duration_seconds = 600.0
         resp = await client.post("/api/studio/upload", data={
             "recording_id": rec_id,
             "speaker_id": "spk_duration_test",
             "language": "hi-IN",
             "category": "quantities_and_numbers",
-            "reference_transcript": "Short three second audio",
+            "reference_transcript": "Short 0.2s audio",
             "consent_given": "true",
             "consent_statement": "Consent confirmed.",
-            "client_duration_seconds": "50.0",  # Claiming 50s
-        }, files={"audio_file": ("spoof_50s.wav", short_wav, "audio/wav")})
+            "client_duration_seconds": "600.0",  # Claiming 600s
+        }, files={"audio_file": ("spoof_600s.wav", short_wav, "audio/wav")})
 
         assert resp.status_code == 200
         meta = resp.json()
 
-        # The backend must decode the true audio frames and refuse to classify as valid 50s!
+        # The backend must decode the true audio frames and classify under-minimum as incomplete_early_stop
         assert meta["validation_status"] == "incomplete_early_stop", (
             f"Expected 'incomplete_early_stop' but got {meta['validation_status']}"
         )
         assert meta["diagnostics"]["is_complete_50s"] is False
-        assert meta["diagnostics"]["duration_seconds"] == pytest.approx(3.0, abs=0.1)
+        assert meta["diagnostics"]["duration_seconds"] < 0.5
+
+
+@pytest.mark.asyncio
+async def test_acceptance_criterion_manual_stop_11_7s_accepted_as_valid():
+    """Acceptance Criterion:
+    Verify that an 11.7-second manually stopped recording is accepted and marked valid,
+    without being labeled incomplete_early_stop.
+    """
+    uid = uuid.uuid4().hex[:6]
+    rec_id = f"rec_valid_11_7_{uid}"
+
+    # Generate a true 11.7-second WAV file
+    wav_11_7 = generate_pcm_wav(duration_sec=11.7, sample_rate=16000)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/api/studio/upload", data={
+            "recording_id": rec_id,
+            "speaker_id": "spk_valid_human",
+            "language": "hinglish",
+            "category": "quantities_and_numbers",
+            "reference_transcript": "Do packet chaiye the",
+            "verified_transcript": "Do packet chaiye the",
+            "is_transcript_verified": "true",
+            "consent_given": "true",
+            "consent_statement": "Consent confirmed.",
+            "client_duration_seconds": "11.7",
+        }, files={"audio_file": ("valid_11_7.wav", wav_11_7, "audio/wav")})
+
+        assert resp.status_code == 200
+        meta = resp.json()
+
+        assert meta["validation_status"] == "valid_50s"
+        assert meta["diagnostics"]["is_complete_50s"] is True
+        assert meta["diagnostics"]["duration_seconds"] == pytest.approx(11.7, abs=0.1)
 
 
 @pytest.mark.asyncio

@@ -6,8 +6,8 @@
  * - Explicit browser microphone permission workflow.
  * - Record, Pause, Resume, Stop, Playback, Save, and Retake controls.
  * - Actionable validation checklist replacing silent button disabling.
- * - Visible 50-second countdown with native accessible <progress> element.
- * - Automatic 50-second cutoff; early-stop detection and incomplete marking.
+ * - Visible countdown (up to 600s) with native accessible <progress> element.
+ * - Automatic 600s cutoff; early-stop detection and incomplete marking.
  * - Real-time Web Audio API waveform visualizer.
  * - Upload to /api/studio/upload preserving unmodified raw audio and receiving standardized 16kHz WAV diagnostics.
  * - Automatic reuse of Pair ID, Speaker, Category, and Language from Utterance A to Utterance B.
@@ -18,8 +18,9 @@
 (function () {
   "use strict";
 
-  const TARGET_DURATION_SEC = 50.0;
-  const COMPLETION_THRESHOLD_SEC = 49.5;
+  let MAX_RECORDING_DURATION_SEC = 600.0;
+  let TARGET_DURATION_SEC = MAX_RECORDING_DURATION_SEC;
+  const COMPLETION_THRESHOLD_SEC = 0.5; // Short recordings (e.g. >= 0.5s) are valid and can be saved
 
   // Studio State
   let audioStream = null;
@@ -42,6 +43,7 @@
   let isVerUserEdited = false;
   let isSaveInProgress = false;
   let isMicRequestInProgress = false;
+  let isTranscribingStudio = false;
   const SESSION_PAIR_KEY = "bolibench_studio_in_progress_pair";
 
   // Active Contrast Pair Context
@@ -151,6 +153,11 @@
     el.btnCopyRefToVer = document.getElementById("btnStudioCopyRefToVer");
     el.consentCheckbox = document.getElementById("studioConsentCheckbox");
     el.consentText = document.getElementById("studioConsentText");
+    el.gnaniConsentCheckbox = document.getElementById("studioGnaniConsentCheckbox");
+    el.asrDraftBadge = document.getElementById("studioAsrDraftBadge");
+    el.btnRetryStt = document.getElementById("btnStudioRetryStt");
+    el.sttStatus = document.getElementById("studioSttStatus");
+    el.sttDurationNotice = document.getElementById("studioSttDurationNotice");
 
     // Library & Pair Elements
     el.libraryTableBody = document.getElementById("studioLibraryTableBody");
@@ -586,7 +593,7 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Recording & 50-Second Countdown Control
+  // Recording & Countdown Control (Studio max 600s, Gnani STT max 60s)
   // ---------------------------------------------------------------------------
 
   function startRecording() {
@@ -648,10 +655,11 @@
     el.btnPause.textContent = "⏸ Pause";
     el.btnStop.disabled = false;
     el.btnRetake.disabled = true;
+    if (el.btnSave) el.btnSave.disabled = true;
 
     setStatePill("RECORDING (LIVE)", "status-active status-recording-pulse");
     if (el.waveformStatusOverlay) {
-      el.waveformStatusOverlay.textContent = "🔴 Recording in progress — 50-second benchmark standard";
+      el.waveformStatusOverlay.textContent = "🔴 Recording in progress — Maximum duration 600s (10 min)";
     }
 
     runCountdownLoop();
@@ -671,8 +679,8 @@
 
       const now = performance.now();
       const elapsedMs = now - recordingStartTime - pausedElapsedTime;
-      const elapsedSec = Math.min(TARGET_DURATION_SEC, Math.max(0.0, elapsedMs / 1000.0));
-      const remainingSec = Math.max(0.0, TARGET_DURATION_SEC - elapsedSec);
+      const elapsedSec = Math.min(MAX_RECORDING_DURATION_SEC, Math.max(0.0, elapsedMs / 1000.0));
+      const remainingSec = Math.max(0.0, MAX_RECORDING_DURATION_SEC - elapsedSec);
 
       lastClientDuration = elapsedSec;
 
@@ -680,13 +688,14 @@
         el.countdownTimer.textContent = `${remainingSec.toFixed(1)}s remaining`;
       }
       if (el.elapsedTimer) {
-        el.elapsedTimer.textContent = `${elapsedSec.toFixed(1)}s / ${TARGET_DURATION_SEC.toFixed(1)}s`;
+        el.elapsedTimer.textContent = `${elapsedSec.toFixed(1)}s / ${MAX_RECORDING_DURATION_SEC.toFixed(1)}s`;
       }
       if (el.countdownProgress) {
+        el.countdownProgress.max = MAX_RECORDING_DURATION_SEC;
         el.countdownProgress.value = elapsedSec;
       }
 
-      if (elapsedSec >= TARGET_DURATION_SEC) {
+      if (elapsedSec >= MAX_RECORDING_DURATION_SEC) {
         clearInterval(countdownTimerId);
         stopRecording(true);
       }
@@ -728,14 +737,178 @@
     isRecording = false;
     isPaused = false;
 
+    if (recordingStartTime > 0 && !autoStop) {
+      const now = performance.now();
+      const elapsedMs = now - recordingStartTime - pausedElapsedTime;
+      const elapsedSec = Math.min(MAX_RECORDING_DURATION_SEC, Math.max(0.0, elapsedMs / 1000.0));
+      lastClientDuration = elapsedSec;
+      if (el.countdownTimer) {
+        el.countdownTimer.textContent = `${Math.max(0.0, MAX_RECORDING_DURATION_SEC - elapsedSec).toFixed(1)}s remaining`;
+      }
+      if (el.elapsedTimer) {
+        el.elapsedTimer.textContent = `${elapsedSec.toFixed(1)}s / ${MAX_RECORDING_DURATION_SEC.toFixed(1)}s`;
+      }
+      if (el.countdownProgress) {
+        el.countdownProgress.max = MAX_RECORDING_DURATION_SEC;
+        el.countdownProgress.value = elapsedSec;
+      }
+    } else if (autoStop) {
+      lastClientDuration = MAX_RECORDING_DURATION_SEC;
+      if (el.countdownTimer) {
+        el.countdownTimer.textContent = "0.0s remaining";
+      }
+      if (el.elapsedTimer) {
+        el.elapsedTimer.textContent = `${MAX_RECORDING_DURATION_SEC.toFixed(1)}s / ${MAX_RECORDING_DURATION_SEC.toFixed(1)}s`;
+      }
+      if (el.countdownProgress) {
+        el.countdownProgress.max = MAX_RECORDING_DURATION_SEC;
+        el.countdownProgress.value = MAX_RECORDING_DURATION_SEC;
+      }
+    }
+
+    if (el.btnStop) el.btnStop.disabled = true;
+    if (el.btnPause) el.btnPause.disabled = true;
+
     if (mediaRecorder.state !== "inactive") {
       mediaRecorder.stop();
     }
 
     if (el.waveformStatusOverlay) {
       el.waveformStatusOverlay.textContent = autoStop
-        ? "✓ 50-Second automatic cutoff reached."
+        ? "✓ 600-Second safety limit reached. Recording stopped."
         : "⏹ Recording stopped by user.";
+    }
+  }
+
+  async function transcribeStudioRecording(blob) {
+    if (!blob || blob.size === 0) {
+      console.warn("transcribeStudioRecording: No audio blob to transcribe.");
+      return;
+    }
+
+    if (isTranscribingStudio) {
+      console.warn("transcribeStudioRecording: Transcription already in progress.");
+      return;
+    }
+
+    // Check duration boundary: Gnani REST STT accepts <= 60.0s
+    if (lastClientDuration > 60.0) {
+      if (el.sttDurationNotice) {
+        el.sttDurationNotice.textContent = `Notice: Recorded audio (${lastClientDuration.toFixed(1)}s) exceeds the 60.0-second limit for automatic Gnani REST transcription. Recordings up to 600s are fully preserved locally for manual ground truth verification without external STT.`;
+        el.sttDurationNotice.style.display = "block";
+      }
+      if (el.sttStatus) el.sttStatus.style.display = "none";
+      if (el.btnRetryStt) el.btnRetryStt.style.display = "none";
+      return;
+    }
+
+    // Check explicit consent
+    const consentGiven = Boolean(el.gnaniConsentCheckbox && el.gnaniConsentCheckbox.checked);
+    if (!consentGiven) {
+      console.info("transcribeStudioRecording: Gnani transmission consent not given. Zero external calls made.");
+      if (el.sttStatus) {
+        el.sttStatus.textContent = "Automatic transcription requires explicit consent. Check the box below to authorize Gnani AI transcription.";
+        el.sttStatus.style.display = "block";
+        el.sttStatus.style.background = "#eff6ff";
+        el.sttStatus.style.color = "#1e40af";
+        el.sttStatus.style.border = "1px solid #bfdbfe";
+      }
+      return;
+    }
+
+    isTranscribingStudio = true;
+
+    if (el.sttStatus) {
+      el.sttStatus.innerHTML = '<span class="spinner" style="display:inline-block; margin-right:0.35rem;">⏳</span> Transcribing audio with Gnani AI...';
+      el.sttStatus.style.display = "block";
+      el.sttStatus.style.background = "#eff6ff";
+      el.sttStatus.style.color = "#1e40af";
+      el.sttStatus.style.border = "1px solid #bfdbfe";
+    }
+    if (el.sttDurationNotice) el.sttDurationNotice.style.display = "none";
+    if (el.btnRetryStt) el.btnRetryStt.style.display = "none";
+
+    try {
+      const selectedRole = (el.utteranceRoleSelect && el.utteranceRoleSelect.value) || "utterance_a";
+      const selectedLang = (el.languageSelect && el.languageSelect.value) || "hi-IN";
+
+      let uploadBlob = blob;
+      let filename = "studio_recording.wav";
+
+      // Client-side WAV conversion integration via BoliAudioConverter if available
+      const converter = (typeof window !== "undefined" && (window.BoliAudioConverter || window.BoliBenchAudioConverter)) || null;
+      if (converter && typeof converter.convertAudioFile === "function") {
+        try {
+          const convResult = await converter.convertAudioFile(blob, { maxDurationSeconds: 60.0 });
+          if (convResult && (convResult.file || convResult.convertedFile)) {
+            uploadBlob = convResult.file || convResult.convertedFile;
+            filename = "studio_recording_pcm.wav";
+          }
+        } catch (convErr) {
+          console.warn("Client-side WAV conversion fallback, sending raw blob:", convErr);
+        }
+      }
+
+      const formData = new FormData();
+      formData.append("audio_file", uploadBlob, filename);
+      formData.append("language_code", selectedLang);
+      formData.append("utterance_role", selectedRole);
+      formData.append("consent_given", "true");
+
+      const resp = await fetch("/api/studio/transcribe", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!resp.ok) {
+        let errDetail = `Server returned HTTP ${resp.status}`;
+        try {
+          const errData = await resp.json();
+          if (errData && errData.detail) errDetail = errData.detail;
+        } catch (_) {}
+        throw new Error(errDetail);
+      }
+
+      const data = await resp.json();
+      if (data && data.transcript) {
+        // Place draft into Verified Transcript (Spoken Audio Ground Truth) field
+        if (el.verifiedTranscript) {
+          el.verifiedTranscript.value = data.transcript;
+          isVerUserEdited = false;
+        }
+        // Clearly label it unverified
+        if (el.asrDraftBadge) {
+          el.asrDraftBadge.style.display = "inline-block";
+        }
+        // Do NOT auto-check manual verification
+        if (el.transcriptVerifiedCheckbox) {
+          el.transcriptVerifiedCheckbox.checked = false;
+        }
+        // Do NOT touch Reference Transcript (el.referenceTranscript)
+
+        if (el.sttStatus) {
+          el.sttStatus.innerHTML = `✓ Transcribed with ${data.provider || "Gnani AI"} (${data.credits_consumed || 1} credit). Editable ASR draft placed below &mdash; please verify against audio before saving.`;
+          el.sttStatus.style.background = "#f0fdf4";
+          el.sttStatus.style.color = "#166534";
+          el.sttStatus.style.border = "1px solid #bbf7d0";
+        }
+        updateValidationChecklist();
+      }
+    } catch (err) {
+      console.error("Studio automatic transcription failed:", err);
+      // Preserve recordedBlob in memory and show retry button
+      if (el.btnRetryStt) {
+        el.btnRetryStt.style.display = "inline-block";
+      }
+      if (el.sttStatus) {
+        const safeErrMsg = (err && err.message) ? String(err.message).replace(/[A-Za-z0-9_-]{24,}/g, "[REDACTED]") : "Network error";
+        el.sttStatus.textContent = `Transcription failed: ${safeErrMsg}. Audio preserved; click 'Retry STT' to attempt again.`;
+        el.sttStatus.style.background = "#fef2f2";
+        el.sttStatus.style.color = "#991b1b";
+        el.sttStatus.style.border = "1px solid #fecaca";
+      }
+    } finally {
+      isTranscribingStudio = false;
     }
   }
 
@@ -746,7 +919,9 @@
 
     if (el.reviewPlayer) {
       el.reviewPlayer.src = recordedAudioUrl;
-      el.reviewPlayer.load();
+      if (typeof el.reviewPlayer.load === "function") {
+        el.reviewPlayer.load();
+      }
 
       // Listen for decoded audio metadata to verify actual playable duration
       el.reviewPlayer.onloadedmetadata = () => {
@@ -764,7 +939,7 @@
 
     // Decode actual audio frames using Web Audio API to calculate true decoded duration
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    if (AudioCtx && recordedBlob) {
+    if (AudioCtx && recordedBlob && typeof recordedBlob.arrayBuffer === "function") {
       recordedBlob.arrayBuffer().then((buffer) => {
         const decodeCtx = new AudioCtx();
         decodeCtx.decodeAudioData(buffer.slice(0))
@@ -786,54 +961,84 @@
       });
     }
 
+    const hasCapturedAudio = Boolean(recordedBlob && recordedBlob.size > 0 && (lastClientDuration > 0 || !mediaRecorder));
+
     if (el.reviewSection) {
-      el.reviewSection.style.display = "block";
+      el.reviewSection.style.display = hasCapturedAudio ? "block" : "none";
     }
 
     updateRecordingCompletionNotice();
 
-    // If verified transcript is empty and user hasn't typed in it yet,
-    // pre-fill with reference transcript as a convenient starting point for manual review
-    // (preserving whatever reference transcript the user actually entered)
-    if (el.verifiedTranscript && !isVerUserEdited && !el.verifiedTranscript.value.trim()) {
+    // Check duration and trigger automatic transcription if consented
+    if (lastClientDuration > 60.0) {
+      if (el.sttDurationNotice) {
+        el.sttDurationNotice.textContent = `Notice: Recorded audio (${lastClientDuration.toFixed(1)}s) exceeds the 60.0-second limit for automatic Gnani REST transcription. Recordings up to 600s are fully preserved locally for manual ground truth verification without external STT.`;
+        el.sttDurationNotice.style.display = "block";
+      }
+      if (el.sttStatus) el.sttStatus.style.display = "none";
+      if (el.btnRetryStt) el.btnRetryStt.style.display = "none";
+    } else {
+      if (el.sttDurationNotice) el.sttDurationNotice.style.display = "none";
+      if (el.gnaniConsentCheckbox && el.gnaniConsentCheckbox.checked) {
+        transcribeStudioRecording(recordedBlob);
+      } else {
+        if (el.sttStatus) el.sttStatus.style.display = "none";
+        if (el.btnRetryStt) el.btnRetryStt.style.display = "none";
+      }
+    }
+    // Reference transcript and verified ground truth are kept strictly separate.
+    // Speaker intended text is not guessed from ASR; users can click 'Copy Intended' if desired.
+
+    if (false) {
       const refVal = (el.referenceTranscript && el.referenceTranscript.value.trim()) || "";
       if (refVal) {
         el.verifiedTranscript.value = refVal;
       }
     }
 
-    el.btnRecord.disabled = false;
+    el.btnRecord.disabled = !audioStream;
     el.btnPause.disabled = true;
     el.btnPause.textContent = "⏸ Pause";
     el.btnStop.disabled = true;
-    el.btnRetake.disabled = false;
+    el.btnRetake.disabled = !hasCapturedAudio;
+    if (el.btnSave) el.btnSave.disabled = false;
 
     updateValidationChecklist();
   }
 
   function updateRecordingCompletionNotice() {
-    const isComplete = lastClientDuration >= COMPLETION_THRESHOLD_SEC;
+    const hasCapturedAudio = Boolean(recordedBlob && recordedBlob.size > 0 && (lastClientDuration > 0 || !mediaRecorder));
+    const hasValidDuration = lastClientDuration >= COMPLETION_THRESHOLD_SEC && lastClientDuration <= MAX_RECORDING_DURATION_SEC;
 
-    if (isComplete) {
+    if (hasCapturedAudio && hasValidDuration) {
       if (el.completeNotice) {
         el.completeNotice.style.display = "flex";
         const txt = el.completeNotice.querySelector(".notice-text");
         if (txt) {
-          txt.textContent = `Valid 50-Second Recording (${lastClientDuration.toFixed(1)}s). Ready for review and storage.`;
+          txt.textContent = `Valid Recording (${lastClientDuration.toFixed(1)}s). Ready for review and storage.`;
         }
       }
       if (el.earlyStopWarning) el.earlyStopWarning.style.display = "none";
-      setStatePill("50S COMPLETE", "status-active");
-    } else {
+      setStatePill("RECORDING READY", "status-active");
+    } else if (hasCapturedAudio) {
+      if (el.completeNotice) el.completeNotice.style.display = "none";
       if (el.earlyStopWarning) {
         el.earlyStopWarning.style.display = "flex";
+        const title = el.earlyStopWarning.querySelector("strong");
         const txt = el.earlyStopWarning.querySelector(".warning-text");
-        if (txt) {
-          txt.textContent = `Clip stopped early at ${lastClientDuration.toFixed(1)} seconds. Marked as INCOMPLETE. Per BoliBench benchmark rules, this clip will be saved as 'incomplete_early_stop' and does not count as a valid 50-second recording.`;
+        if (lastClientDuration < COMPLETION_THRESHOLD_SEC) {
+          if (title) title.textContent = "Clip Too Short — Marked INCOMPLETE";
+          if (txt) txt.textContent = `Recording duration (${lastClientDuration.toFixed(1)}s) is under the ${COMPLETION_THRESHOLD_SEC.toFixed(1)}s minimum required for acoustic analysis.`;
+        } else if (lastClientDuration > MAX_RECORDING_DURATION_SEC) {
+          if (title) title.textContent = "Clip Too Long — Marked INCOMPLETE";
+          if (txt) txt.textContent = `Recording duration (${lastClientDuration.toFixed(1)}s) exceeds the ${MAX_RECORDING_DURATION_SEC.toFixed(0)}s maximum limit.`;
         }
       }
+      setStatePill("INVALID CLIP DURATION", "status-warning");
+    } else {
       if (el.completeNotice) el.completeNotice.style.display = "none";
-      setStatePill("INCOMPLETE (EARLY STOP)", "status-warning");
+      if (el.earlyStopWarning) el.earlyStopWarning.style.display = "none";
+      setStatePill(audioStream ? "MIC READY" : "MIC REQUIRED", audioStream ? "status-active" : "status-warning");
     }
   }
 
@@ -855,19 +1060,34 @@
     if (el.completeNotice) el.completeNotice.style.display = "none";
     if (el.diagnosticsCard) el.diagnosticsCard.style.display = "none";
     if (el.reviewPlayer) el.reviewPlayer.src = "";
+    if (el.asrDraftBadge) el.asrDraftBadge.style.display = "none";
+    if (el.btnRetryStt) el.btnRetryStt.style.display = "none";
+    if (el.sttStatus) {
+      el.sttStatus.style.display = "none";
+      el.sttStatus.textContent = "";
+    }
+    if (el.sttDurationNotice) {
+      el.sttDurationNotice.style.display = "none";
+      el.sttDurationNotice.textContent = "";
+    }
+    isTranscribingStudio = false;
 
-    if (el.countdownTimer) el.countdownTimer.textContent = `${TARGET_DURATION_SEC.toFixed(1)}s remaining`;
-    if (el.elapsedTimer) el.elapsedTimer.textContent = `0.0s / ${TARGET_DURATION_SEC.toFixed(1)}s`;
-    if (el.countdownProgress) el.countdownProgress.value = 0;
+    if (el.countdownTimer) el.countdownTimer.textContent = `${MAX_RECORDING_DURATION_SEC.toFixed(1)}s remaining`;
+    if (el.elapsedTimer) el.elapsedTimer.textContent = `0.0s / ${MAX_RECORDING_DURATION_SEC.toFixed(1)}s`;
+    if (el.countdownProgress) {
+      el.countdownProgress.max = MAX_RECORDING_DURATION_SEC;
+      el.countdownProgress.value = 0;
+    }
 
     if (el.waveformStatusOverlay) {
-      el.waveformStatusOverlay.textContent = "Microphone ready. Click 'Start 50s Recording'.";
+      el.waveformStatusOverlay.textContent = "Microphone ready. Click 'Start Recording'.";
     }
 
     el.btnRecord.disabled = !audioStream;
     el.btnPause.disabled = true;
     el.btnStop.disabled = true;
     el.btnRetake.disabled = true;
+    if (el.btnSave) el.btnSave.disabled = false;
 
     setStatePill("MIC READY", "status-active");
     updateValidationChecklist();
@@ -879,16 +1099,23 @@
 
   function getValidationState() {
     const micActive = Boolean(audioStream);
-    const hasAudio = Boolean(recordedBlob && recordedBlob.size > 0 && !isRecording);
+    const hasAudio = Boolean(
+      recordedBlob &&
+      recordedBlob.size > 0 &&
+      !isRecording &&
+      (lastClientDuration > 0 || !mediaRecorder)
+    );
+    const durationValid = lastClientDuration >= COMPLETION_THRESHOLD_SEC && lastClientDuration <= MAX_RECORDING_DURATION_SEC;
     const hasRef = Boolean(el.referenceTranscript && el.referenceTranscript.value.trim().length > 0);
     const hasVer = Boolean(el.verifiedTranscript && el.verifiedTranscript.value.trim().length > 0);
     const hasConsent = Boolean(el.consentCheckbox && el.consentCheckbox.checked);
 
-    const isAllValid = micActive && hasAudio && hasRef && hasVer && hasConsent;
+    const isAllValid = micActive && hasAudio && durationValid && hasRef && hasVer && hasConsent;
 
     return {
       micActive,
       hasAudio,
+      durationValid,
       hasRef,
       hasVer,
       hasConsent,
@@ -900,7 +1127,7 @@
     const state = getValidationState();
 
     updateChecklistItem(el.checkItemMic, state.micActive, "Microphone active");
-    updateChecklistItem(el.checkItemAudio, state.hasAudio, state.hasAudio ? `Audio captured (${lastClientDuration.toFixed(1)}s)` : "Audio captured (> 0s)");
+    updateChecklistItem(el.checkItemAudio, state.hasAudio && state.durationValid, state.hasAudio ? `Audio captured (${lastClientDuration.toFixed(1)}s)` : "Audio captured (> 0s)");
     updateChecklistItem(el.checkItemRef, state.hasRef, "Intended transcript");
     updateChecklistItem(el.checkItemVer, state.hasVer, "Verified transcript");
     updateChecklistItem(el.checkItemConsent, state.hasConsent, "Explicit consent checkbox");
@@ -912,6 +1139,9 @@
       } else if (!state.hasAudio) {
         el.readinessBadge.textContent = "Needs Audio Recording";
         el.readinessBadge.className = "badge-pill-source-synth";
+      } else if (!state.durationValid) {
+        el.readinessBadge.textContent = "Invalid Recording Duration";
+        el.readinessBadge.className = "spec-badge badge-warning";
       } else if (!state.hasConsent) {
         el.readinessBadge.textContent = "Explicit Consent Required";
         el.readinessBadge.className = "spec-badge badge-warning";
@@ -961,8 +1191,14 @@
     }
 
     if (!state.hasAudio) {
-      showSaveError("No recording captured. Click '🔴 Start 50s Recording' and record your voice sample first.");
+      showSaveError("No recording captured. Record your voice sample first before saving.");
       if (el.btnRecord) el.btnRecord.focus();
+      return;
+    }
+
+    if (!state.durationValid) {
+      const duration = lastClientDuration.toFixed(1);
+      showSaveError(`Recording duration must be at least ${COMPLETION_THRESHOLD_SEC.toFixed(1)} seconds and no more than ${MAX_RECORDING_DURATION_SEC.toFixed(0)} seconds (captured ${duration}s).`);
       return;
     }
 
@@ -1002,6 +1238,10 @@
 
   async function saveRecordingToBackend() {
     if (isSaveInProgress) return;
+    if (!recordedBlob || recordedBlob.size === 0 || lastClientDuration < COMPLETION_THRESHOLD_SEC || lastClientDuration > MAX_RECORDING_DURATION_SEC) {
+      showSaveError(`Cannot save: audio must be between ${COMPLETION_THRESHOLD_SEC.toFixed(1)} and ${MAX_RECORDING_DURATION_SEC.toFixed(0)} seconds.`);
+      return;
+    }
     isSaveInProgress = true;
 
     // Immediately disable Save and Retake synchronously before ANY await
@@ -1052,7 +1292,7 @@
           if (el.uploadProgress) el.uploadProgress.value = 35;
           if (el.uploadStatusText) el.uploadStatusText.textContent = "Converting audio to standard 16kHz mono PCM WAV in-browser...";
 
-          const convResult = await converter.convertAudioFile(recordedBlob);
+          const convResult = await converter.convertAudioFile(recordedBlob, { maxDurationSeconds: MAX_RECORDING_DURATION_SEC });
           if (convResult && (convResult.file || convResult.convertedFile)) {
             uploadFile = convResult.file || convResult.convertedFile;
             uploadFilename = `${recId || "recording"}_pcm.wav`;
@@ -1157,7 +1397,7 @@
     } finally {
       isSaveInProgress = false;
       if (el.btnSave) el.btnSave.disabled = false;
-      if (el.btnRetake) el.btnRetake.disabled = !recordedBlob;
+      if (el.btnRetake) el.btnRetake.disabled = !recordedBlob || recordedBlob.size === 0;
       updateValidationChecklist();
     }
   }
@@ -1334,9 +1574,11 @@
     const diag = meta.diagnostics || {};
     const statusVal = meta.validation_status || "valid_50s";
 
-    let statusBadge = '<span class="spec-badge badge-active">✓ Valid 50s</span>';
+    let statusBadge = '<span class="spec-badge badge-active">✓ Valid Recording</span>';
     if (statusVal === "incomplete_early_stop") {
-      statusBadge = '<span class="spec-badge badge-warning">⚠️ Incomplete Early Stop</span>';
+      statusBadge = '<span class="spec-badge badge-warning">⚠️ Too Short (&lt;0.5s)</span>';
+    } else if (statusVal === "duration_exceeded") {
+      statusBadge = '<span class="spec-badge badge-error">⚠️ Duration Exceeded (&gt;600s)</span>';
     } else if (statusVal === "silent_warning") {
       statusBadge = '<span class="spec-badge badge-warning">⚠️ Silent Audio Detected</span>';
     } else if (statusVal === "clipped_warning") {
@@ -1359,7 +1601,7 @@
         </div>
         <div class="diag-item">
           <span class="diag-label">Validated Duration</span>
-          <span class="diag-value"><strong>${(diag.duration_seconds || 0).toFixed(2)}s</strong> (${diag.is_complete_50s ? "50s standard met" : "Early stop"})</span>
+          <span class="diag-value"><strong>${(diag.duration_seconds || 0).toFixed(2)}s</strong> (${(diag.duration_seconds && diag.duration_seconds > MAX_RECORDING_DURATION_SEC) ? "Exceeds 600s limit" : (diag.is_complete_50s || (diag.duration_seconds && diag.duration_seconds >= 0.5)) ? "Valid duration" : "Too short"})</span>
         </div>
         <div class="diag-item">
           <span class="diag-label">RMS Amplitude (Silence Check)</span>
@@ -1399,7 +1641,7 @@
         el.libraryTableBody.innerHTML = `
           <tr>
             <td colspan="8" class="text-center" style="padding: 2rem; color: var(--text-muted);">
-              No human audio recordings saved yet. Record a 50-second clip above to build your dataset.
+              No human audio recordings saved yet. Record a voice clip above to build your dataset.
             </td>
           </tr>
         `;
@@ -1408,9 +1650,14 @@
 
       el.libraryTableBody.innerHTML = records
         .map((r) => {
-          const statusBadge = r.is_complete_50s
-            ? '<span class="status-pill status-active">✓ 50s Valid</span>'
-            : '<span class="status-pill status-warning">⚠️ Incomplete Early Stop</span>';
+          const isDurationValid = r.validation_status !== "duration_exceeded" &&
+            r.validation_status !== "incomplete_early_stop" &&
+            (r.is_complete_50s || (r.duration_seconds && r.duration_seconds >= 0.5 && r.duration_seconds <= MAX_RECORDING_DURATION_SEC));
+          const statusBadge = isDurationValid
+            ? '<span class="status-pill status-active">✓ Valid</span>'
+            : (r.validation_status === "duration_exceeded" || (r.duration_seconds && r.duration_seconds > MAX_RECORDING_DURATION_SEC))
+            ? '<span class="status-pill status-error">⚠️ >600s</span>'
+            : '<span class="status-pill status-warning">⚠️ Incomplete</span>';
 
           const verBadge = r.is_transcript_verified
             ? '<span class="spec-badge badge-active">✓ Verified</span>'
@@ -1460,7 +1707,7 @@
       // Update progress counter
       const completedCount = pairs.filter((p) => p.utterance_a && p.utterance_b).length;
       if (el.pairsProgressBadge) {
-        el.pairsProgressBadge.textContent = `${completedCount} / 50 pairs recorded`;
+        el.pairsProgressBadge.textContent = `${completedCount} pairs recorded`;
       }
 
       if (pairs.length === 0) {
@@ -1770,6 +2017,34 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Studio Dynamic Configuration Loader
+  // ---------------------------------------------------------------------------
+
+  async function loadStudioConfig() {
+    try {
+      const resp = await fetch("/api/studio/config");
+      if (!resp.ok) return;
+      const cfg = await resp.json();
+      if (typeof cfg.max_duration_seconds === "number" && cfg.max_duration_seconds > 0) {
+        MAX_RECORDING_DURATION_SEC = cfg.max_duration_seconds;
+        TARGET_DURATION_SEC = MAX_RECORDING_DURATION_SEC;
+      } else if (typeof cfg.target_duration_seconds === "number" && cfg.target_duration_seconds > 0) {
+        MAX_RECORDING_DURATION_SEC = cfg.target_duration_seconds;
+        TARGET_DURATION_SEC = MAX_RECORDING_DURATION_SEC;
+      }
+      if (!isRecording && (!recordedBlob || recordedBlob.size === 0)) {
+        if (el.countdownTimer) el.countdownTimer.textContent = `${MAX_RECORDING_DURATION_SEC.toFixed(1)}s remaining`;
+        if (el.elapsedTimer) el.elapsedTimer.textContent = `0.0s / ${MAX_RECORDING_DURATION_SEC.toFixed(1)}s`;
+        if (el.countdownProgress) {
+          el.countdownProgress.max = MAX_RECORDING_DURATION_SEC;
+        }
+      }
+    } catch (e) {
+      console.warn("Could not load studio config:", e);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Initialization & Event Binding
   // ---------------------------------------------------------------------------
 
@@ -1838,6 +2113,30 @@
         }
       });
     }
+    if (el.btnRetryStt) {
+      el.btnRetryStt.addEventListener("click", () => {
+        if (!recordedBlob) {
+          alert("No recorded audio available to retry transcription.");
+          return;
+        }
+        if (lastClientDuration > 60.0) {
+          alert("Audio duration exceeds 60.0 seconds limit for Gnani REST STT.");
+          return;
+        }
+        if (!el.gnaniConsentCheckbox || !el.gnaniConsentCheckbox.checked) {
+          alert("Please check the Gnani AI consent box to authorize transcription.");
+          return;
+        }
+        transcribeStudioRecording(recordedBlob);
+      });
+    }
+    if (el.gnaniConsentCheckbox) {
+      el.gnaniConsentCheckbox.addEventListener("change", () => {
+        if (el.gnaniConsentCheckbox.checked && recordedBlob && lastClientDuration <= 60.0 && (!el.verifiedTranscript || !el.verifiedTranscript.value.trim())) {
+          transcribeStudioRecording(recordedBlob);
+        }
+      });
+    }
     if (el.utteranceRoleSelect) {
       el.utteranceRoleSelect.addEventListener("change", () => {
         const role = el.utteranceRoleSelect.value;
@@ -1877,10 +2176,21 @@
     }
 
     // Initial state
+    if (el.btnRecord && !audioStream) el.btnRecord.disabled = true;
+    if (el.btnStop) el.btnStop.disabled = true;
+    if (el.btnPause) el.btnPause.disabled = true;
+    if (el.btnRetake) el.btnRetake.disabled = true;
+    if (el.countdownTimer) el.countdownTimer.textContent = `${MAX_RECORDING_DURATION_SEC.toFixed(1)}s remaining`;
+    if (el.elapsedTimer) el.elapsedTimer.textContent = `0.0s / ${MAX_RECORDING_DURATION_SEC.toFixed(1)}s`;
+    if (el.countdownProgress) {
+      el.countdownProgress.max = MAX_RECORDING_DURATION_SEC;
+      el.countdownProgress.value = 0;
+    }
     generateNewRecordingId();
     checkInitialPermission();
     loadStudioRecordings();
     loadStudioPairs();
+    loadStudioConfig();
 
     // Check if an in-progress pair should be resumed from sessionStorage
     tryResumeInProgressPair().then((resumed) => {
@@ -1898,6 +2208,20 @@
     closeVerifyModal: closeVerifyModal,
     prepareRecordB: prepareRecordB,
     goToEvaluation: goToEvaluation,
+    transcribeStudioRecording: transcribeStudioRecording,
+    getIsTranscribingStudio: () => isTranscribingStudio,
+    // Recording controls
+    startRecording: startRecording,
+    stopRecording: stopRecording,
+    pauseRecording: pauseRecording,
+    retakeRecording: retakeRecording,
+    loadStudioConfig: loadStudioConfig,
+    get MAX_RECORDING_DURATION_SEC() { return MAX_RECORDING_DURATION_SEC; },
+    set MAX_RECORDING_DURATION_SEC(v) { MAX_RECORDING_DURATION_SEC = Number(v); TARGET_DURATION_SEC = MAX_RECORDING_DURATION_SEC; },
+    getLastClientDuration: () => lastClientDuration,
+    setLastClientDuration: (d) => { lastClientDuration = Number(d); },
+    getIsRecording: () => isRecording,
+    getIsPaused: () => isPaused,
     // Test inspection hooks
     handleScenarioTemplateSelected: handleScenarioTemplateSelected,
     saveRecordingToBackend: saveRecordingToBackend,

@@ -36,6 +36,7 @@ class UtteranceRole(str, Enum):
 class ValidationStatus(str, Enum):
     """Quality and duration validation status of a recording."""
     VALID_50S = "valid_50s"
+    VALID_RECORDING = "valid_recording"
     INCOMPLETE_EARLY_STOP = "incomplete_early_stop"
     DURATION_EXCEEDED = "duration_exceeded"
     SILENT_WARNING = "silent_warning"
@@ -57,7 +58,7 @@ class AudioDiagnostics(BaseModel):
     sample_rate_hz: int = Field(..., description="Audio sample rate (must be 16000 Hz)")
     channels: int = Field(..., description="Audio channel count (must be 1 mono)")
     duration_seconds: float = Field(..., description="Exact duration in seconds")
-    is_complete_50s: bool = Field(..., description="True if clip completed full 50s (>= 49.5s and <= 50.5s)")
+    is_complete_50s: bool = Field(..., description="True if clip completed valid recording duration (<= 600s)")
     rms_amplitude: float = Field(..., description="Root-mean-square amplitude [0.0, 1.0]")
     peak_amplitude: float = Field(..., description="Maximum absolute sample value [0.0, 1.0]")
     is_silent: bool = Field(..., description="Flag indicating audio signal is below audible speech threshold")
@@ -131,11 +132,29 @@ class ContrastPairVerification(BaseModel):
     classification: str = Field(DatasetClassification.UNVERIFIED.value, description="Dataset provenance classification (human_verified, synthetic, test_artifact, unverified)")
 
 
+class StudioTranscriptionResponse(BaseModel):
+    """Response returned when transcribing a studio audio recording."""
+    success: bool = True
+    transcript: str
+    language_code: str
+    utterance_role: str = "utterance_a"
+    duration_seconds: float
+    provider: str
+    credits_consumed: int = 0
+    external_calls: int = 0
+    disclaimer: str
+
+
 class StudioConfigResponse(BaseModel):
     """Configuration and capabilities exposed to the recording studio UI."""
     supported_categories: List[Dict[str, str]]
     supported_languages: List[Dict[str, str]]
-    target_duration_seconds: float = 50.0
+    target_duration_seconds: float = 600.0
+    max_duration_seconds: float = 600.0
     standard_format: str = "16 kHz, Mono, 16-bit PCM WAV"
     storage_directory: str = "human_recordings_v1"
     scenario_templates: List[Dict[str, str]]
+    live_transcription_enabled: bool = False
+    stt_provider_configured: bool = False
+    stt_provider_name: Optional[str] = None
+    max_stt_duration_seconds: float = 60.0

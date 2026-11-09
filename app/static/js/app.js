@@ -681,6 +681,339 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // ===========================================================================
+  // Live Evaluation Automatic Recording & In-Process Transcription Engine
+  // ===========================================================================
+  const MAX_LIVE_RECORDING_DURATION_SEC = 60.0;
+
+  const btnLiveRecordA = document.getElementById("btnLiveRecordA");
+  const btnLiveStopA = document.getElementById("btnLiveStopA");
+  const btnLiveRetryA = document.getElementById("btnLiveRetryA");
+  const liveTimerA = document.getElementById("liveTimerA");
+  const liveTranscribingStatusA = document.getElementById("liveTranscribingStatusA");
+  const liveRecordErrorA = document.getElementById("liveRecordErrorA");
+
+  const btnLiveRecordB = document.getElementById("btnLiveRecordB");
+  const btnLiveStopB = document.getElementById("btnLiveStopB");
+  const btnLiveRetryB = document.getElementById("btnLiveRetryB");
+  const liveTimerB = document.getElementById("liveTimerB");
+  const liveTranscribingStatusB = document.getElementById("liveTranscribingStatusB");
+  const liveRecordErrorB = document.getElementById("liveRecordErrorB");
+
+  let liveMediaRecorderA = null;
+  let liveMediaRecorderB = null;
+  let liveAudioStreamA = null;
+  let liveAudioStreamB = null;
+  let liveAudioChunksA = [];
+  let liveAudioChunksB = [];
+  let liveRecordedBlobA = null;
+  let liveRecordedBlobB = null;
+  let liveTimerIntervalA = null;
+  let liveTimerIntervalB = null;
+  let liveStartTimeA = 0;
+  let liveStartTimeB = 0;
+  let isLiveRecordingA = false;
+  let isLiveRecordingB = false;
+  let isTranscribingA = false;
+  let isTranscribingB = false;
+
+  function updateLiveRecordControls(which, state) {
+    const isA = which === "A";
+    const recordBtn = isA ? btnLiveRecordA : btnLiveRecordB;
+    const stopBtn = isA ? btnLiveStopA : btnLiveStopB;
+    const retryBtn = isA ? btnLiveRetryA : btnLiveRetryB;
+    const timerEl = isA ? liveTimerA : liveTimerB;
+    const transcribingEl = isA ? liveTranscribingStatusA : liveTranscribingStatusB;
+    const errorEl = isA ? liveRecordErrorA : liveRecordErrorB;
+
+    if (state === "idle") {
+      if (recordBtn) { recordBtn.style.display = "inline-flex"; recordBtn.disabled = false; }
+      if (stopBtn) stopBtn.style.display = "none";
+      if (retryBtn) retryBtn.style.display = "none";
+      if (transcribingEl) transcribingEl.style.display = "none";
+      if (timerEl) timerEl.style.display = "none";
+    } else if (state === "recording") {
+      if (recordBtn) recordBtn.style.display = "none";
+      if (stopBtn) { stopBtn.style.display = "inline-flex"; stopBtn.disabled = false; }
+      if (retryBtn) retryBtn.style.display = "none";
+      if (transcribingEl) transcribingEl.style.display = "none";
+      if (timerEl) timerEl.style.display = "inline-block";
+      if (errorEl) { errorEl.style.display = "none"; errorEl.textContent = ""; }
+    } else if (state === "transcribing") {
+      if (recordBtn) { recordBtn.style.display = "inline-flex"; recordBtn.disabled = true; }
+      if (stopBtn) stopBtn.style.display = "none";
+      if (retryBtn) retryBtn.style.display = "none";
+      if (transcribingEl) transcribingEl.style.display = "inline-flex";
+      if (timerEl) timerEl.style.display = "none";
+      if (errorEl) { errorEl.style.display = "none"; errorEl.textContent = ""; }
+    } else if (state === "error") {
+      if (recordBtn) { recordBtn.style.display = "inline-flex"; recordBtn.disabled = false; }
+      if (stopBtn) stopBtn.style.display = "none";
+      if (retryBtn) { retryBtn.style.display = "inline-flex"; retryBtn.disabled = false; }
+      if (transcribingEl) transcribingEl.style.display = "none";
+      if (timerEl) timerEl.style.display = "none";
+    } else if (state === "done") {
+      if (recordBtn) { recordBtn.style.display = "inline-flex"; recordBtn.disabled = false; }
+      if (stopBtn) stopBtn.style.display = "none";
+      if (retryBtn) retryBtn.style.display = "none";
+      if (transcribingEl) transcribingEl.style.display = "none";
+      if (timerEl) timerEl.style.display = "none";
+      if (errorEl) { errorEl.style.display = "none"; errorEl.textContent = ""; }
+    }
+  }
+
+  async function startLiveRecording(which) {
+    const isA = which === "A";
+    if (isA && (isLiveRecordingA || isTranscribingA)) return;
+    if (!isA && (isLiveRecordingB || isTranscribingB)) return;
+
+    const errorEl = isA ? liveRecordErrorA : liveRecordErrorB;
+    const timerEl = isA ? liveTimerA : liveTimerB;
+
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Microphone access is not supported in this browser or context.");
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (isA) {
+        liveAudioStreamA = stream;
+        isLiveRecordingA = true;
+        liveAudioChunksA = [];
+      } else {
+        liveAudioStreamB = stream;
+        isLiveRecordingB = true;
+        liveAudioChunksB = [];
+      }
+
+      let mimeType = "audio/webm;codecs=opus";
+      if (typeof MediaRecorder !== "undefined" && typeof MediaRecorder.isTypeSupported === "function") {
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          if (MediaRecorder.isTypeSupported("audio/webm")) mimeType = "audio/webm";
+          else if (MediaRecorder.isTypeSupported("audio/ogg")) mimeType = "audio/ogg";
+          else mimeType = "";
+        }
+      }
+
+      const mrOptions = mimeType ? { mimeType } : undefined;
+      const mr = new MediaRecorder(stream, mrOptions);
+
+      mr.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          if (isA) liveAudioChunksA.push(e.data);
+          else liveAudioChunksB.push(e.data);
+        }
+      };
+
+      mr.onstop = async () => {
+        const chunks = isA ? liveAudioChunksA : liveAudioChunksB;
+        const actualMime = mr.mimeType || mimeType || "audio/webm";
+        const recordedBlob = new Blob(chunks, { type: actualMime });
+
+        // Preserve recorded audio in memory for retry
+        if (isA) liveRecordedBlobA = recordedBlob;
+        else liveRecordedBlobB = recordedBlob;
+
+        // Create standard file and standardize via converter
+        const ext = actualMime.includes("wav") ? ".wav" : (actualMime.includes("ogg") ? ".ogg" : ".webm");
+        const fname = `live_record_${which.toLowerCase()}${ext}`;
+        const audioFile = new File([recordedBlob], fname, { type: actualMime });
+
+        // Pass to audio handler for standardization and preview
+        handleAudioSelection(which, audioFile);
+
+        // Automatically transcribe audio without requiring user copy-paste
+        await transcribeLiveRecording(which);
+      };
+
+      if (isA) liveMediaRecorderA = mr;
+      else liveMediaRecorderB = mr;
+
+      mr.start(250);
+
+      const startTime = Date.now();
+      if (isA) liveStartTimeA = startTime;
+      else liveStartTimeB = startTime;
+
+      updateLiveRecordControls(which, "recording");
+
+      const timerInterval = setInterval(() => {
+        const elapsed = (Date.now() - startTime) / 1000;
+        const remaining = Math.max(0, MAX_LIVE_RECORDING_DURATION_SEC - elapsed);
+        if (timerEl) {
+          timerEl.textContent = `${elapsed.toFixed(1)}s / ${MAX_LIVE_RECORDING_DURATION_SEC.toFixed(1)}s (${remaining.toFixed(1)}s remaining)`;
+        }
+        if (elapsed >= MAX_LIVE_RECORDING_DURATION_SEC) {
+          stopLiveRecording(which, true);
+        }
+      }, 100);
+
+      if (isA) liveTimerIntervalA = timerInterval;
+      else liveTimerIntervalB = timerInterval;
+
+    } catch (err) {
+      console.error("Microphone recording error:", err);
+      if (errorEl) {
+        errorEl.style.display = "block";
+        errorEl.textContent = `Microphone error: ${err.message || "Unable to access microphone"}`;
+      }
+      updateLiveRecordControls(which, "idle");
+    }
+  }
+
+  function stopLiveRecording(which, autoStopped = false) {
+    const isA = which === "A";
+    const mr = isA ? liveMediaRecorderA : liveMediaRecorderB;
+    const stream = isA ? liveAudioStreamA : liveAudioStreamB;
+    const interval = isA ? liveTimerIntervalA : liveTimerIntervalB;
+
+    if (interval) clearInterval(interval);
+    if (isA) {
+      liveTimerIntervalA = null;
+      isLiveRecordingA = false;
+    } else {
+      liveTimerIntervalB = null;
+      isLiveRecordingB = false;
+    }
+
+    if (stream) {
+      try {
+        stream.getTracks().forEach(track => track.stop());
+      } catch (_) {}
+    }
+
+    if (mr && mr.state !== "inactive") {
+      try {
+        mr.stop();
+      } catch (_) {}
+    }
+  }
+
+  async function transcribeLiveRecording(which) {
+    const isA = which === "A";
+    if (isA && isTranscribingA) return;
+    if (!isA && isTranscribingB) return;
+
+    const recordedBlob = isA ? liveRecordedBlobA : liveRecordedBlobB;
+    const errorEl = isA ? liveRecordErrorA : liveRecordErrorB;
+
+    if (!recordedBlob || recordedBlob.size === 0) {
+      if (errorEl) {
+        errorEl.style.display = "block";
+        errorEl.textContent = "No recorded audio available to transcribe. Please record again.";
+      }
+      updateLiveRecordControls(which, "idle");
+      return;
+    }
+
+    if (isA) isTranscribingA = true;
+    else isTranscribingB = true;
+
+    updateLiveRecordControls(which, "transcribing");
+
+    try {
+      // Check user consent before transmitting voice audio to external provider (Gnani AI)
+      const consentCheckbox = isA ? document.getElementById("liveGnaniConsentA") : document.getElementById("liveGnaniConsentB");
+      const consentGiven = consentCheckbox ? consentCheckbox.checked : false;
+
+      if (!consentGiven) {
+        if (errorEl) {
+          errorEl.style.display = "block";
+          errorEl.textContent = "Consent required: Please check the box authorizing voice transmission to Gnani AI before transcribing.";
+        }
+        updateLiveRecordControls(which, "error");
+        return;
+      }
+
+      const selectedTestCaseId = evalTestCaseSelect ? evalTestCaseSelect.value : "";
+      let langCode = "hi-IN";
+      if (selectedTestCaseId && evalTestCaseSelect.options && evalTestCaseSelect.selectedIndex >= 0) {
+        const opt = evalTestCaseSelect.options[evalTestCaseSelect.selectedIndex];
+        if (opt && opt.getAttribute("data-lang")) {
+          langCode = opt.getAttribute("data-lang");
+        }
+      }
+
+      const languageCodeSelect = document.getElementById("languageCode");
+      if (languageCodeSelect && languageCodeSelect.value) {
+        langCode = languageCodeSelect.value;
+      }
+
+      const roleStr = isA ? "utterance_a" : "utterance_b";
+      const formData = new FormData();
+      const fname = isA ? "recorded_utterance_a.wav" : "recorded_utterance_b.wav";
+      formData.append("audio_file", recordedBlob, fname);
+      formData.append("language_code", langCode);
+      formData.append("utterance_role", roleStr);
+      formData.append("consent_given", "true");
+
+      const response = await fetch("/api/eval/transcribe-live", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => ({}));
+        throw new Error(errJson.detail || `Transcription failed with HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      // Place result DIRECTLY in existing transcript input box (No second box, no copying and pasting!)
+      const targetInput = isA ? customTranscriptA : customTranscriptB;
+      if (targetInput) {
+        targetInput.value = data.transcript || "";
+        targetInput.dispatchEvent(new Event("input", { bubbles: true }));
+        targetInput.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+
+      // Make custom transcript drawer visible so the user immediately sees and can review/edit their transcript
+      if (customTranscriptDrawer) {
+        customTranscriptDrawer.style.display = "flex";
+      }
+      if (curatedBenchmarkDrawer) {
+        curatedBenchmarkDrawer.open = true;
+      }
+
+      // Reset controls to done state
+      updateLiveRecordControls(which, "done");
+
+      // DO NOT run evaluation! The user reviews the generated text, edits it in that same box if needed, then clicks Evaluate to proceed.
+
+    } catch (err) {
+      console.error("Transcription failed:", err);
+      if (errorEl) {
+        errorEl.style.display = "block";
+        errorEl.textContent = `Transcription failed: ${err.message || "Unknown error"}. Recorded audio is preserved. Click 'Retry Transcribe' to try again.`;
+      }
+      // Note: recordedBlob remains intact in liveRecordedBlobA/B!
+      updateLiveRecordControls(which, "error");
+    } finally {
+      if (isA) isTranscribingA = false;
+      else isTranscribingB = false;
+    }
+  }
+
+  // Event listeners for recording buttons
+  if (btnLiveRecordA) btnLiveRecordA.addEventListener("click", () => startLiveRecording("A"));
+  if (btnLiveStopA) btnLiveStopA.addEventListener("click", () => stopLiveRecording("A", false));
+  if (btnLiveRetryA) btnLiveRetryA.addEventListener("click", () => transcribeLiveRecording("A"));
+
+  if (btnLiveRecordB) btnLiveRecordB.addEventListener("click", () => startLiveRecording("B"));
+  if (btnLiveStopB) btnLiveStopB.addEventListener("click", () => stopLiveRecording("B", false));
+  if (btnLiveRetryB) btnLiveRetryB.addEventListener("click", () => transcribeLiveRecording("B"));
+
+  window.BoliBenchLive = {
+    startLiveRecording,
+    stopLiveRecording,
+    transcribeLiveRecording,
+    getRecordedBlob: (role) => (role === "B" ? liveRecordedBlobB : liveRecordedBlobA),
+    setRecordedBlob: (role, b) => { if (role === "B") liveRecordedBlobB = b; else liveRecordedBlobA = b; },
+    getIsRecording: (role) => (role === "B" ? isLiveRecordingB : isLiveRecordingA),
+    getIsTranscribing: (role) => (role === "B" ? isTranscribingB : isTranscribingA),
+    MAX_LIVE_RECORDING_DURATION_SEC,
+  };
+
   function showLiveInlineError(msg) {
     if (!liveEvalInlineError) return;
     if (!msg) {

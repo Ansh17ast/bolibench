@@ -760,6 +760,34 @@
                       Utterance A Audio (<span id="liveRefPromptA">Baseline Recording</span>)
                     </label>
                     <input type="file" id="liveAudioInputA" accept=".wav,.m4a,.mp3,.ogg,.aac,.flac,.webm,audio/*" class="form-control file-input-ctrl">
+
+                    <!-- Live Recording Toolbar for Utterance A -->
+                    <div class="live-recording-toolbar" id="liveRecordingToolbarA" style="margin-top: 0.75rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;">
+                      <button type="button" class="btn-primary btn-sm" id="btnLiveRecordA">
+                        <span>🎙️ Record Utterance A</span>
+                      </button>
+                      <button type="button" class="btn-danger btn-sm" id="btnLiveStopA" style="display: none;">
+                        <span>⏹️ Stop Recording</span>
+                      </button>
+                      <button type="button" class="btn-secondary btn-sm" id="btnLiveRetryA" style="display: none;">
+                        <span>🔄 Retry Transcribe</span>
+                      </button>
+                      <span class="live-recording-timer" id="liveTimerA" style="display: none; font-size: 0.8rem; font-family: monospace; color: var(--accent-saffron); font-weight: 600;">0.0s / 60.0s (60.0s remaining)</span>
+                      <span class="live-transcribing-status" id="liveTranscribingStatusA" style="display: none; font-size: 0.82rem; color: #fbbf24; font-weight: 600;">
+                        <span class="btn-spinner" style="display: inline-block; width: 12px; height: 12px; vertical-align: middle;"></span> Transcribing with Gnani AI...
+                      </span>
+                    </div>
+                    <div class="live-consent-group" style="margin-top: 0.4rem; display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; color: var(--text-secondary);">
+                      <input type="checkbox" id="liveGnaniConsentA" class="form-check-input" style="cursor: pointer;">
+                      <label for="liveGnaniConsentA" style="margin-bottom: 0; cursor: pointer; user-select: none;">
+                        I consent to transmitting this voice recording to Gnani AI (Vachana REST STT v3) for transcription (1 credit).
+                      </label>
+                    </div>
+                    <div class="live-record-error" id="liveRecordErrorA" style="display: none; margin-top: 0.5rem; color: #ef4444; font-size: 0.82rem;" role="alert"></div>
+                    <div class="live-transcribe-notice" style="font-size: 0.76rem; color: var(--text-subtle); margin-top: 0.35rem;">
+                      🌐 External STT Provider: Gnani AI (Vachana REST STT v3). Max 60s. Auto-fills existing transcript box below. 1 Gnani credit per transcription. Never auto-retries.
+                    </div>
+
                     <div class="conversion-feedback" id="conversionFeedbackA" style="display: none;" role="status" aria-live="polite"></div>
 
                     <div class="audio-preview-container" id="previewContainerA" style="display: none;">
@@ -794,6 +822,34 @@
                       Utterance B Audio (<span id="liveRefPromptB">Contrasting Utterance</span>)
                     </label>
                     <input type="file" id="liveAudioInputB" accept=".wav,.m4a,.mp3,.ogg,.aac,.flac,.webm,audio/*" class="form-control file-input-ctrl">
+
+                    <!-- Live Recording Toolbar for Utterance B -->
+                    <div class="live-recording-toolbar" id="liveRecordingToolbarB" style="margin-top: 0.75rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;">
+                      <button type="button" class="btn-primary btn-sm" id="btnLiveRecordB">
+                        <span>🎙️ Record Utterance B</span>
+                      </button>
+                      <button type="button" class="btn-danger btn-sm" id="btnLiveStopB" style="display: none;">
+                        <span>⏹️ Stop Recording</span>
+                      </button>
+                      <button type="button" class="btn-secondary btn-sm" id="btnLiveRetryB" style="display: none;">
+                        <span>🔄 Retry Transcribe</span>
+                      </button>
+                      <span class="live-recording-timer" id="liveTimerB" style="display: none; font-size: 0.8rem; font-family: monospace; color: var(--accent-saffron); font-weight: 600;">0.0s / 60.0s (60.0s remaining)</span>
+                      <span class="live-transcribing-status" id="liveTranscribingStatusB" style="display: none; font-size: 0.82rem; color: #fbbf24; font-weight: 600;">
+                        <span class="btn-spinner" style="display: inline-block; width: 12px; height: 12px; vertical-align: middle;"></span> Transcribing with Gnani AI...
+                      </span>
+                    </div>
+                    <div class="live-consent-group" style="margin-top: 0.4rem; display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; color: var(--text-secondary);">
+                      <input type="checkbox" id="liveGnaniConsentB" class="form-check-input" style="cursor: pointer;">
+                      <label for="liveGnaniConsentB" style="margin-bottom: 0; cursor: pointer; user-select: none;">
+                        I consent to transmitting this voice recording to Gnani AI (Vachana REST STT v3) for transcription (1 credit).
+                      </label>
+                    </div>
+                    <div class="live-record-error" id="liveRecordErrorB" style="display: none; margin-top: 0.5rem; color: #ef4444; font-size: 0.82rem;" role="alert"></div>
+                    <div class="live-transcribe-notice" style="font-size: 0.76rem; color: var(--text-subtle); margin-top: 0.35rem;">
+                      🌐 External STT Provider: Gnani AI (Vachana REST STT v3). Max 60s. Auto-fills existing transcript box below. 1 Gnani credit per transcription. Never auto-retries.
+                    </div>
+
                     <div class="conversion-feedback" id="conversionFeedbackB" style="display: none;" role="status" aria-live="polite"></div>
 
                     <div class="audio-preview-container" id="previewContainerB" style="display: none;">

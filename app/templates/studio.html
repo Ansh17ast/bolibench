@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Human Recording Studio — BoliBench Indian Voice AI</title>
-  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="/static/css/style.css?v=2.2.1">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -90,8 +90,8 @@
           </p>
         </div>
         <div class="studio-badges-stack">
-          <span class="trust-badge">🔒 100% Local / Zero External API Calls</span>
-          <span class="trust-badge">⏱️ 50-Second Benchmark Standard</span>
+          <span class="trust-badge">🔒 100% Local by Default (Zero External Calls; Gnani STT requires separate consent)</span>
+          <span class="trust-badge">⏱️ Studio Recording Max 600s | Gnani REST STT Max 60s</span>
           <span class="trust-badge">📁 Isolated Storage: <code>human_recordings_v1/</code></span>
         </div>
       </div>
@@ -187,27 +187,27 @@
             </div>
           </div>
 
-          <!-- 50-Second Countdown Display & Accessible Progress Bar -->
+          <!-- Studio Countdown Display & Accessible Progress Bar (Max 600s, Gnani STT Max 60s) -->
           <div class="studio-countdown-display" aria-live="polite">
             <div class="countdown-main">
-              <span class="countdown-time" id="studioCountdownTimer">50.0s remaining</span>
-              <span class="elapsed-time" id="studioElapsedTimer">0.0s / 50.0s</span>
+              <span class="countdown-time" id="studioCountdownTimer">600.0s remaining</span>
+              <span class="elapsed-time" id="studioElapsedTimer">0.0s / 600.0s</span>
             </div>
-            <progress id="studioCountdownProgress" class="studio-progress" value="0" max="50" aria-label="50-second recording timer"></progress>
+            <progress id="studioCountdownProgress" class="studio-progress" value="0" max="600" aria-label="Studio recording timer (Studio recording max 600s; Gnani REST STT max 60s)"></progress>
           </div>
 
           <!-- Waveform Visualizer -->
           <div class="waveform-container">
             <canvas id="studioWaveformCanvas" width="600" height="100"></canvas>
             <div class="waveform-overlay" id="studioWaveformOverlay">
-              Click 'Enable Microphone' then 'Start 50s Recording'.
+              Click 'Enable Microphone' then 'Start Recording' (Studio max 600s; Gnani STT max 60s).
             </div>
           </div>
 
           <!-- Controls Bar -->
           <div class="studio-controls-bar">
             <button type="button" class="btn-primary studio-btn-record" id="btnStudioRecord" disabled>
-              <span>🔴 Start 50s Recording</span>
+              <span>🔴 Start Recording</span>
             </button>
             <button type="button" class="btn-secondary" id="btnStudioPause" disabled>
               <span>⏸ Pause</span>
@@ -261,16 +261,16 @@
             <div class="banner-icon">⚠️</div>
             <div class="banner-content">
               <strong>Clip Stopped Early — Marked INCOMPLETE</strong>
-              <p class="warning-text">Recording stopped before 50 seconds. This clip will be saved with status 'incomplete_early_stop' and does not count as a valid 50-second recording.</p>
+              <p class="warning-text">Recording duration is under the 0.5s minimum required for acoustic analysis.</p>
             </div>
           </div>
 
-          <!-- Complete 50s Notice Banner -->
+          <!-- Valid Recording Notice Banner -->
           <div class="banner banner-success studio-complete-banner" id="studioCompleteNotice" style="display: none; margin-top: 1rem;">
             <div class="banner-icon">✓</div>
             <div class="banner-content">
-              <strong>Full 50-Second Recording Captured</strong>
-              <p class="notice-text">Benchmark 50-second criterion satisfied. Ready for review and storage.</p>
+              <strong>Valid Recording Captured</strong>
+              <p class="notice-text">Recording duration valid. Ready for review and storage.</p>
             </div>
           </div>
 
@@ -451,14 +451,33 @@
 
             <div class="form-group">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
-                <label for="studioVerifiedTranscript" style="margin: 0;">Manually Verified Transcript (Spoken Audio Ground Truth) *</label>
-                <button type="button" class="btn-secondary btn-sm" id="btnStudioCopyRefToVer" style="padding: 0.15rem 0.5rem; font-size: 0.75rem;" title="Copy intended reference transcript into verified field as a starting point">📋 Copy Intended</button>
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                  <label for="studioVerifiedTranscript" style="margin: 0;">Manually Verified Transcript (Spoken Audio Ground Truth) *</label>
+                  <span id="studioAsrDraftBadge" style="display: none; background: #fef3c7; color: #92400e; border: 1px solid #fde68a; font-size: 0.75rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 4px;">ASR Draft — Unverified</span>
+                </div>
+                <div>
+                  <button type="button" class="btn-secondary btn-sm" id="btnStudioRetryStt" style="display: none; padding: 0.15rem 0.5rem; font-size: 0.75rem; margin-right: 0.25rem;" title="Retry automatic transcription with Gnani AI">🔄 Retry STT</button>
+                  <button type="button" class="btn-secondary btn-sm" id="btnStudioCopyRefToVer" style="padding: 0.15rem 0.5rem; font-size: 0.75rem;" title="Copy intended reference transcript into verified field as a starting point">📋 Copy Intended</button>
+                </div>
               </div>
               <textarea id="studioVerifiedTranscript" class="input-textarea" rows="2" placeholder="Exact ground truth transcript verified after listening to the recording..." required></textarea>
+              <div id="studioSttStatus" style="display: none; margin-top: 0.35rem; font-size: 0.8rem; padding: 0.4rem 0.6rem; border-radius: 4px;"></div>
+              <div id="studioSttDurationNotice" style="display: none; margin-top: 0.35rem; font-size: 0.8rem; padding: 0.5rem 0.75rem; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; border-radius: 4px;"></div>
               <label class="checkbox-label" style="margin-top: 0.5rem;">
                 <input type="checkbox" id="studioTranscriptVerified">
                 <span>Transcript manually verified against spoken audio</span>
               </label>
+
+              <!-- Gnani AI Provider Disclosure & Consent for Studio Transcription -->
+              <div class="studio-gnani-consent-box" id="studioGnaniConsentBox" style="margin-top: 0.75rem; padding: 0.75rem; background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 6px;">
+                <label class="checkbox-label" style="font-weight: 500; display: flex; align-items: flex-start; gap: 0.5rem; cursor: pointer;">
+                  <input type="checkbox" id="studioGnaniConsentCheckbox" style="margin-top: 0.2rem;">
+                  <span>Authorize automatic draft transcription via Gnani AI (Vachana REST STT v3)</span>
+                </label>
+                <p class="text-muted" style="font-size: 0.8rem; margin: 0.35rem 0 0 1.6rem; line-height: 1.35;">
+                  If checked, audio clips &le; 60.0s will be transmitted once to Gnani AI (<code>POST https://api.vachana.ai/stt/v3</code>, consuming 1 Gnani credit) after recording stops. The recognized transcript is placed here as an editable <strong>unverified ASR draft</strong>. Clips &gt; 60.0s up to 600.0s are preserved locally for manual transcription without calling external STT. Leave unchecked for 0 external calls and 100% manual transcription.
+                </p>
+              </div>
             </div>
 
             <!-- Mandatory Explicit Consent Confirmation -->
@@ -528,7 +547,7 @@
               <th>Category</th>
               <th>Pair &amp; Role</th>
               <th>Duration</th>
-              <th>50s Criterion</th>
+              <th>Duration Status (50s Benchmark Metric)</th>
               <th>Transcript</th>
               <th>Listen</th>
             </tr>
@@ -600,7 +619,7 @@
     </footer>
   </div>
 
-  <script src="/static/js/audio_converter.js"></script>
-  <script src="/static/js/studio.js"></script>
+  <script src="/static/js/audio_converter.js?v=2.2.1"></script>
+  <script src="/static/js/studio.js?v=2.2.1"></script>
 </body>
 </html>

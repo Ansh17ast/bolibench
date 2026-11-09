@@ -14,6 +14,7 @@ from app.recording_schemas import (
     RecordingLanguage,
     RecordingMetadata,
     StudioConfigResponse,
+    StudioTranscriptionResponse,
     UtteranceRole,
 )
 from app.services.recording_storage import (
@@ -173,14 +174,207 @@ async def get_studio_config():
         {"value": "hinglish", "label": "Hinglish (Code-Mixed / कोड-मिश्रित)"},
     ]
 
+    from app.config import get_settings
+    from app.services.asr_service import verify_asr_status
+    settings = get_settings()
+    asr_status = verify_asr_status()
+
     return StudioConfigResponse(
         supported_categories=categories_meta,
         supported_languages=languages_meta,
-        target_duration_seconds=50.0,
+        target_duration_seconds=600.0,
+        max_duration_seconds=600.0,
         standard_format="16 kHz, Mono, 16-bit PCM WAV",
         storage_directory="human_recordings_v1",
         scenario_templates=SCENARIO_TEMPLATES,
+        live_transcription_enabled=bool(getattr(settings, "live_transcription_enabled", False) or getattr(settings, "live_evaluation_enabled", False)),
+        stt_provider_configured=(asr_status.get("status") in ("configured_external", "available_local")),
+        stt_provider_name=asr_status.get("provider"),
+        max_stt_duration_seconds=60.0,
     )
+
+
+@router.post("/transcribe", response_model=StudioTranscriptionResponse)
+async def transcribe_studio_audio(
+    audio_file: UploadFile = File(..., description="Recorded audio clip (WAV, WEBM, MP3, OGG <= 60s)"),
+    language_code: str = Form("hi-IN", description="Language code (e.g. hi-IN, en-IN, hinglish)"),
+    utterance_role: str = Form("utterance_a", description="Role: utterance_a or utterance_b"),
+    force_error: bool = Form(False, description="Simulate transcription error for retry QA testing"),
+    consent_given: bool = Form(False, description="Explicit confirmation of consent for external STT"),
+):
+    """Transcribes a recorded Studio audio clip using a genuine ASR engine.
+
+    Guarantees & Constraints:
+    - Zero ground truth reference leakage; test cases or intended references are never used.
+    - Studio recording limit remains 600.0 seconds.
+    - Automatic Gnani REST transcription has a strict 60.0-second limit. Clips > 60.0s are rejected (HTTP 400)
+      and preserved locally for manual ground truth verification without external API calls.
+    - Requires explicit user consent before transmitting voice audio to external providers (Gnani AI).
+    - Respects live_transcription_enabled feature flag when external provider is active.
+    - Never auto-retries.
+    """
+    if force_error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Simulated transcription engine failure for retry testing.",
+        )
+
+    # 1. Language validation & normalization
+    lang = (language_code or "hi-IN").strip()
+    norm_lang = "hinglish" if lang.lower() == "hinglish" else lang
+    valid_langs = {"hi-IN", "en-IN", "hinglish", "bn-IN", "gu-IN", "kn-IN", "ml-IN", "mr-IN", "pa-IN", "ta-IN", "te-IN"}
+    if norm_lang not in valid_langs and norm_lang.lower() not in {"hinglish", "hindi", "english"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported language_code '{language_code}'.",
+        )
+
+    # 2. Read audio bytes
+    try:
+        content = await audio_file.read()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to read audio file: {str(exc)}",
+        )
+
+    if not content or len(content) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded audio recording is empty (0 bytes).",
+        )
+
+    # 3. Audio format normalization & duration validation (Strict 60.0-second Gnani REST limit)
+    duration_seconds = 0.0
+    import io
+    import wave
+    from pathlib import Path
+    import tempfile
+    is_wav = False
+    try:
+        with wave.open(io.BytesIO(content), "rb") as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+            channels = wf.getnchannels()
+            sampwidth = wf.getsampwidth()
+            if rate == 16000 and channels == 1 and sampwidth == 2 and frames > 0:
+                duration_seconds = frames / float(rate)
+                is_wav = True
+            elif rate > 0 and frames > 0:
+                duration_seconds = frames / float(rate)
+    except Exception:
+        pass
+
+    if not is_wav:
+        # Standardize non-WAV / non-standard containers (WebM, OGG, MP3, etc.) using HumanAudioProcessor
+        from app.services.recording_processor import HumanAudioProcessor
+        processor = HumanAudioProcessor()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            orig_name = audio_file.filename or "recording.webm"
+            ext_suffix = Path(orig_name).suffix.lower() or ".webm"
+            tmp_in = Path(tmp_dir) / f"input_audio{ext_suffix}"
+            tmp_out = Path(tmp_dir) / "standardized.wav"
+            tmp_in.write_bytes(content)
+            try:
+                processor.convert_to_standard_wav(tmp_in, tmp_out)
+                std_bytes = tmp_out.read_bytes()
+                with wave.open(io.BytesIO(std_bytes), "rb") as wf:
+                    frames = wf.getnframes()
+                    rate = wf.getframerate()
+                    duration_seconds = frames / float(rate) if rate > 0 else 0.0
+                content = std_bytes  # Use converted standardized 16kHz mono PCM WAV bytes
+                is_wav = True
+            except Exception as conv_err:
+                logger.warning("Audio standardization fallback in /transcribe: %s", conv_err)
+                from app.services.audio_validator import AudioValidator, AudioValidationError
+                validator = AudioValidator()
+                try:
+                    ext, _ = validator.validate(audio_file.filename or "recording.wav", content)
+                    duration_seconds = round(min(len(content) / 32000.0, 600.0), 2)
+                except AudioValidationError as ave:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=str(ave),
+                    )
+
+    if duration_seconds > 60.0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Audio duration ({duration_seconds:.2f}s) exceeds the 60.0-second limit for automatic Gnani REST transcription. Recordings up to 600s are preserved for manual ground truth verification.",
+        )
+
+    # 4. Engine & Consent check
+    role = (utterance_role or "utterance_a").strip().lower()
+    from app.services.asr_service import (
+        get_asr_engine,
+        ASRDependencyMissingError,
+        ASRConsentRequiredError,
+        ASRServiceError,
+    )
+    from app.config import get_settings
+    settings = get_settings()
+
+    asr = get_asr_engine()
+
+    # Enforce consent for external ASR providers
+    if not asr.is_local and not consent_given:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="External voice transcription via Gnani AI requires explicit user consent before audio data is transmitted.",
+        )
+
+    # Enforce feature flag if external
+    is_live_enabled = bool(getattr(settings, "live_transcription_enabled", False) or getattr(settings, "live_evaluation_enabled", False))
+    if not asr.is_local and not is_live_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Live transcription is disabled by server configuration (LIVE_EVALUATION_ENABLED=false and LIVE_TRANSCRIPTION_ENABLED=false).",
+        )
+
+    try:
+        transcript = await asr.transcribe(audio_bytes=content, language_code=norm_lang)
+    except ASRDependencyMissingError as dme:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=dme.message,
+        )
+    except ASRConsentRequiredError as cre:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=cre.message,
+        )
+    except ASRServiceError as ase:
+        raise HTTPException(
+            status_code=ase.status_code,
+            detail=ase.message,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Speech recognition engine failed: {str(exc)}",
+        )
+
+    external_calls = 1 if not asr.is_local else 0
+    credits_consumed = 1 if not asr.is_local else 0
+    if asr.name == "gnani-prisma-v3":
+        disclaimer = f"Transcribed using Gnani AI ({asr.name}) with explicit user consent. 1 Gnani credit consumed."
+    elif asr.is_local:
+        disclaimer = f"Transcribed locally using {asr.name}. 0 credits consumed."
+    else:
+        disclaimer = f"Transcribed using external provider ({asr.name}) with explicit user consent. 1 credit consumed."
+
+    return StudioTranscriptionResponse(
+        success=True,
+        transcript=transcript,
+        language_code=norm_lang,
+        utterance_role=role,
+        duration_seconds=round(max(duration_seconds, 0.1), 2),
+        provider=asr.name,
+        credits_consumed=credits_consumed,
+        external_calls=external_calls,
+        disclaimer=disclaimer,
+    )
+
 
 
 @router.post("/upload", response_model=RecordingMetadata)
@@ -208,7 +402,7 @@ async def upload_recording(
     - Zero external network calls (No Gnani API calls).
     - Preserves unmodified raw audio.
     - Generates 16kHz mono PCM WAV.
-    - Runs acoustic diagnostics (sample rate, channels, silence, clipping, 50s completeness).
+    - Runs acoustic diagnostics (sample rate, channels, silence, clipping, duration completeness).
     - Writes to isolated human_recordings_v1/ store.
     - Upload idempotency supported via Form param or X-Idempotency-Key header.
     """
@@ -275,7 +469,7 @@ async def list_recordings(
     category: Optional[str] = Query(None, description="Filter by benchmark category"),
     speaker_id: Optional[str] = Query(None, description="Filter by speaker ID"),
     pair_id: Optional[str] = Query(None, description="Filter by pair ID"),
-    is_complete_50s: Optional[bool] = Query(None, description="Filter by 50s completion status"),
+    is_complete_50s: Optional[bool] = Query(None, description="Filter by valid duration status"),
     classification: Optional[str] = Query(None, description="Filter by classification cohort (human_verified, synthetic, test_artifact, unverified)"),
     exclude_test_artifacts: bool = Query(False, description="Exclude test artifacts if true"),
 ):

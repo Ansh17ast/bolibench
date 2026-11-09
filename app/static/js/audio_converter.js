@@ -315,6 +315,11 @@
     }
 
     const maxInputSize = options.maxInputSizeBytes || MAX_INPUT_SIZE_BYTES;
+    const maxDuration = (typeof options.maxDurationSeconds === "number" && options.maxDurationSeconds > 0)
+      ? options.maxDurationSeconds
+      : (typeof options.maxDurationSec === "number" && options.maxDurationSec > 0)
+      ? options.maxDurationSec
+      : MAX_DURATION_SECONDS;
     if (file.size === 0) {
       throw new Error("Selected audio file is empty (0 bytes).");
     }
@@ -330,7 +335,7 @@
 
     // Check if the file is ALREADY a valid 16 kHz mono 16-bit PCM WAV
     try {
-      const existingMeta = parseAndValidateWav(rawArrayBuffer, MAX_DURATION_SECONDS, MAX_UPLOAD_SIZE_BYTES);
+      const existingMeta = parseAndValidateWav(rawArrayBuffer, maxDuration, MAX_UPLOAD_SIZE_BYTES);
       if (
         existingMeta.isValid &&
         existingMeta.audioFormat === 1 &&
@@ -406,9 +411,9 @@
     }
 
     // Pre-check duration before spending time on resampling and encoding
-    if (audioBuffer.duration > MAX_DURATION_SECONDS) {
+    if (audioBuffer.duration > maxDuration) {
       throw new Error(
-        `Audio duration (${audioBuffer.duration.toFixed(1)}s) exceeds the maximum allowed limit of ${MAX_DURATION_SECONDS.toFixed(0)}s.`
+        `Audio duration (${audioBuffer.duration.toFixed(1)}s) exceeds the maximum allowed limit of ${maxDuration.toFixed(0)}s.`
       );
     }
 

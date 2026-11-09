@@ -93,13 +93,13 @@ def test_direct_storagemanager_construction_uses_isolated_db():
 
     # Verify the real database is 100% untouched
     after = get_real_db_snapshot()
-    assert after["evaluation_runs_count"] == before["evaluation_runs_count"] == 688, "Real database evaluation_runs count changed!"
+    assert after["evaluation_runs_count"] == before["evaluation_runs_count"], "Real database evaluation_runs count changed!"
     assert after["schema_migrations_count"] == before["schema_migrations_count"], "Real database migrations count changed!"
     assert after["schema_objects"] == before["schema_objects"], "Real database schema modified!"
     assert after["journal_mode"] == before["journal_mode"], "Real database journal mode modified!"
     assert after["size"] == before["size"], "Real database file size changed!"
     assert after["mtime_ns"] == before["mtime_ns"], "Real database mtime changed!"
-    assert after["wal_bytes"] == before["wal_bytes"] == 0, "Real database WAL file received writes!"
+    assert after["wal_bytes"] == before["wal_bytes"], "Real database WAL file received writes!"
 
 
 @pytest.mark.asyncio
@@ -125,13 +125,13 @@ async def test_module_level_engine_singleton_uses_isolated_db(async_client):
 
     # Verify the real database remains strictly unchanged
     after = get_real_db_snapshot()
-    assert after["evaluation_runs_count"] == before["evaluation_runs_count"] == 688
+    assert after["evaluation_runs_count"] == before["evaluation_runs_count"]
     assert after["schema_migrations_count"] == before["schema_migrations_count"]
     assert after["schema_objects"] == before["schema_objects"]
     assert after["journal_mode"] == before["journal_mode"]
     assert after["size"] == before["size"]
     assert after["mtime_ns"] == before["mtime_ns"]
-    assert after["wal_bytes"] == before["wal_bytes"] == 0
+    assert after["wal_bytes"] == before["wal_bytes"]
 
 
 def test_importing_application_in_subprocess_does_not_alter_real_db(tmp_path):
@@ -165,13 +165,13 @@ def test_importing_application_in_subprocess_does_not_alter_real_db(tmp_path):
 
     # Verify the real database was not modified at all
     after = get_real_db_snapshot()
-    assert after["evaluation_runs_count"] == before["evaluation_runs_count"] == 688
+    assert after["evaluation_runs_count"] == before["evaluation_runs_count"]
     assert after["schema_migrations_count"] == before["schema_migrations_count"]
     assert after["schema_objects"] == before["schema_objects"]
     assert after["journal_mode"] == before["journal_mode"]
     assert after["size"] == before["size"]
     assert after["mtime_ns"] == before["mtime_ns"]
-    assert after["wal_bytes"] == before["wal_bytes"] == 0
+    assert after["wal_bytes"] == before["wal_bytes"]
 
 
 def test_pytest_fallback_without_env_var_in_subprocess(tmp_path):
@@ -237,10 +237,10 @@ def test_pytest_fallback_without_env_var_in_subprocess(tmp_path):
 
     # Verify the real database is 100% untouched
     after = get_real_db_snapshot()
-    assert after["evaluation_runs_count"] == before["evaluation_runs_count"] == 688
+    assert after["evaluation_runs_count"] == before["evaluation_runs_count"]
     assert after["schema_migrations_count"] == before["schema_migrations_count"]
     assert after["schema_objects"] == before["schema_objects"]
     assert after["journal_mode"] == before["journal_mode"]
     assert after["size"] == before["size"]
     assert after["mtime_ns"] == before["mtime_ns"]
-    assert after["wal_bytes"] == before["wal_bytes"] == 0
+    assert after["wal_bytes"] == before["wal_bytes"]

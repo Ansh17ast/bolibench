@@ -247,7 +247,20 @@ class GnaniPrismaClient:
         # Error handling mapping
         error_detail = resp_json.get("error", {}) if isinstance(resp_json.get("error"), dict) else {}
         error_type = error_detail.get("type", "UNKNOWN_ERROR")
-        error_message = error_detail.get("message") or response.text or f"HTTP {status_code} error from Gnani STT"
+        raw_msg = error_detail.get("message") or response.text or f"HTTP {status_code} error from Gnani STT"
+
+        # Sanitize raw HTML or gateway dumps (e.g. Cloudflare 502/504 pages)
+        if raw_msg.strip().startswith(("<", "<!DOCTYPE", "<html")):
+            if status_code == 504:
+                error_message = "Gnani transcription service timed out (504 Gateway Timeout); audio is preserved; retry later."
+            elif status_code == 502:
+                error_message = "Gnani transcription service gateway error (502 Bad Gateway); audio is preserved; retry later."
+            elif status_code == 503:
+                error_message = "Gnani transcription service is temporarily unavailable (503 Service Unavailable); audio is preserved; retry later."
+            else:
+                error_message = f"Gnani transcription service returned error ({status_code}); audio is preserved; retry later."
+        else:
+            error_message = raw_msg
 
         if status_code == 400:
             raise GnaniBadRequestError(error_message, details={"api_error_type": error_type})
@@ -268,13 +281,28 @@ class GnaniPrismaClient:
                 f"Gnani STT rate limit exceeded: {error_message}",
                 details={"api_error_type": error_type},
             )
+        elif status_code == 502:
+            raise GnaniServerError(
+                message=error_message or "Gnani transcription service gateway error (502 Bad Gateway); audio is preserved; retry later.",
+                status_code=502,
+                error_type="BAD_GATEWAY",
+                details={"api_error_type": "BAD_GATEWAY", "status_code": 502},
+            )
         elif status_code == 503:
             raise GnaniServiceUnavailableError(
                 f"Gnani STT service unavailable: {error_message}",
                 details={"api_error_type": error_type},
             )
+        elif status_code == 504:
+            raise GnaniServerError(
+                message=error_message or "Gnani transcription service timed out (504 Gateway Timeout); audio is preserved; retry later.",
+                status_code=504,
+                error_type="GATEWAY_TIMEOUT",
+                details={"api_error_type": "GATEWAY_TIMEOUT", "status_code": 504},
+            )
         else:
             raise GnaniServerError(
                 f"Gnani STT server error ({status_code}): {error_message}",
+                status_code=status_code,
                 details={"api_error_type": error_type, "status_code": status_code},
             )

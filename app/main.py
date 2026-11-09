@@ -64,6 +64,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def add_cache_control_headers(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/studio") or path.startswith("/recording-studio") or path.endswith("studio.js") or path.endswith("audio_converter.js"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 # Static files & Templates
 static_dir = BASE_DIR / "static"
 templates_dir = BASE_DIR / "templates"

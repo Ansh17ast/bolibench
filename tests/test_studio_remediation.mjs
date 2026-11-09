@@ -396,6 +396,58 @@ function setupStudioEnvironment({ sessionData = {}, fetchHandler = null, confirm
     return { ok: false, status: 404, json: async () => ({}) };
   };
 
+  class MockMediaRecorder {
+    constructor(stream, opts) {
+      this.stream = stream;
+      this.opts = opts;
+      this.state = "inactive";
+      this.mimeType = opts?.mimeType || "audio/webm";
+      this.ondataavailable = null;
+      this.onstop = null;
+    }
+    static isTypeSupported() { return true; }
+    start() {
+      this.state = "recording";
+    }
+    stop() {
+      this.state = "inactive";
+      if (this.ondataavailable) {
+        this.ondataavailable({ data: new MockBlob([new Uint8Array(1000)], { type: this.mimeType }) });
+      }
+      if (this.onstop) {
+        this.onstop();
+      }
+    }
+    pause() {
+      this.state = "paused";
+    }
+    resume() {
+      this.state = "recording";
+    }
+  }
+
+  class MockBlob {
+    constructor(chunks, opts) {
+      this.chunks = chunks || [];
+      this.type = opts?.type || "audio/webm";
+      let sz = 0;
+      for (const c of this.chunks) {
+        if (c.byteLength) sz += c.byteLength;
+        else if (c.size) sz += c.size;
+        else if (typeof c === "string") sz += c.length;
+        else sz += 1000;
+      }
+      this.size = sz || 50000;
+    }
+    async arrayBuffer() {
+      return new ArrayBuffer(this.size);
+    }
+  }
+
+  let currentTime = 10000;
+  let activeIntervalCallback = null;
+  let intervalIdCounter = 1;
+
   class MockFormData {
     constructor() { this.fields = {}; }
     append(k, v) { this.fields[k] = v; }
@@ -412,16 +464,21 @@ function setupStudioEnvironment({ sessionData = {}, fetchHandler = null, confirm
     alert: (m) => mockWindow.alert(m),
     confirm: (m) => mockWindow.confirm(m),
     AudioContext: MockAudioContext,
-    MediaRecorder: { isTypeSupported: () => true },
-    Blob: class { constructor(chunks, opts) { this.size = 50000; this.type = opts?.type || "audio/webm"; } },
+    MediaRecorder: MockMediaRecorder,
+    Blob: MockBlob,
     FormData: MockFormData,
-    URL: globalThis.URL || mockWindow.URL,
+    URL: mockWindow.URL,
     URLSearchParams: globalThis.URLSearchParams,
     setTimeout: (fn) => setTimeout(fn, 0),
     clearTimeout: (id) => clearTimeout(id),
-    setInterval: () => 1,
-    clearInterval: () => {},
-    performance: { now: () => Date.now() },
+    setInterval: (fn, ms) => {
+      activeIntervalCallback = fn;
+      return intervalIdCounter++;
+    },
+    clearInterval: () => {
+      activeIntervalCallback = null;
+    },
+    performance: { now: () => currentTime },
     requestAnimationFrame: (fn) => 1,
     cancelAnimationFrame: (id) => {},
   });
@@ -436,6 +493,12 @@ function setupStudioEnvironment({ sessionData = {}, fetchHandler = null, confirm
     contextsClosed,
     uploadRequests,
     pairCreateRequests,
+    advanceTime: (ms) => {
+      currentTime += ms;
+      if (activeIntervalCallback) {
+        activeIntervalCallback();
+      }
+    },
   };
 }
 
@@ -579,6 +642,7 @@ test("6. Rapid double-click on Save triggers only 1 upload request", async () =>
   elements.studioVerifiedTranscript.value = "Valid transcript";
   elements.studioConsentCheckbox.checked = true;
   studio.setRecordedBlob({ size: 16000, type: "audio/wav" });
+  studio.setLastClientDuration(50.0);
 
   // Simulate two rapid clicks in the same event tick
   const p1 = studio.handleSaveClick();
@@ -621,6 +685,7 @@ test("7. Failed save keeps recordedBlob intact and re-enables Save for retry", a
   elements.studioConsentCheckbox.checked = true;
   const mockBlob = { size: 24000, type: "audio/wav" };
   studio.setRecordedBlob(mockBlob);
+  studio.setLastClientDuration(50.0);
 
   // First save fails
   await studio.handleSaveClick();
@@ -732,10 +797,562 @@ test("11. Client-side WAV converter standardizes audio before upload and reports
   elements.studioVerifiedTranscript.value = "Audio conversion test";
   elements.studioConsentCheckbox.checked = true;
   studio.setRecordedBlob({ size: 40000, type: "audio/webm" });
+  studio.setLastClientDuration(1.0);
 
   await studio.handleSaveClick();
 
   assert.strictEqual(convertedCalled, true, "BoliAudioConverter.convertAudioFile must be called before upload");
   assert.strictEqual(uploadRequests.length, 1);
   assert.ok(uploadRequests[0].opts.body.fields.audio_file.name.endsWith("_pcm.wav"), "Uploaded file must have _pcm.wav name");
+});
+
+
+
+// =============================================================================
+// TEST 12: Manual stop works before time limit and allows 5-second recording to be saved
+// =============================================================================
+test("12. Manual stop works before time limit and allows 5-second recording to be saved", async () => {
+  const { elements, studio, advanceTime, uploadRequests } = setupStudioEnvironment();
+  await studio.requestMicrophonePermission(true);
+
+  elements.studioReferenceTranscript.value = "Short 5-second test utterance";
+  elements.studioVerifiedTranscript.value = "Short 5-second test utterance";
+  elements.studioConsentCheckbox.checked = true;
+
+  // Start recording
+  studio.startRecording();
+  assert.strictEqual(studio.getIsRecording(), true, "Recording must be active");
+  assert.strictEqual(elements.btnStudioStop.disabled, false, "Stop button must be enabled");
+  assert.strictEqual(elements.btnStudioSave.disabled, true, "Save button must be disabled during recording");
+  assert.strictEqual(elements.btnStudioRetake.disabled, true, "Retake button must be disabled during recording");
+
+  // Advance clock by 5.0 seconds
+  advanceTime(5000);
+  assert.strictEqual(elements.studioElapsedTimer.textContent, "5.0s / 600.0s");
+  assert.strictEqual(elements.studioCountdownTimer.textContent, "595.0s remaining");
+
+  // User manually clicks Stop after 5 seconds (well before the 600s limit)
+  studio.stopRecording(false);
+  assert.strictEqual(studio.getIsRecording(), false, "Recording must be stopped");
+  assert.strictEqual(elements.btnStudioStop.disabled, true, "Stop button must be disabled after stop");
+  assert.strictEqual(elements.btnStudioRetake.disabled, false, "Retake button must be enabled after stop");
+  assert.strictEqual(elements.btnStudioSave.disabled, false, "Save button must be enabled after stop");
+  assert.strictEqual(elements.studioReviewSection.style.display, "block", "Review section must be visible for preview");
+  assert.strictEqual(elements.studioCompleteNotice.style.display, "flex", "Complete notice must be shown");
+  const noticeTxt = elements.studioCompleteNotice.querySelector(".notice-text");
+  assert.ok(noticeTxt.textContent.includes("5.0s"), "Notice must display 5.0s duration");
+
+  // Save the 5-second recording
+  await studio.handleSaveClick();
+  assert.strictEqual(uploadRequests.length, 1, "Must issue exactly 1 upload request");
+  assert.strictEqual(uploadRequests[0].opts.body.fields.client_duration_seconds, "5.000");
+});
+
+// =============================================================================
+// TEST 13: Recording automatically stops at 600 seconds as a safety limit
+// =============================================================================
+test("13. Recording automatically stops at 600 seconds as a safety limit", async () => {
+  const { elements, studio, advanceTime } = setupStudioEnvironment();
+  await studio.requestMicrophonePermission(true);
+
+  studio.startRecording();
+  assert.strictEqual(studio.getIsRecording(), true);
+
+  // Advance clock to 600 seconds
+  advanceTime(600000);
+
+  // Verify auto-stop fired
+  assert.strictEqual(studio.getIsRecording(), false, "Must auto-stop at 600s");
+  assert.strictEqual(studio.getLastClientDuration(), 600.0, "Duration must clamp to 600.0s");
+  assert.strictEqual(elements.studioCountdownTimer.textContent, "0.0s remaining");
+  assert.strictEqual(elements.studioElapsedTimer.textContent, "600.0s / 600.0s");
+  assert.ok(elements.studioWaveformOverlay.textContent.includes("600-Second safety limit reached"));
+  assert.strictEqual(elements.btnStudioStop.disabled, true);
+  assert.strictEqual(elements.btnStudioRetake.disabled, false);
+  assert.strictEqual(elements.btnStudioSave.disabled, false);
+});
+
+// =============================================================================
+// TEST 14: Empty or invalid audio cannot be saved
+// =============================================================================
+test("14. Empty or invalid audio cannot be saved", async () => {
+  const { elements, studio, uploadRequests } = setupStudioEnvironment();
+  await studio.requestMicrophonePermission(true);
+
+  elements.studioReferenceTranscript.value = "Empty audio test";
+  elements.studioVerifiedTranscript.value = "Empty audio test";
+  elements.studioConsentCheckbox.checked = true;
+
+  // Case A: No audio captured at all (null blob)
+  studio.setRecordedBlob(null);
+  studio.setLastClientDuration(0.0);
+
+  await studio.handleSaveClick();
+  assert.strictEqual(uploadRequests.length, 0, "Must not upload when audio is null");
+  assert.strictEqual(elements.studioSaveErrorAlert.style.display, "flex");
+  assert.ok(elements.studioSaveErrorMessage.textContent.includes("No recording captured"));
+
+  // Case B: Zero-byte blob
+  elements.studioSaveErrorAlert.style.display = "none";
+  studio.setRecordedBlob({ size: 0, type: "audio/webm" });
+  await studio.handleSaveClick();
+  assert.strictEqual(uploadRequests.length, 0, "Must not upload when audio size is 0 bytes");
+  assert.strictEqual(elements.studioSaveErrorAlert.style.display, "flex");
+});
+
+// =============================================================================
+// TEST 15: Retaking a recording does not accidentally retain the previous audio
+// =============================================================================
+test("15. Retaking a recording does not accidentally retain the previous audio", async () => {
+  const { elements, studio, advanceTime, uploadRequests } = setupStudioEnvironment();
+  await studio.requestMicrophonePermission(true);
+
+  elements.studioReferenceTranscript.value = "Retake test";
+  elements.studioVerifiedTranscript.value = "Retake test";
+  elements.studioConsentCheckbox.checked = true;
+
+  // Capture valid 10-second recording
+  studio.startRecording();
+  advanceTime(10000);
+  studio.stopRecording(false);
+
+  assert.ok(studio.getRecordedBlob(), "Recorded blob must exist before retake");
+  assert.strictEqual(elements.btnStudioRetake.disabled, false);
+
+  // Retake recording
+  studio.retakeRecording();
+
+  assert.strictEqual(studio.getRecordedBlob(), null, "recordedBlob must be cleared to null on retake");
+  assert.strictEqual(studio.getLastClientDuration(), 0.0, "lastClientDuration must be reset to 0.0 on retake");
+  assert.strictEqual(elements.studioReviewSection.style.display, "none", "Review section must be hidden");
+  assert.strictEqual(elements.studioCompleteNotice.style.display, "none", "Complete notice must be hidden");
+  assert.strictEqual(elements.btnStudioRetake.disabled, true, "Retake button must be disabled after retake");
+  assert.strictEqual(elements.studioCountdownTimer.textContent, "600.0s remaining", "Countdown must reset to 600.0s");
+  assert.strictEqual(elements.studioElapsedTimer.textContent, "0.0s / 600.0s", "Elapsed must reset to 0.0s");
+
+  // Attempt to save immediately after retake (without recording again)
+  await studio.handleSaveClick();
+  assert.strictEqual(uploadRequests.length, 0, "Must not upload previous discarded audio after retake");
+  assert.strictEqual(elements.studioSaveErrorAlert.style.display, "flex", "Must show save error alert");
+});
+
+// =============================================================================
+// TEST 16: Control enabled/disabled states across complete recording lifecycle
+// =============================================================================
+test("16. Control enabled/disabled states across complete recording lifecycle", async () => {
+  const { elements, studio, advanceTime } = setupStudioEnvironment();
+
+  // Initial state before mic
+  assert.strictEqual(elements.btnStudioRecord.disabled, true, "Record disabled before mic");
+  assert.strictEqual(elements.btnStudioPause.disabled, true, "Pause disabled initially");
+  assert.strictEqual(elements.btnStudioStop.disabled, true, "Stop disabled initially");
+  assert.strictEqual(elements.btnStudioRetake.disabled, true, "Retake disabled initially");
+
+  // After mic enabled
+  await studio.requestMicrophonePermission(true);
+  assert.strictEqual(elements.btnStudioRecord.disabled, false, "Record enabled after mic granted");
+  assert.strictEqual(elements.btnStudioStop.disabled, true, "Stop disabled before recording starts");
+  assert.strictEqual(elements.btnStudioRetake.disabled, true, "Retake disabled before recording starts");
+
+  // Start recording
+  studio.startRecording();
+  assert.strictEqual(elements.btnStudioRecord.disabled, true, "Record disabled while recording");
+  assert.strictEqual(elements.btnStudioPause.disabled, false, "Pause enabled while recording");
+  assert.strictEqual(elements.btnStudioStop.disabled, false, "Stop enabled while recording");
+  assert.strictEqual(elements.btnStudioRetake.disabled, true, "Retake disabled while recording");
+  assert.strictEqual(elements.btnStudioSave.disabled, true, "Save disabled while recording");
+
+  // Stop recording
+  advanceTime(5000);
+  studio.stopRecording(false);
+  assert.strictEqual(elements.btnStudioRecord.disabled, false, "Record re-enabled after stop");
+  assert.strictEqual(elements.btnStudioPause.disabled, true, "Pause disabled after stop");
+  assert.strictEqual(elements.btnStudioStop.disabled, true, "Stop disabled after stop");
+  assert.strictEqual(elements.btnStudioRetake.disabled, false, "Retake enabled after stop with audio");
+  assert.strictEqual(elements.btnStudioSave.disabled, false, "Save enabled after stop");
+});
+
+// =============================================================================
+// TEST 17: Timer display shows elapsed and remaining time correctly at multiple intervals
+// =============================================================================
+test("17. Timer display shows elapsed and remaining time correctly at multiple intervals", async () => {
+  const { elements, studio, advanceTime } = setupStudioEnvironment();
+  await studio.requestMicrophonePermission(true);
+
+  // Initial display
+  assert.strictEqual(elements.studioCountdownTimer.textContent, "600.0s remaining");
+  assert.strictEqual(elements.studioElapsedTimer.textContent, "0.0s / 600.0s");
+  assert.strictEqual(elements.studioCountdownProgress.value, 0);
+
+  studio.startRecording();
+
+  // 15 seconds
+  advanceTime(15000);
+  assert.strictEqual(elements.studioElapsedTimer.textContent, "15.0s / 600.0s");
+  assert.strictEqual(elements.studioCountdownTimer.textContent, "585.0s remaining");
+  assert.strictEqual(elements.studioCountdownProgress.value, 15);
+
+  // 120 seconds (2 minutes)
+  advanceTime(105000);
+  assert.strictEqual(elements.studioElapsedTimer.textContent, "120.0s / 600.0s");
+  assert.strictEqual(elements.studioCountdownTimer.textContent, "480.0s remaining");
+  assert.strictEqual(elements.studioCountdownProgress.value, 120);
+
+  // 300 seconds (5 minutes)
+  advanceTime(180000);
+  assert.strictEqual(elements.studioElapsedTimer.textContent, "300.0s / 600.0s");
+  assert.strictEqual(elements.studioCountdownTimer.textContent, "300.0s remaining");
+  assert.strictEqual(elements.studioCountdownProgress.value, 300);
+
+  studio.stopRecording(false);
+  assert.strictEqual(elements.studioElapsedTimer.textContent, "300.0s / 600.0s");
+  assert.strictEqual(elements.studioCountdownTimer.textContent, "300.0s remaining");
+});
+
+// =============================================================================
+// TEST 18: 11.7-second manual stop is accepted, displays valid notice, and can be saved
+// =============================================================================
+test("18. 11.7-second manual stop is accepted, displays valid notice, and can be saved", async () => {
+  const { elements, studio, advanceTime, uploadRequests } = setupStudioEnvironment();
+  await studio.requestMicrophonePermission(true);
+
+  studio.startRecording();
+  advanceTime(11700); // 11.7 seconds
+  studio.stopRecording(false);
+
+  // Assert timers
+  assert.strictEqual(elements.studioElapsedTimer.textContent, "11.7s / 600.0s");
+  assert.strictEqual(elements.studioCountdownTimer.textContent, "588.3s remaining");
+
+  // Assert banners: early stop warning must be HIDDEN, complete notice must be SHOWN
+  assert.strictEqual(elements.studioEarlyStopWarning.style.display, "none", "Early stop warning must NOT be shown for 11.7s recording");
+  assert.strictEqual(elements.studioCompleteNotice.style.display, "flex", "Complete notice must be shown for 11.7s recording");
+  assert.ok(elements.studioCompleteNotice.querySelector(".notice-text").textContent.includes("Valid Recording (11.7s)"));
+
+  // Review section must be visible
+  assert.strictEqual(elements.studioReviewSection.style.display, "block", "Review section must be visible");
+
+  // Fill required fields
+  elements.studioReferenceTranscript.value = "Do packet chahiye";
+  elements.studioReferenceTranscript.dispatchEvent({ type: "input" });
+  elements.studioVerifiedTranscript.value = "Do packet chahiye";
+  elements.studioVerifiedTranscript.dispatchEvent({ type: "input" });
+  elements.studioConsentCheckbox.checked = true;
+  elements.studioConsentCheckbox.dispatchEvent({ type: "change" });
+
+  // Save the 11.7s recording
+  await studio.handleSaveClick();
+  assert.strictEqual(uploadRequests.length, 1, "Must upload valid 11.7s recording");
+  assert.ok(uploadRequests[0].opts.body.fields.client_duration_seconds.startsWith("11.7"));
+});
+
+// =============================================================================
+// TEST 19: Studio UI initializes with 600 seconds, not 50
+// =============================================================================
+test("19. Studio UI initializes with 600 seconds, not 50", async () => {
+  const { elements, studio } = setupStudioEnvironment();
+
+  assert.strictEqual(elements.studioCountdownTimer.textContent, "600.0s remaining");
+  assert.strictEqual(elements.studioElapsedTimer.textContent, "0.0s / 600.0s");
+  assert.strictEqual(elements.studioCountdownProgress.max, 600);
+  assert.strictEqual(elements.studioCountdownProgress.value, 0);
+  assert.strictEqual(studio.MAX_RECORDING_DURATION_SEC, 600.0);
+});
+
+// =============================================================================
+// TEST 20: Empty or corrupt audio cannot be saved and shows error
+// =============================================================================
+test("20. Empty or corrupt audio cannot be saved and shows error", async () => {
+  const { elements, studio, uploadRequests } = setupStudioEnvironment();
+  await studio.requestMicrophonePermission(true);
+
+  // Fill transcripts and consent
+  elements.studioReferenceTranscript.value = "Do packet chahiye";
+  elements.studioVerifiedTranscript.value = "Do packet chahiye";
+  elements.studioConsentCheckbox.checked = true;
+
+  // Attempt save with null/empty blob
+  studio.setRecordedBlob(null);
+  await studio.handleSaveClick();
+
+  assert.strictEqual(uploadRequests.length, 0, "Empty audio must not trigger upload");
+  assert.strictEqual(elements.studioSaveErrorAlert.style.display, "flex");
+  assert.ok(elements.studioSaveErrorMessage.textContent.includes("Record your voice sample first"));
+});
+
+// =============================================================================
+// TEST 21: Sub-minimum clips stay reviewable but cannot be treated as valid or saved
+// =============================================================================
+test("21. A clip shorter than 0.5 seconds remains reviewable but cannot be saved", async () => {
+  const { elements, studio, advanceTime, uploadRequests } = setupStudioEnvironment();
+  await studio.requestMicrophonePermission(true);
+
+  elements.studioReferenceTranscript.value = "Short clip boundary test";
+  elements.studioVerifiedTranscript.value = "Short clip boundary test";
+  elements.studioConsentCheckbox.checked = true;
+
+  studio.startRecording();
+  advanceTime(200);
+  studio.stopRecording(false);
+
+  assert.strictEqual(elements.studioReviewSection.style.display, "block", "Captured audio must remain reviewable");
+  assert.strictEqual(elements.studioEarlyStopWarning.style.display, "flex", "Sub-minimum audio must be marked incomplete");
+  assert.strictEqual(elements.studioCompleteNotice.style.display, "none", "Sub-minimum audio must not be marked valid");
+
+  await studio.handleSaveClick();
+  assert.strictEqual(uploadRequests.length, 0, "Sub-minimum audio must not be uploaded");
+  assert.strictEqual(elements.studioSaveErrorAlert.style.display, "flex");
+  assert.ok(elements.studioSaveErrorMessage.textContent.includes("at least 0.5 seconds"));
+});
+
+// =============================================================================
+// TEST 22: Studio HTML template includes static asset versioning query parameters
+// =============================================================================
+test("22. Studio HTML template includes static asset versioning query parameters for cache-busting", () => {
+  const htmlContent = fs.readFileSync("app/templates/studio.html", "utf-8");
+  assert.ok(htmlContent.includes("/static/js/studio.js?v="), "studio.js must have version query parameter");
+  assert.ok(htmlContent.includes("/static/js/audio_converter.js?v="), "audio_converter.js must have version query parameter");
+  assert.ok(htmlContent.includes("/static/css/style.css?v="), "style.css must have version query parameter");
+});
+
+// =============================================================================
+// TEST 23: Dynamic loadStudioConfig updates max-duration configuration
+// =============================================================================
+test("23. Dynamic loadStudioConfig updates recording max-duration configuration", async () => {
+  let configFetched = false;
+  const { elements, studio } = setupStudioEnvironment({
+    fetchHandler: async (url) => {
+      if (url.includes("/api/studio/config")) {
+        configFetched = true;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            storage_directory: "human_recordings_v1",
+            max_duration_seconds: 600.0,
+            target_duration_seconds: 600.0,
+            scenario_templates: SAMPLE_SCENARIO_TEMPLATES,
+          }),
+        };
+      }
+    },
+  });
+
+  await studio.loadStudioConfig();
+  assert.strictEqual(configFetched, true, "Must fetch studio config");
+  assert.strictEqual(studio.MAX_RECORDING_DURATION_SEC, 600.0);
+  assert.strictEqual(elements.studioCountdownTimer.textContent, "600.0s remaining");
+  assert.strictEqual(elements.studioElapsedTimer.textContent, "0.0s / 600.0s");
+  assert.strictEqual(elements.studioCountdownProgress.max, 600);
+});
+
+// =============================================================================
+// TEST 24: Audio converter preserves separate 60-second limit for live evaluation
+// =============================================================================
+// =============================================================================
+// TEST 25: Studio Gnani STT transmission consent is unchecked by default
+// =============================================================================
+test("25. Studio Gnani STT transmission consent checkbox is unchecked by default", async () => {
+  const { elements } = setupStudioEnvironment();
+  assert.strictEqual(elements.studioGnaniConsentCheckbox.checked, false, "Consent must be unchecked by default");
+
+  const htmlContent = fs.readFileSync("app/templates/studio.html", "utf-8");
+  const match = htmlContent.match(/<input\s+type="checkbox"\s+id="studioGnaniConsentCheckbox"([^>]*)>/);
+  assert.ok(match, "studioGnaniConsentCheckbox input must exist in HTML");
+  assert.ok(!match[1].includes("checked"), "HTML element must not have checked attribute");
+});
+
+// =============================================================================
+// TEST 26: Unconsented recording stop makes zero calls to transcription endpoint
+// =============================================================================
+test("26. Unconsented recording stop makes 0 calls to STT endpoint", async () => {
+  let sttCalls = 0;
+  const { elements, studio, advanceTime } = setupStudioEnvironment({
+    fetchHandler: async (url) => {
+      if (url.includes("/api/studio/transcribe")) {
+        sttCalls++;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ transcript: "Unconsented transcript" }),
+        };
+      }
+    },
+  });
+
+  await studio.requestMicrophonePermission(true);
+  assert.strictEqual(elements.studioGnaniConsentCheckbox.checked, false);
+
+  studio.startRecording();
+  advanceTime(5000); // 5s recording <= 60s
+  studio.stopRecording(false);
+
+  assert.strictEqual(sttCalls, 0, "Must make 0 provider calls when unconsented");
+  assert.strictEqual(elements.studioVerifiedTranscript.value, "", "Verified transcript must remain empty when unconsented");
+});
+
+// =============================================================================
+// TEST 27: Consented recording stop triggers STT into verified transcript
+// =============================================================================
+test("27. Consented recording stop populates Spoken Ground Truth, leaves Reference separate and unverified", async () => {
+  let sttCalls = 0;
+  const { elements, studio, advanceTime, uploadRequests } = setupStudioEnvironment({
+    fetchHandler: async (url) => {
+      if (url.includes("/api/studio/transcribe")) {
+        sttCalls++;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            transcript: "Recognized spoken ground truth from audio",
+            language_code: "hi-IN",
+            utterance_role: "utterance_a",
+            duration_seconds: 5.0,
+            provider: "gnani-prisma-v3",
+            credits_consumed: 1,
+            external_calls: 1,
+            disclaimer: "Transcribed using Gnani AI with explicit user consent.",
+          }),
+        };
+      }
+    },
+  });
+
+  await studio.requestMicrophonePermission(true);
+  elements.studioGnaniConsentCheckbox.checked = true;
+  elements.studioReferenceTranscript.value = "Original Intended Script";
+
+  studio.startRecording();
+  advanceTime(5000); // 5.0s
+  studio.stopRecording(false);
+
+  // Wait a tick for async fetch
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.strictEqual(sttCalls, 1, "Must call /api/studio/transcribe once");
+  assert.strictEqual(elements.studioVerifiedTranscript.value, "Recognized spoken ground truth from audio");
+  // Intended reference transcript must remain strictly unchanged
+  assert.strictEqual(elements.studioReferenceTranscript.value, "Original Intended Script");
+  // Verification checkbox must NOT be auto-checked
+  assert.strictEqual(elements.studioTranscriptVerified.checked, false, "Manual verification checkbox must remain unchecked");
+  // ASR draft badge must be displayed
+  assert.strictEqual(elements.studioAsrDraftBadge.style.display, "inline-block", "ASR draft badge must be visible");
+  // Must NOT auto-save
+  assert.strictEqual(uploadRequests.length, 0, "Must not auto-save after transcription");
+});
+
+// =============================================================================
+// TEST 28: Failed STT preserves recordedBlob in memory and reveals Retry STT button
+// =============================================================================
+test("28. Failed STT preserves audio in memory and reveals Retry button without auto-retry", async () => {
+  let sttCalls = 0;
+  const { elements, studio, advanceTime } = setupStudioEnvironment({
+    fetchHandler: async (url) => {
+      if (url.includes("/api/studio/transcribe")) {
+        sttCalls++;
+        return {
+          ok: false,
+          status: 500,
+          json: async () => ({ detail: "Gnani STT API timeout" }),
+        };
+      }
+    },
+  });
+
+  await studio.requestMicrophonePermission(true);
+  elements.studioGnaniConsentCheckbox.checked = true;
+
+  studio.startRecording();
+  advanceTime(3000);
+  studio.stopRecording(false);
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.strictEqual(sttCalls, 1, "Initial call executed once");
+  assert.ok(studio.getRecordedBlob() !== null, "Audio blob must be preserved in memory");
+  assert.strictEqual(elements.btnStudioRetryStt.style.display, "inline-block", "Retry button must be visible");
+  assert.ok(elements.studioSttStatus.textContent.includes("Transcription failed"), "Status must display error message");
+});
+
+// =============================================================================
+// TEST 29: Duplicate transcription calls are prevented
+// =============================================================================
+test("29. Duplicate transcription calls are prevented via isTranscribing guard", async () => {
+  let sttCalls = 0;
+  let resolveStt;
+  const sttPromise = new Promise((resolve) => { resolveStt = resolve; });
+
+  const { elements, studio, advanceTime } = setupStudioEnvironment({
+    fetchHandler: async (url) => {
+      if (url.includes("/api/studio/transcribe")) {
+        sttCalls++;
+        await sttPromise;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ transcript: "Finished" }),
+        };
+      }
+    },
+  });
+
+  await studio.requestMicrophonePermission(true);
+  elements.studioGnaniConsentCheckbox.checked = true;
+
+  studio.startRecording();
+  advanceTime(4000);
+  studio.stopRecording(false);
+
+  // While in progress, trigger another transcription call
+  const blob = studio.getRecordedBlob();
+  await studio.transcribeStudioRecording(blob);
+
+  assert.strictEqual(sttCalls, 1, "Second concurrent call must be blocked");
+
+  resolveStt();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+});
+
+// =============================================================================
+// TEST 30: Recording > 60.0s shows clear notice, preserves audio, and makes 0 calls
+// =============================================================================
+test("30. Recording > 60.0s displays clear notice, preserves audio, and makes 0 STT calls", async () => {
+  let sttCalls = 0;
+  const { elements, studio, advanceTime } = setupStudioEnvironment({
+    fetchHandler: async (url) => {
+      if (url.includes("/api/studio/transcribe")) {
+        sttCalls++;
+      }
+    },
+  });
+
+  await studio.requestMicrophonePermission(true);
+  elements.studioGnaniConsentCheckbox.checked = true;
+
+  studio.startRecording();
+  advanceTime(75000); // 75 seconds (> 60.0s limit, <= 600s Studio limit)
+  studio.stopRecording(false);
+
+  assert.strictEqual(sttCalls, 0, "Must make 0 STT calls for recordings > 60.0s");
+  assert.strictEqual(elements.studioSttDurationNotice.style.display, "block", "Duration notice must be displayed");
+  assert.ok(elements.studioSttDurationNotice.textContent.includes("60.0-second limit"), "Notice must explain 60s limit");
+  assert.ok(studio.getRecordedBlob() !== null, "Audio blob must be preserved for manual verification");
+});
+
+// =============================================================================
+// TEST 31: Studio labels, instructions, button, and ARIA accurately reflect 600s max & 60s STT
+// =============================================================================
+test("31. Studio template labels, button text, and ARIA attributes reflect 600s studio & 60s STT limits", () => {
+  const htmlContent = fs.readFileSync("app/templates/studio.html", "utf-8");
+  assert.ok(htmlContent.includes("<span>🔴 Start Recording</span>"), "Button must say 'Start Recording'");
+  assert.ok(!htmlContent.includes("Start 50s Recording"), "Stale 'Start 50s Recording' button text must be removed");
+  assert.ok(htmlContent.includes('aria-label="Studio recording timer (Studio recording max 600s; Gnani REST STT max 60s)"'), "ARIA label must disclose 600s studio & 60s STT");
+  assert.ok(htmlContent.includes("100% Local by Default (Zero External Calls; Gnani STT requires separate consent)"), "Trust banner must accurately disclose consent requirement");
+  assert.ok(htmlContent.includes("Studio Recording Max 600s | Gnani REST STT Max 60s"), "Trust banner must state 600s studio and 60s STT limits");
+});
+
+test("24. Audio converter preserves separate 60-second limit for live evaluation", async () => {
+  const converterCode = fs.readFileSync("app/static/js/audio_converter.js", "utf-8");
+  assert.ok(converterCode.includes("const MAX_DURATION_SECONDS = 60.0"), "Default converter limit must remain 60s for evaluation");
 });

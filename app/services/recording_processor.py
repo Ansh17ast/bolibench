@@ -5,7 +5,7 @@ Guarantees:
 - Preserves raw uploaded audio without modification.
 - Converts uploads to standardized 16 kHz, mono, 16-bit linear PCM WAV.
 - Rigorously validates duration, decoding, sample rate, channels, silence, and clipping.
-- Enforces the 50-second benchmark completeness criterion.
+- Enforces duration validation (up to 600s maximum; short recordings >= 0.5s accepted).
 """
 
 import io
@@ -34,8 +34,10 @@ class HumanAudioProcessor:
     TARGET_SAMPLE_RATE = 16000
     TARGET_CHANNELS = 1
     TARGET_BITS_PER_SAMPLE = 16
-    TARGET_DURATION_SECONDS = 50.0
-    COMPLETION_TOLERANCE_SECONDS = 0.5  # 49.5s to 50.5s accepted as complete 50s clip
+    MAX_DURATION_SECONDS = 600.0        # Maximum 10 minutes (600s)
+    MIN_DURATION_SECONDS = 0.5          # Minimum audible duration (0.5s)
+    TARGET_DURATION_SECONDS = 600.0     # Backward-compatible alias
+    COMPLETION_TOLERANCE_SECONDS = 0.5
 
     # Silence and clipping thresholds
     SILENCE_RMS_THRESHOLD = 0.002       # ~ -54 dBFS
@@ -120,7 +122,7 @@ class HumanAudioProcessor:
         - Sample rate == 16000 Hz
         - Channels == 1 (mono)
         - Bit depth == 16-bit
-        - Duration check (50.0s target; flags incomplete early stops)
+        - Duration check (up to 600.0s maximum; short recordings >= 0.5s accepted)
         - Silence level (RMS and peak)
         - Clipping / saturation detection
         """
@@ -146,18 +148,12 @@ class HumanAudioProcessor:
 
         duration_seconds = round(nframes / float(sample_rate), 3) if sample_rate > 0 else 0.0
 
-        # Duration 50-second completeness check
-        is_complete_50s = (
-            (self.TARGET_DURATION_SECONDS - self.COMPLETION_TOLERANCE_SECONDS)
-            <= duration_seconds
-            <= (self.TARGET_DURATION_SECONDS + self.COMPLETION_TOLERANCE_SECONDS)
-        )
+        # Duration completeness check (0.5s to 600.0s is valid)
+        is_complete_50s = (self.MIN_DURATION_SECONDS <= duration_seconds <= self.MAX_DURATION_SECONDS)
 
         # Integrity Check: Compare client-reported duration against actual decoded playable audio duration
-        # If client claims 50 seconds (or >= 49.5s) but file contains only a fraction of that duration,
-        # flag discrepancy and strictly prevent it from being treated as a valid 50-second sample.
-        if client_duration is not None and client_duration >= (self.TARGET_DURATION_SECONDS - self.COMPLETION_TOLERANCE_SECONDS):
-            if duration_seconds < (self.TARGET_DURATION_SECONDS - self.COMPLETION_TOLERANCE_SECONDS):
+        if client_duration is not None and client_duration >= self.MIN_DURATION_SECONDS:
+            if duration_seconds < self.MIN_DURATION_SECONDS:
                 is_complete_50s = False
                 logger.warning(
                     "Duration discrepancy detected: client reported %.2fs, but decoded WAV is only %.2fs",
@@ -189,11 +185,10 @@ class HumanAudioProcessor:
 
 
         # Determine overall validation classification
-        if not is_complete_50s:
-            if duration_seconds < (self.TARGET_DURATION_SECONDS - self.COMPLETION_TOLERANCE_SECONDS):
-                status = ValidationStatus.INCOMPLETE_EARLY_STOP
-            else:
-                status = ValidationStatus.DURATION_EXCEEDED
+        if duration_seconds < self.MIN_DURATION_SECONDS:
+            status = ValidationStatus.INCOMPLETE_EARLY_STOP
+        elif duration_seconds > self.MAX_DURATION_SECONDS:
+            status = ValidationStatus.DURATION_EXCEEDED
         elif is_silent:
             status = ValidationStatus.SILENT_WARNING
         elif is_clipped:
