@@ -68,7 +68,12 @@ class BatchExecutionConfig(BaseModel):
     pacing_delay_seconds: float = Field(1.0, description="Delay in seconds between sequential requests.")
     confirm: bool = Field(False, description="Explicit operator authorization confirmation.")
     resume: bool = Field(True, description="Skip already completed pairs in the batch run.")
-    output_dir: Path = Field(default_factory=lambda: Path("benchmark_results"), description="Output destination directory.")
+    output_dir: Path = Field(
+        default_factory=lambda: (
+            __import__("app.config", fromlist=["get_benchmark_results_dir"]).get_benchmark_results_dir()
+        ),
+        description="Output destination directory.",
+    )
     batch_id: Optional[str] = Field(None, description="Stable batch identifier.")
 
 

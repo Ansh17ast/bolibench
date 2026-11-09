@@ -31,7 +31,8 @@ def get_default_db_path() -> Path:
     2. Monkeypatched `DEFAULT_DB_PATH` module attribute (if different from PROD_DB_PATH).
     3. Test safety guard: If running under pytest and no override is set, redirects to a
        temporary session database to prevent any import or test from ever touching bolibench_evaluation.db.
-    4. Default production database (`bolibench_evaluation.db`).
+    4. Persistent storage directory `BOLIBENCH_DATA_DIR` (e.g. /data on Railway).
+    5. Default production database (`bolibench_evaluation.db`).
     """
     env_db = os.environ.get("BOLIBENCH_DB_PATH")
     if env_db:
@@ -45,6 +46,11 @@ def get_default_db_path() -> Path:
         temp_dir = Path(tempfile.gettempdir()) / "bolibench_pytest_isolated"
         temp_dir.mkdir(parents=True, exist_ok=True)
         return temp_dir / f"test_default_{os.getpid()}.db"
+
+    from app.config import get_settings
+    settings = get_settings()
+    if settings.data_dir_path is not None:
+        return settings.data_dir_path / "bolibench_evaluation.db"
 
     return PROD_DB_PATH
 
@@ -77,6 +83,31 @@ class StorageManager:
 
     def _init_db(self) -> None:
         """Initializes database tables if they do not exist."""
+        db_file = Path(self.db_path)
+        db_exists = db_file.exists()
+
+        from app.config import get_settings
+        settings = get_settings()
+
+        # Database existence safeguard
+        if not db_exists:
+            if settings.bolibench_require_existing_db or os.environ.get("BOLIBENCH_REQUIRE_EXISTING_DB", "").lower() in ("true", "1", "yes"):
+                raise RuntimeError(
+                    f"Production database safeguard: Expected existing database at '{self.db_path}', "
+                    f"but file was not found. Halting startup to prevent accidental creation of an empty database "
+                    f"on persistent storage. Ensure volume is attached and data restored, or set BOLIBENCH_REQUIRE_EXISTING_DB=false."
+                )
+            if settings.data_dir_path is not None:
+                import logging
+                logger = logging.getLogger("bolibench.storage")
+                logger.warning(
+                    "DATABASE_NOTICE: Initializing new SQLite database at '%s' on persistent volume. "
+                    "If this is a production deployment, ensure your persistent volume is attached and restored.",
+                    self.db_path,
+                )
+
+        db_file.parent.mkdir(parents=True, exist_ok=True)
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("PRAGMA journal_mode = WAL")

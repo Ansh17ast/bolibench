@@ -183,8 +183,13 @@ class RecordingStorage:
 
     def __init__(self, base_dir: Optional[Path] = None):
         if base_dir is None:
-            # Default to human_recordings_v1 in project root
-            self.base_dir = Path(DEFAULT_RECORDINGS_DIR).resolve()
+            # Check if DEFAULT_RECORDINGS_DIR was monkeypatched by a test fixture
+            proj_default = Path(__file__).resolve().parent.parent.parent / "human_recordings_v1"
+            if Path(DEFAULT_RECORDINGS_DIR).resolve() != proj_default.resolve():
+                self.base_dir = Path(DEFAULT_RECORDINGS_DIR).resolve()
+            else:
+                from app.config import get_recordings_dir
+                self.base_dir = get_recordings_dir()
         else:
             self.base_dir = Path(base_dir).resolve()
 

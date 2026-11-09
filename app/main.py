@@ -48,13 +48,27 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Restricted CORS middleware: Only allow trusted same-origin local development hosts
-ALLOWED_ORIGINS = [
+# Restricted CORS middleware: Only allow trusted same-origin local development hosts and configured production origins
+DEFAULT_ALLOWED_ORIGINS = [
     "http://localhost:8000",
     "http://127.0.0.1:8000",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
+
+
+def _resolve_allowed_origins() -> list:
+    settings = get_settings()
+    origins = list(DEFAULT_ALLOWED_ORIGINS)
+    if settings.allowed_origins:
+        for o in settings.allowed_origins.split(","):
+            cleaned = o.strip()
+            if cleaned and cleaned not in origins:
+                origins.append(cleaned)
+    return origins
+
+
+ALLOWED_ORIGINS = _resolve_allowed_origins()
 
 app.add_middleware(
     CORSMiddleware,

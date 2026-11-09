@@ -1,0 +1,65 @@
+# Git & CI/CD
+.git/
+.github/
+
+# Python cache & build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Secrets & Environment variables
+.env
+*.env
+!.env.example
+
+# SQLite Databases & Snapshots
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+bolibench_evaluation.db*
+backup_*
+
+# Persistent data directories & storage
+human_recordings_v1/
+benchmark_results/
+benchmark_checkpoints/
+local_test_audio/
+scratch/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+logs/
+
+# IDE & Editor artifacts
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Large documentation & preview media
+*.docx
+*.pdf
+*.png
+*.jpg
+*.jpeg

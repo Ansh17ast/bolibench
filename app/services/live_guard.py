@@ -141,7 +141,16 @@ class LiveEvaluationGuard:
             full_origin = f"{origin_scheme}://{origin_netloc}"
             req_origin = f"{(request.url.scheme or 'http').lower()}://{(request.url.netloc or '').lower()}"
 
-            is_valid = full_origin in self.ALLOWED_ORIGINS
+            allowed_set = set(self.ALLOWED_ORIGINS)
+            from app.config import get_settings
+            cfg_origins = get_settings().allowed_origins
+            if cfg_origins:
+                for o in cfg_origins.split(","):
+                    cleaned = o.strip()
+                    if cleaned:
+                        allowed_set.add(cleaned)
+
+            is_valid = full_origin in allowed_set
             if not is_valid and req_hostname in ("localhost", "127.0.0.1", "test", "testserver"):
                 is_valid = (full_origin == req_origin)
 
